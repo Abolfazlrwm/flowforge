@@ -1,0 +1,145 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "flowforge"
+version = "0.1.0"
+description = "An open-source distributed workflow orchestration engine powered by Django, PostgreSQL, and RabbitMQ."
+readme = "README.md"
+license = { text = "Apache-2.0" }
+requires-python = ">=3.11"
+authors = [
+    { name = "Abolfazlrwm" },
+]
+keywords = ["workflow", "orchestration", "distributed", "dag", "scheduler"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: Apache Software License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Framework :: Django",
+    "Framework :: Django :: 5.1",
+]
+dependencies = [
+    "django>=5.1,<5.2",
+    "djangorestframework>=3.15,<3.16",
+    "django-filter>=24.2",
+    "psycopg[binary]>=3.2,<4",
+    "celery>=5.4,<5.5",
+    "redis>=5.0,<6",
+    "pydantic>=2.9,<3",
+    "structlog>=24.4",
+    "django-structlog>=9.0",
+    "gunicorn>=23.0",
+    "whitenoise>=6.7",
+    "django-environ>=0.11",
+    "jsonschema>=4.23",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.3",
+    "pytest-django>=4.9",
+    "pytest-xdist>=3.6",
+    "factory-boy>=3.3",
+    "faker>=30.0",
+    "ruff>=0.6",
+    "mypy>=1.11",
+    "django-stubs>=5.1",
+    "djangorestframework-stubs>=3.15",
+    "pre-commit>=4.0",
+    "coverage>=7.6",
+    "httpx>=0.27",
+]
+
+[project.scripts]
+flowforge = "cli.main:main"
+
+[project.urls]
+Homepage = "https://github.com/Abolfazlrwm/flowforge"
+Documentation = "https://Abolfazlrwm.github.io/flowforge"
+Repository = "https://github.com/Abolfazlrwm/flowforge"
+Issues = "https://github.com/Abolfazlrwm/flowforge/issues"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/flowforge"]
+
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+src = ["src"]
+
+[tool.ruff.lint]
+select = [
+    "E", "F", "W", "I", "N", "D", "UP", "B", "C4", "SIM", "PTH",
+    "PL", "S", "ASYNC", "ARG", "ERA", "PERF", "RUF",
+]
+ignore = [
+    "D100", "D104", "D107", "D203", "D212", "D401", "PLR2004",
+]
+
+[tool.ruff.lint.pydocstyle]
+convention = "google"
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S101", "PLR2004", "D103"]
+"*/migrations/*" = ["ALL"]
+"manage.py" = ["PLC0415"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+warn_return_any = true
+warn_unused_ignores = true
+warn_redundant_casts = true
+warn_unused_configs = true
+disallow_untyped_defs = true
+disallow_incomplete_defs = true
+check_untyped_defs = true
+show_error_codes = true
+plugins = ["mypy_django_plugin.main"]
+exclude = ["migrations", "tests", "venv", ".venv"]
+
+[tool.django-stubs]
+django_settings_module = "flowforge.settings"
+
+[tool.pytest.ini_options]
+DJANGO_SETTINGS_MODULE = "flowforge.settings"
+python_files = ["test_*.py", "*_test.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+testpaths = ["tests"]
+addopts = "-v --tb=short --strict-markers -n auto"
+markers = [
+    "slow: marks tests as slow (deselect with '-m \"not slow\"')",
+    "integration: marks tests as integration tests",
+    "concurrency: marks tests that validate concurrent behavior",
+]
+
+[tool.coverage.run]
+source = ["src"]
+branch = true
+omit = [
+    "*/migrations/*",
+    "*/tests/*",
+    "*/settings/*",
+    "*/wsgi.py",
+    "*/asgi.py",
+    "manage.py",
+]
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = false
+fail_under = 80
+
+[tool.coverage.html]
+directory = "htmlcov"

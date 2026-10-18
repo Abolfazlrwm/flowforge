@@ -1,0 +1,115 @@
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: flowforge
+      POSTGRES_PASSWORD: flowforge
+      POSTGRES_DB: flowforge
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U flowforge -d flowforge"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  rabbitmq:
+    image: rabbitmq:3.13-alpine
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  web:
+    build:
+      context: .
+      target: production
+    environment:
+      DJANGO_SECRET_KEY: ${DJANGO_SECRET_KEY:-local-dev-secret}
+      DJANGO_DEBUG: "True"
+      DJANGO_ALLOWED_HOSTS: localhost,127.0.0.1,web
+      DATABASE_URL: postgres://flowforge:flowforge@db:5432/flowforge
+      REDIS_URL: redis://redis:6379/0
+      CELERY_BROKER_URL: amqp://guest:guest@rabbitmq:5672//
+      CELERY_RESULT_BACKEND: redis://redis:6379/1
+    ports:
+      - "8000:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    volumes:
+      - .:/app
+    command: >
+      sh -c "python manage.py migrate --noinput &&
+             python manage.py runserver 0.0.0.0:8000"
+
+  scheduler:
+    build:
+      context: .
+      target: production
+    environment:
+      DJANGO_SECRET_KEY: ${DJANGO_SECRET_KEY:-local-dev-secret}
+      DJANGO_DEBUG: "True"
+      DATABASE_URL: postgres://flowforge:flowforge@db:5432/flowforge
+      REDIS_URL: redis://redis:6379/0
+      CELERY_BROKER_URL: amqp://guest:guest@rabbitmq:5672//
+      CELERY_RESULT_BACKEND: redis://redis:6379/1
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    volumes:
+      - .:/app
+    command: >
+      sh -c "python manage.py migrate --noinput &&
+             celery -A flowforge beat -l info"
+
+  worker:
+    build:
+      context: .
+      target: production
+    environment:
+      DJANGO_SECRET_KEY: ${DJANGO_SECRET_KEY:-local-dev-secret}
+      DJANGO_DEBUG: "True"
+      DATABASE_URL: postgres://flowforge:flowforge@db:5432/flowforge
+      REDIS_URL: redis://redis:6379/0
+      CELERY_BROKER_URL: amqp://guest:guest@rabbitmq:5672//
+      CELERY_RESULT_BACKEND: redis://redis:6379/1
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    volumes:
+      - .:/app
+    command: >
+      sh -c "python manage.py migrate --noinput &&
+             celery -A flowforge worker -l info"
+
+volumes:
+  postgres_data:
