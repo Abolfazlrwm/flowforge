@@ -43,7 +43,7 @@ ruff check .
 ruff format .
 
 # Type checking
-mypy flowforge core api --ignore-missing-imports
+mypy taskforge core api --ignore-missing-imports
 
 # Tests
 pytest tests/unit -v

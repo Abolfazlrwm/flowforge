@@ -20,10 +20,10 @@ repos:
     hooks:
       - id: mypy
         name: mypy
-        entry: mypy
+        entry: mypy taskforge core api --ignore-missing-imports
         language: system
         types: [python]
-        pass_filenames: true
+        pass_filenames: false
         require_serial: true
 
       - id: pytest-unit
