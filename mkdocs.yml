@@ -1,0 +1,30 @@
+site_name: TaskForge
+site_description: An open-source distributed workflow orchestration engine.
+site_url: https://Abolfazlrwm.github.io/taskforge
+repo_url: https://github.com/Abolfazlrwm/taskforge
+repo_name: Abolfazlrwm/taskforge
+
+theme:
+  name: readthedocs
+  highlightjs: true
+
+nav:
+  - Home: index.md
+  - Architecture:
+      - Overview: architecture/overview.md
+  - Development:
+      - Setup: development/setup.md
+      - Roadmap: development/ROADMAP.md
+      - Progress: development/PROGRESS.md
+      - Decisions: development/DECISIONS.md
+  - Deployment:
+      - Docker: deployment/docker.md
+
+plugins:
+  - search
+
+markdown_extensions:
+  - admonition
+  - codehilite
+  - toc:
+      permalink: true

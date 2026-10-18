@@ -4,19 +4,30 @@ This file tracks project context for automated agents and contributors.
 
 ## Current Phase
 
-**Phase 0: Engineering Foundation**
+**Phase 0: Engineering Foundation (Audit Complete)**
 
 ## Completed
 
 - Repository initialized with isolated `.git`.
-- Django 5.1 project created.
+- Django 5.1 project created (package: `taskforge`).
 - PostgreSQL, Redis, RabbitMQ integration configured.
-- Celery task queue wired.
-- Health check endpoint (`/health/`) implemented and tested.
-- Code quality tools configured: Ruff, mypy, pytest, pre-commit.
-- GitHub Actions CI pipeline for lint/type-check/test.
-- Docker Compose local development stack.
+- Celery task queue wired (interim — see ADR-007).
+- Liveness (`/health/live/`) and readiness (`/health/ready/`) endpoints
+  with DB, Redis, and RabbitMQ checks.
+- Code quality tools configured: Ruff, mypy, pytest, pytest-cov, pre-commit.
+- GitHub Actions CI pipeline for lint/type-check/test/migration-check/Docker-build.
+- Docker Compose local development stack with healthchecks and non-root Dockerfile.
+- Dependabot configured (pip, GitHub Actions, Docker).
+- MkDocs configuration.
+- ADR directory with ADR-007 (Celery interim) and ADR-008 (rename).
 - Apache-2.0 license and initial documentation.
+
+## Audit Status
+
+- Phase 0 audit completed on 2026-10-18.
+- Fixes applied on branch `chore/phase0-audit-fixes`.
+- Docker daemon was offline during audit; Compose stack is UNVERIFIED.
+- v0.1.0 tag deferred until Docker verification passes.
 
 ## Next Phase
 
@@ -36,8 +47,11 @@ Planned tasks:
 - Django 5.1 LTS track.
 - Modular monolith with independent runtime processes.
 - `django-environ` for 12-factor configuration.
-- `uv` used for fast dependency resolution in local dev.
-- Docker daemon was offline during Phase 0 setup; Compose file is ready for when it starts.
+- Celery retained as interim infrastructure (ADR-007); custom scheduler
+  decision deferred to Phase 4.
+- Project renamed from FlowForge to TaskForge (ADR-008).
+- Docker daemon was offline during Phase 0 setup and audit; Compose file
+  is ready but UNVERIFIED.
 
 ## Constraints
 

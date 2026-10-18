@@ -1,5 +1,8 @@
 # Architecture Decision Records
 
+> Full ADR documents are in [`docs/adr/`](../adr/). This file provides a
+> summary index.
+
 ## ADR-001: Python 3.11+ and Django 5.1
 
 **Context:** Need a stable, modern Python/Django baseline.
@@ -35,3 +38,17 @@
 **Context:** Need fast, consistent linting and type checking.
 **Decision:** Use Ruff (replaces flake8, black, isort) and mypy in strict mode.
 **Rationale:** Ruff is extremely fast and unified. mypy strict mode catches errors early.
+
+## ADR-007: Celery as Interim Task Infrastructure (Phase 0)
+
+**Context:** The spec calls for a custom scheduler with transactional outbox, direct RabbitMQ delivery, leases, and fencing tokens. Celery was added in Phase 0 as interim infrastructure.
+**Decision:** Keep Celery for Phase 0/1. Evaluate replacement or augmentation in Phase 4.
+**Rationale:** Celery provides immediate value for Docker Compose and CI testing. The transactional outbox and lease management are domain concerns that can be layered on any delivery mechanism.
+**Full ADR:** [`docs/adr/ADR-007-celery-as-interim-task-infrastructure.md`](../adr/ADR-007-celery-as-interim-task-infrastructure.md)
+
+## ADR-008: Rename FlowForge to TaskForge
+
+**Context:** The name "FlowForge" conflicts with a commercial product (flowforgesoft.com) and multiple GitHub repositories.
+**Decision:** Rename the project to "TaskForge".
+**Rationale:** "TaskForge" is available on PyPI, npm, and GitHub. Avoids trademark confusion and enables future publication.
+**Full ADR:** [`docs/adr/ADR-008-rename-flowforge-to-taskforge.md`](../adr/ADR-008-rename-flowforge-to-taskforge.md)

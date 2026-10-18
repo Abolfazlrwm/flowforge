@@ -1,4 +1,4 @@
-"""Django settings for FlowForge."""
+"""Django settings for TaskForge."""
 
 from pathlib import Path
 
@@ -12,6 +12,7 @@ env = environ.Env(
     DJANGO_SECURE_HSTS_SECONDS=(int, 0),
     DJANGO_SECURE_HSTS_INCLUDE_SUBDOMAINS=(bool, False),
     DJANGO_SECURE_HSTS_PRELOAD=(bool, False),
+    DJANGO_SECURE_REFERRER_POLICY=(str, "same-origin"),
 )
 
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -46,7 +47,7 @@ MIDDLEWARE = [
     "django_structlog.middlewares.RequestMiddleware",
 ]
 
-ROOT_URLCONF = "flowforge.urls"
+ROOT_URLCONF = "taskforge.urls"
 
 TEMPLATES = [
     {
@@ -64,12 +65,12 @@ TEMPLATES = [
     },
 ]
 
-WSGI_APPLICATION = "flowforge.wsgi.application"
+WSGI_APPLICATION = "taskforge.wsgi.application"
 
 DATABASES = {
     "default": env.db_url(
         "DATABASE_URL",
-        default="postgres://flowforge:flowforge@localhost:5432/flowforge",
+        default="postgres://taskforge:taskforge@localhost:5432/taskforge",
     ),
 }
 
@@ -98,14 +99,34 @@ STATIC_ROOT = BASE_DIR / "staticfiles"
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
+# ---------------------------------------------------------------------------
 # Security
+# ---------------------------------------------------------------------------
+# In production, set DJANGO_DEBUG=False and configure the SECURE_* flags
+# via environment variables. The defaults below are safe for development
+# but must be overridden in production (see .env.example and deploy docs).
 SECURE_SSL_REDIRECT = env("DJANGO_SECURE_SSL_REDIRECT")
 SECURE_HSTS_SECONDS = env("DJANGO_SECURE_HSTS_SECONDS")
 SECURE_HSTS_INCLUDE_SUBDOMAINS = env("DJANGO_SECURE_HSTS_INCLUDE_SUBDOMAINS")
 SECURE_HSTS_PRELOAD = env("DJANGO_SECURE_HSTS_PRELOAD")
 SECURE_CONTENT_TYPE_NOSNIFF = True
 SECURE_BROWSER_XSS_FILTER = True
+SECURE_REFERRER_POLICY = env("DJANGO_SECURE_REFERRER_POLICY")
 X_FRAME_OPTIONS = "DENY"
+
+# Secure cookies — only active when DEBUG is False (via SECURE_SSL_REDIRECT
+# being enabled). In development with DEBUG=True these are False so the
+# browser can use http://localhost without losing cookies.
+if not DEBUG:
+    SESSION_COOKIE_SECURE = True
+    CSRF_COOKIE_SECURE = True
+    SESSION_COOKIE_HTTPONLY = True
+    CSRF_COOKIE_HTTPONLY = True
+else:
+    SESSION_COOKIE_SECURE = False
+    CSRF_COOKIE_SECURE = False
+    SESSION_COOKIE_HTTPONLY = True
+    CSRF_COOKIE_HTTPONLY = True
 
 # DRF
 REST_FRAMEWORK = {
@@ -139,6 +160,9 @@ CACHES = {
     },
 }
 
+# Health check configuration
+HEALTH_CHECK_BROKER_URL = env("CELERY_BROKER_URL", default="amqp://guest:guest@localhost:5672//")
+
 # Logging / Structlog
 LOGGING = {
     "version": 1,
@@ -167,7 +191,7 @@ LOGGING = {
             "handlers": ["console"],
             "level": "INFO",
         },
-        "flowforge": {
+        "taskforge": {
             "handlers": ["console"],
             "level": "INFO",
         },
