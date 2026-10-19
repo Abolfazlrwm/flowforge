@@ -41,14 +41,22 @@
 
 ## ADR-007: Celery as Interim Task Infrastructure (Phase 0)
 
+**Status:** Accepted by the project owner on 2026-10-19.
 **Context:** The spec calls for a custom scheduler with transactional outbox, direct RabbitMQ delivery, leases, and fencing tokens. Celery was added in Phase 0 as interim infrastructure.
-**Decision:** Keep Celery for Phase 0/1. Evaluate replacement or augmentation in Phase 4.
+**Decision:** Keep Celery for Phase 0/1. The keep-or-replace decision is deferred to Phase 4.
 **Rationale:** Celery provides immediate value for Docker Compose and CI testing. The transactional outbox and lease management are domain concerns that can be layered on any delivery mechanism.
 **Full ADR:** [`docs/adr/ADR-007-celery-as-interim-task-infrastructure.md`](../adr/ADR-007-celery-as-interim-task-infrastructure.md)
 
-## ADR-008: Rename FlowForge to TaskForge
+## Naming: "FlowForge" retained
 
-**Context:** The name "FlowForge" conflicts with a commercial product (flowforgesoft.com) and multiple GitHub repositories.
-**Decision:** Rename the project to "TaskForge".
-**Rationale:** "TaskForge" is available on PyPI, npm, and GitHub. Avoids trademark confusion and enables future publication.
-**Full ADR:** [`docs/adr/ADR-008-rename-flowforge-to-taskforge.md`](../adr/ADR-008-rename-flowforge-to-taskforge.md)
+**Status:** Decided by the project owner on 2026-10-19. No rename performed.
+
+The name was evaluated and found to be conflicted on npm (reserved), PyPI
+(`flow-forge` taken), GitHub (multiple projects over 100 stars), and in
+commerce (a prior venture-funded company, now FlowFuse, plus an active
+`flowforgesoft.com`). The owner decided to keep "FlowForge" for Phase 0.
+Evidence and re-evaluation triggers are recorded in
+[NAMING_ANALYSIS.md](NAMING_ANALYSIS.md). An earlier draft of this file
+contained an "ADR-008: Rename to TaskForge" entry; that ADR was never approved
+by the owner and has been removed.
+
