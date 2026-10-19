@@ -14,7 +14,7 @@ If this session is resumed cold, read this section first.
 | What is released | `v0.1.0`, annotated tag on `97c17bf`, with a GitHub Release. |
 | What is next | Phase 1 — Domain Modeling, target `v0.2.0`. |
 | What blocks Phase 1 | **Issue #11** — Django 5.1 is past end-of-life. The domain models and their migrations should not be written against an unsupported framework, so this needs an owner decision first. |
-| What else is open | Eight Dependabot PRs (#2–#9). Deliberately unmerged; see "Pending decisions". |
+| What else is open | Dependabot PRs (#2–#9, #12 at the time of writing). Deliberately unmerged; see "Pending decisions". The exact set grows as Dependabot runs — treat the table below as the current snapshot, not a fixed list. |
 
 ## Status
 
@@ -166,6 +166,7 @@ become assumptions.
 | [#3](https://github.com/Abolfazlrwm/flowforge/pull/3) | Python 3.13-slim → 3.14-slim | "Python 3.13" was an explicit owner decision. |
 | [#7](https://github.com/Abolfazlrwm/flowforge/pull/7) | redis-py 5.3.1 → 8.1.0 | Three major versions. Needs a compatibility read, not a rubber stamp. |
 | [#9](https://github.com/Abolfazlrwm/flowforge/pull/9) | Celery 5.4.0 → 5.6.3 | Celery is interim (ADR-007). Bumping it now, before the Phase 4 keep-or-replace decision, spends effort on a component that may be removed. |
+| [#12](https://github.com/Abolfazlrwm/flowforge/pull/12) | djangorestframework 3.15.2 → 3.17.2 | Two minor versions; the API surface in Phase 3 is written against it, so the version should be settled before the endpoints are. |
 | [#2](https://github.com/Abolfazlrwm/flowforge/pull/2), [#4](https://github.com/Abolfazlrwm/flowforge/pull/4), [#5](https://github.com/Abolfazlrwm/flowforge/pull/5), [#6](https://github.com/Abolfazlrwm/flowforge/pull/6) | GitHub Actions major bumps (checkout 4→7, setup-python 5→7, setup-uv 6→10, codecov 4→7) | Each needs its own CI run to prove it still works; batching them hides which one broke. Low risk, no urgency. |
 
 ## Blockers
