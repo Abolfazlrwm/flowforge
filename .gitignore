@@ -72,3 +72,7 @@ docs/_build/
 *.pid
 *.seed
 *.pid.lock
+
+# Local agent tooling / scratch state
+.workbuddy-ai/
+.ds-history/
