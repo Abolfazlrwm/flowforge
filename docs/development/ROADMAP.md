@@ -7,11 +7,12 @@
 - [x] PostgreSQL integration
 - [x] Docker Compose
 - [x] Environment configuration
-- [x] Health checks
+- [x] Health checks (liveness + readiness)
 - [x] Ruff, mypy, pytest
 - [x] pre-commit
-- [x] GitHub Actions
-- [x] Initial documentation
+- [x] GitHub Actions (lint, test, migration check, Docker build)
+- [x] Dependabot
+- [x] Initial documentation + MkDocs
 - [x] Apache-2.0 license
 
 ## Phase 1 — Domain Modeling (v0.2.0)
@@ -53,6 +54,7 @@
 - [ ] Transactional outbox
 - [ ] RabbitMQ publishing
 - [ ] Scheduler recovery
+- [ ] **Decision: keep Celery or replace with custom scheduler** (ADR-007)
 
 ## Phase 5 — Distributed Workers (v0.6.0)
 
@@ -61,6 +63,7 @@
 - [ ] Task execution
 - [ ] Heartbeats
 - [ ] Lease management
+- [ ] Fencing tokens
 - [ ] Result persistence
 - [ ] Graceful shutdown
 
