@@ -69,6 +69,9 @@ jobs:
       DATABASE_URL: postgres://flowforge:flowforge@localhost:5432/flowforge
       REDIS_URL: redis://localhost:6379/0
       CELERY_BROKER_URL: amqp://guest:guest@localhost:5672//
+      # Optional. Codecov rejects tokenless uploads, so without this secret the
+      # upload step is skipped rather than failing silently behind a green job.
+      CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
       - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884  # v10.3.0
@@ -87,15 +90,22 @@ jobs:
       - name: Run tests
         run: uv run pytest tests/unit -v --cov --cov-report=xml
       - name: Upload coverage
-        # fail_ci_if_error is false so a Codecov outage cannot block a merge.
-        # The consequence is that a green run does NOT prove the upload worked:
-        # a broken upload is silent. Check the "Upload coverage" step log for a
-        # processed-upload line rather than trusting the job colour.
+        # Codecov rejects tokenless uploads ("Token required - not valid
+        # tokenless upload") and the action still reports success, so this step
+        # was a green box over a failure from Phase 0 until 2026-10-19.
+        #
+        # It is now skipped when no token is configured, so "skipped" is an
+        # honest signal. When a token IS present, fail_ci_if_error is true so a
+        # broken upload turns the job red instead of passing quietly.
+        #
+        # The 80% gate is enforced by pytest-cov regardless; Codecov only adds
+        # PR annotations and a badge.
+        if: github.event_name == 'pull_request' && env.CODECOV_TOKEN != ''
         uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5  # v7.1.1
-        if: github.event_name == 'pull_request'
         with:
           files: ./coverage.xml
-          fail_ci_if_error: false
+          token: ${{ secrets.CODECOV_TOKEN }}
+          fail_ci_if_error: true
 
   docker:
     runs-on: ubuntu-latest
