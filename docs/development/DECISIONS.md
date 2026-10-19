@@ -1,6 +1,6 @@
 # Architecture Decision Records
 
-> Full ADR documents are in [`docs/adr/`](../adr/). This file provides a
+> Full ADR documents are in [`docs/adr/`](../adr/index.md). This file provides a
 > summary index.
 
 ## ADR-001: Python 3.11+ and Django 5.2 LTS
@@ -62,3 +62,37 @@ Evidence and re-evaluation triggers are recorded in
 contained an "ADR-008: Rename to TaskForge" entry; that ADR was never approved
 by the owner and has been removed.
 
+
+## Docker verification: CI is sufficient
+
+**Status:** Decided by the project owner on 2026-10-19.
+
+The Phase 0 closeout carried a rule — "do not tag a release until Docker has been
+verified on the owner's machine" — because the local Docker daemon was offline and
+only CI had ever built the image and booted the compose stack. The owner has
+withdrawn that rule: the CI `docker` job (multi-stage build, `docker compose up`,
+and both health probes answering) is accepted as sufficient evidence.
+
+**Consequence:** releases are tagged when CI is green, with no additional local
+Docker check as a precondition. The `docker` job remains a required status check on
+`main`, so the evidence is still produced on every pull request.
+
+## Documentation site: strict MkDocs build required from Phase 3
+
+**Status:** Decided by the project owner on 2026-10-19.
+
+The documentation site was never built: `mkdocs` was not in the dependency set and
+no CI job ran it, so the nav was unverified and the Mermaid diagrams in
+`data-model.md`, `execution-model.md` and `definitions.md` could not render. That
+is limitation 19 in [PROGRESS.md](PROGRESS.md).
+
+**Decision:** add a CI job that installs `mkdocs-material` and
+`pymdown-extensions`, and runs `mkdocs build --strict`. The build must be green on
+every pull request from Phase 3 onward. Deploying to GitHub Pages is deferred to
+Phase 10.
+
+**Consequence:** a broken internal link, a missing nav target, or a documentation
+file that MkDocs cannot parse now fails the build. Mermaid support requires
+`pymdownx.superfences` with a `mermaid` custom fence, which the build checks for
+only insofar as the extension loads — a diagram that is syntactically wrong in
+Mermaid is still not caught, and that gap is recorded rather than implied away.
