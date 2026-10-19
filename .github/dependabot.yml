@@ -1,0 +1,23 @@
+version: 2
+updates:
+  # Python dependencies are resolved with uv; Dependabot updates uv.lock
+  # together with pyproject.toml constraints.
+  - package-ecosystem: "uv"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 10
+
+  # GitHub Actions are pinned to commit SHAs in .github/workflows/.
+  # Dependabot rewrites both the SHA and the trailing version comment.
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+
+  - package-ecosystem: "docker"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5

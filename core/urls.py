@@ -2,8 +2,9 @@
 
 from django.urls import path
 
-from core.views import HealthCheckView
+from core.views import LivenessView, ReadinessView
 
 urlpatterns = [
-    path("", HealthCheckView.as_view(), name="health-check"),
+    path("live/", LivenessView.as_view(), name="liveness"),
+    path("ready/", ReadinessView.as_view(), name="readiness"),
 ]

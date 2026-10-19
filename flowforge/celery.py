@@ -4,7 +4,7 @@ import os
 
 from celery import Celery
 
-os.environ.setdefault("DJANGO_SETTINGS_MODULE", "flowforge.settings")
+os.environ.setdefault("DJANGO_SETTINGS_MODULE", "flowforge.settings.dev")
 
 app = Celery("flowforge")
 app.config_from_object("django.conf:settings", namespace="CELERY")

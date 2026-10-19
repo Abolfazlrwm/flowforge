@@ -1,9 +1,17 @@
-"""Django settings for FlowForge."""
+"""Base settings shared by all environments.
+
+Environment selection is done via ``DJANGO_SETTINGS_MODULE``:
+
+- ``flowforge.settings.dev``  — local development (DEBUG on)
+- ``flowforge.settings.test`` — automated tests
+- ``flowforge.settings.prod`` — production (secure defaults enforced)
+"""
 
 from pathlib import Path
 
 import environ
 import structlog
+from django.core.exceptions import ImproperlyConfigured
 
 env = environ.Env(
     DJANGO_DEBUG=(bool, False),
@@ -12,14 +20,36 @@ env = environ.Env(
     DJANGO_SECURE_HSTS_SECONDS=(int, 0),
     DJANGO_SECURE_HSTS_INCLUDE_SUBDOMAINS=(bool, False),
     DJANGO_SECURE_HSTS_PRELOAD=(bool, False),
+    DJANGO_SECURE_REFERRER_POLICY=(str, "same-origin"),
 )
 
-BASE_DIR = Path(__file__).resolve().parent.parent
+BASE_DIR = Path(__file__).resolve().parent.parent.parent
 
 environ.Env.read_env(BASE_DIR / ".env")
 
-SECRET_KEY: str = env("DJANGO_SECRET_KEY")
+# ---------------------------------------------------------------------------
+# Core
+# ---------------------------------------------------------------------------
 DEBUG: bool = env("DJANGO_DEBUG")
+
+# SECRET_KEY is mandatory whenever DEBUG is off. In development a well-known
+# insecure key is allowed so that `runserver` works out of the box, but it is
+# never acceptable in production.
+_secret_key: str | None = env("DJANGO_SECRET_KEY", default=None)
+
+if not _secret_key:
+    if DEBUG:
+        _secret_key = "django-insecure-dev-only-key-do-not-use-in-production"  # noqa: S105
+    else:
+        raise ImproperlyConfigured(
+            "DJANGO_SECRET_KEY is required when DEBUG is off. "
+            "Generate one with: python -c "
+            "'from django.core.management.utils import get_random_secret_key; "
+            "print(get_random_secret_key())'"
+        )
+
+SECRET_KEY: str = _secret_key
+
 ALLOWED_HOSTS: list[str] = env("DJANGO_ALLOWED_HOSTS")
 
 INSTALLED_APPS = [
@@ -98,16 +128,26 @@ STATIC_ROOT = BASE_DIR / "staticfiles"
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
-# Security
+# ---------------------------------------------------------------------------
+# Security (baseline — prod.py hardens these further)
+# ---------------------------------------------------------------------------
 SECURE_SSL_REDIRECT = env("DJANGO_SECURE_SSL_REDIRECT")
 SECURE_HSTS_SECONDS = env("DJANGO_SECURE_HSTS_SECONDS")
 SECURE_HSTS_INCLUDE_SUBDOMAINS = env("DJANGO_SECURE_HSTS_INCLUDE_SUBDOMAINS")
 SECURE_HSTS_PRELOAD = env("DJANGO_SECURE_HSTS_PRELOAD")
 SECURE_CONTENT_TYPE_NOSNIFF = True
 SECURE_BROWSER_XSS_FILTER = True
+SECURE_REFERRER_POLICY = env("DJANGO_SECURE_REFERRER_POLICY")
 X_FRAME_OPTIONS = "DENY"
 
+SESSION_COOKIE_HTTPONLY = True
+CSRF_COOKIE_HTTPONLY = True
+SESSION_COOKIE_SECURE = not DEBUG
+CSRF_COOKIE_SECURE = not DEBUG
+
+# ---------------------------------------------------------------------------
 # DRF
+# ---------------------------------------------------------------------------
 REST_FRAMEWORK = {
     "DEFAULT_AUTHENTICATION_CLASSES": [
         "rest_framework.authentication.SessionAuthentication",
@@ -122,7 +162,9 @@ REST_FRAMEWORK = {
     ],
 }
 
-# Celery
+# ---------------------------------------------------------------------------
+# Celery (interim — see ADR-007)
+# ---------------------------------------------------------------------------
 CELERY_BROKER_URL: str = env("CELERY_BROKER_URL", default="amqp://guest:guest@localhost:5672//")
 CELERY_RESULT_BACKEND: str = env("CELERY_RESULT_BACKEND", default="redis://localhost:6379/1")
 CELERY_ACCEPT_CONTENT = ["json"]
@@ -131,7 +173,9 @@ CELERY_RESULT_SERIALIZER = "json"
 CELERY_TASK_TRACK_STARTED = True
 CELERY_TASK_TIME_LIMIT = 30 * 60
 
-# Redis cache
+# ---------------------------------------------------------------------------
+# Cache
+# ---------------------------------------------------------------------------
 CACHES = {
     "default": {
         "BACKEND": "django.core.cache.backends.redis.RedisCache",
@@ -139,7 +183,14 @@ CACHES = {
     },
 }
 
+# ---------------------------------------------------------------------------
+# Health checks
+# ---------------------------------------------------------------------------
+HEALTH_CHECK_BROKER_URL = env("CELERY_BROKER_URL", default="amqp://guest:guest@localhost:5672//")
+
+# ---------------------------------------------------------------------------
 # Logging / Structlog
+# ---------------------------------------------------------------------------
 LOGGING = {
     "version": 1,
     "disable_existing_loggers": False,
