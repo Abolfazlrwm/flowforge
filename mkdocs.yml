@@ -12,6 +12,9 @@ nav:
   - Home: index.md
   - Architecture:
       - Overview: architecture/overview.md
+      - Data Model: architecture/data-model.md
+      - Execution Model: architecture/execution-model.md
+      - Workflow Definitions: architecture/definitions.md
   - Development:
       - Setup: development/setup.md
       - Roadmap: development/ROADMAP.md
