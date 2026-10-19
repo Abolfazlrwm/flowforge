@@ -11,11 +11,11 @@ parts of distributed execution explicit — leases, fencing tokens, a
 transactional outbox and at-least-once delivery — instead of hiding them
 behind a task decorator.
 
-> **Status: Phase 0 of 11 — engineering foundation only.**
-> There is no workflow engine yet. What exists today is the platform skeleton:
-> configuration, health probes, container images, and a CI pipeline that
-> builds and boots the whole stack. The feature table below lists exactly what
-> is implemented and nothing more.
+> **Status: Phase 2 of 11 — definitions and state machines, no execution yet.**
+> A workflow can be described, validated and published, and the rules that will
+> drive execution exist as pure Python with database constraints behind them.
+> Nothing runs a workflow yet: there is no API, no scheduler and no worker loop.
+> The feature table below lists exactly what is implemented and nothing more.
 
 ## Why this exists
 
@@ -57,10 +57,10 @@ not implied.
 | Property | Target | Status |
 |----------|--------|--------|
 | Delivery semantics | **At-least-once**, never exactly-once | Planned (Phase 4–5) |
-| Duplicate suppression | Idempotent handlers + lease fencing tokens | Planned (Phase 5–6) |
+| Duplicate suppression | Idempotent handlers + lease fencing tokens | Fencing tokens implemented (Phase 1); handlers Phase 5 |
 | Publish/commit atomicity | Transactional outbox | Planned (Phase 4) |
-| Concurrent claiming | `SELECT … FOR UPDATE SKIP LOCKED` | Planned (Phase 4) |
-| Stale-writer protection | Monotonic fencing token checked on write | Planned (Phase 5) |
+| Concurrent claiming | Conditional `UPDATE … WHERE state = ?` — the database decides the winner | Implemented (Phase 1) |
+| Stale-writer protection | Monotonic fencing token checked on write | Implemented (Phase 1) |
 | Failure visibility | Explicit `DEAD` state + manual requeue | Planned (Phase 6) |
 
 **Explicit non-goals:** exactly-once execution, arbitrary user-supplied Python
@@ -107,10 +107,15 @@ uv run python manage.py runserver
 | Docker Compose stack (db, redis, rabbitmq, one-shot migrate, web, scheduler, worker) | Implemented |
 | CI: lint, format, mypy, migration check, tests, compose smoke test | Implemented |
 | Dependency lock file (`uv.lock`) used by CI and the image | Implemented |
-| Domain models, state machines | **Not implemented** (Phase 1) |
-| Workflow definition validation | **Not implemented** (Phase 2) |
+| State machines with validated transition tables, enforced at import time | Implemented (Phase 1) |
+| Atomic conditional-`UPDATE` transitions; a lost race returns `False`, not an error | Implemented (Phase 1) |
+| Leases with fencing tokens, so a resurrected worker's write matches zero rows | Implemented (Phase 1) |
+| UUID primary keys and six `CHECK` constraints mirroring the domain rules | Implemented (Phase 1) |
+| Workflow definitions as validated value objects, with a dependency graph | Implemented (Phase 2) |
+| Duplicate-key, unknown-dependency and cycle rejection (iterative detection) | Implemented (Phase 2) |
+| JSON Schema validation with JSONPath errors; versioned, lossless publishing | Implemented (Phase 2) |
 | REST API, auth, pagination | **Not implemented** (Phase 3) |
-| Scheduler, outbox, leases, fencing tokens | **Not implemented** (Phases 4–5) |
+| Scheduler, transactional outbox, worker loop | **Not implemented** (Phases 4–5) |
 | Retries, DLQ, reaper | **Not implemented** (Phase 6) |
 | Multi-tenancy, RBAC, audit log | **Not implemented** (Phase 8) |
 | Metrics, tracing, dashboards | **Not implemented** (Phase 9) |
@@ -139,6 +144,7 @@ uv run pytest tests/unit -v --cov
 ## Documentation
 
 - [Architecture overview](docs/architecture/overview.md)
+- [Data model](docs/architecture/data-model.md) · [Execution model](docs/architecture/execution-model.md) · [Workflow definitions](docs/architecture/definitions.md)
 - [Development setup](docs/development/setup.md)
 - [Roadmap](docs/development/ROADMAP.md) · [Progress](docs/development/PROGRESS.md)
 - [Architecture decisions](docs/adr/) · [Decisions index](docs/development/DECISIONS.md)

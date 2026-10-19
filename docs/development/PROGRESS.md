@@ -342,6 +342,12 @@ passed only because of container start ordering.
     and its Mermaid diagram is not rendered in CI.** There is no Markdown link
     checker and no diagram render step in the pipeline; the diagram is verified
     by reading, not by a build.
+19. **The MkDocs site is not built anywhere.** `mkdocs.yml` lists the three
+    architecture documents added in Phases 1 and 2, but `mkdocs` is not in the
+    dependency set and CI has no docs job, so the nav has never been exercised
+    and the Mermaid blocks would not render without `pymdownx.superfences`.
+    Adding that extension and a `mkdocs build --strict` CI step is a real gap,
+    not a cosmetic one.
 
 ## Dependency decisions
 
