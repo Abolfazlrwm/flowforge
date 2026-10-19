@@ -87,8 +87,21 @@ jobs:
         run: uv run python manage.py makemigrations --check --dry-run
       - name: Run migrations
         run: uv run python manage.py migrate --noinput
-      - name: Run tests
+      - name: Run unit tests
         run: uv run pytest tests/unit -v --cov --cov-report=xml
+
+      # The concurrency tests are the only proof that the atomic conditional
+      # UPDATE picks exactly one winner. On SQLite they skip, because SQLite
+      # serialises writers and a race test there proves nothing. Without this
+      # step the whole guarantee was silently unexercised in CI.
+      #
+      # REQUIRE_POSTGRES=1 turns the skip into a failure, so a database
+      # misconfiguration goes red here instead of passing quietly.
+      - name: Run integration tests (real PostgreSQL)
+        run: uv run pytest tests/integration -v
+        env:
+          REQUIRE_POSTGRES: "1"
+
       - name: Upload coverage
         # Codecov rejects tokenless uploads ("Token required - not valid
         # tokenless upload") and the action still reports success, so this step

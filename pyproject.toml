@@ -48,6 +48,7 @@ dev = [
     "pytest-cov>=5.0",
     "factory-boy>=3.3",
     "faker>=30.0",
+    "hypothesis>=6.112",
     "ruff>=0.6",
     "mypy>=1.11",
     # Stub packages track their target's version, and the direction of drift
@@ -96,6 +97,10 @@ convention = "google"
 "tests/**" = ["S101", "S105", "S106", "PLR2004", "D103"]
 "*/migrations/*" = ["ALL"]
 "manage.py" = ["PLC0415"]
+# Django reads Meta attributes as plain class attributes and rejects ClassVar
+# annotations on them, so RUF012 cannot be satisfied here without breaking the
+# model. The lists are never mutated at runtime.
+"core/models.py" = ["RUF012"]
 
 [tool.ruff.format]
 quote-style = "double"

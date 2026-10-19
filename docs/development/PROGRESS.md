@@ -2,7 +2,8 @@
 
 ## Current Phase
 
-**Phase 1 — Domain Modeling: IN PROGRESS.** Phase 0 is closed and released.
+**Phase 1 — Domain Modeling: COMPLETE, pending CI on the PR.** Phase 0 is closed
+and released.
 
 ## Resume point
 
@@ -10,27 +11,28 @@ If this session is resumed cold, read this section first.
 
 | Question | Answer |
 |----------|--------|
-| Where is the work | `main` is the only long-lived branch. Phase 0 is merged and tagged. |
-| What is released | `v0.1.0`, annotated tag on `97c17bf`, with a GitHub Release. |
+| Where is the work | `feat/phase1-domain-modeling`, branched from `main` at `525e919`. |
+| What is released | `v0.1.0` (Phase 0) and the Django 5.2 LTS stack upgrade on `main`. |
 | Framework | **Django 5.2 LTS** (owner decision, [ADR-010](../adr/ADR-010-django-5-2-lts.md)). Python stays at 3.13. |
-| What is next | Phase 1 — Domain Modeling, target `v0.2.0`. |
-| What blocks Phase 1 | **Nothing.** Issue #11 was closed by ADR-010. |
-| What else is open | Nothing pending an owner decision. The Dependabot backlog was resolved as one coordinated stack upgrade; see "Dependency decisions". |
+| What is next | Tag `v0.2.0`, then Phase 2 — Workflow Definition Engine. |
+| What blocks Phase 1 | **Nothing.** |
+| What else is open | Nothing pending an owner decision. |
 
 ## Status
 
 | Item | State |
 |------|-------|
-| Branch | `main` |
+| Branch | `feat/phase1-domain-modeling` |
 | Phase 0 PR | #1 — **MERGED** as `97c17bf` |
-| CI | Green — https://github.com/Abolfazlrwm/flowforge/actions/runs/39212369063 |
-| Docker | **Verified in CI** (build + `docker compose up` + health probes) |
+| Stack upgrade | **MERGED** as `525e919` (Django 5.2 LTS, DRF 3.17, Actions re-pinned) |
+| CI | See "Verification" — the Phase 1 run is the authoritative one |
+| Docker | **Verified in CI** (build + `docker compose up` + health probes). **Not** verified on the owner's machine; the daemon is offline there |
 | v0.1.0 tag | Created — annotated, points at `97c17bf` |
 | GitHub Release | Published — https://github.com/Abolfazlrwm/flowforge/releases/tag/v0.1.0 |
 | Branch protection | Active on `main`: `lint`, `test`, `docker` required, strict, no force push, 0 approving reviews |
 | Django | **5.2 LTS** (ADR-010) |
 | Python | 3.13 (3.14 deferred — see limitations) |
-| Phase 1 | In progress |
+| Phase 1 | Complete — 143 unit tests, 5 PostgreSQL concurrency tests |
 
 ## Completed
 
@@ -77,6 +79,44 @@ If this session is resumed cold, read this section first.
 24. Coordinated stack upgrade: Django 5.2 LTS and DRF 3.17.2, four GitHub
     Actions majors re-pinned to commit SHAs, Dependabot grouping, and ignore
     rules with reasons for the three declined upgrades (ADR-010).
+
+### Phase 1 — Domain Modeling
+
+25. `core/domain/` is a pure-Python package with **no Django import**, enforced
+    two ways: an AST walk over every module and a subprocess re-import with
+    `django` blocked on `sys.meta_path`. The scanner is itself tested against
+    deliberately bad source.
+26. `WorkflowRunState` (pending, running, succeeded, failed, cancelled) and
+    `TaskRunState` (pending, ready, running, succeeded, failed, retrying,
+    cancelled) as `StrEnum`.
+27. `StateMachine[T]` with `Transition` dataclasses, validated at import time:
+    duplicate edges, duplicate names, edges out of a terminal state, dead ends,
+    and states from the wrong enum all raise `ValueError`.
+28. `WORKFLOW_RUN_MACHINE` (5 edges, 3 terminal) and `TASK_RUN_MACHINE` (9 edges,
+    2 terminal). `FAILED` is deliberately non-terminal for `TaskRun` so a retry
+    reuses the row instead of breaking `(workflow_run, task)` uniqueness.
+29. Frozen dataclass entities with `__post_init__` invariants, one test per rule.
+30. `derive_workflow_run_state` with documented precedence
+    (cancelled > failed > all-succeeded > running > pending) and
+    `initial_task_run_state` for DAG eligibility.
+31. Persistence models with UUID PKs, six `CHECK` constraints and five named
+    indexes. Constraints are proven by writing through `QuerySet.update()` so
+    every Python-level guard is bypassed (`tests/unit/test_constraints.py`).
+32. `core/repositories/transitions.py`: atomic conditional `UPDATE` returning
+    whether the transition won; `claim_task_run` increments the fencing token in
+    the same statement and returns it; `finish_task_run` requires a matching
+    token, so a resurrected worker's write matches zero rows.
+33. Hypothesis `RuleBasedStateMachine` property tests plus exhaustive table
+    assertions, including a regression test for the `StrEnum` equality trap
+    (`TaskRunState.CANCELLED == WorkflowRunState.CANCELLED` is `True`).
+34. Concurrency tests on real PostgreSQL: 16 threads released by a
+    `threading.Barrier`, no sleeps. Five tests: exactly one claim wins, the
+    winner is the recorded worker, exactly one run start wins, one writer per
+    token, and a stale token loses under concurrency. CI now runs these with
+    `REQUIRE_POSTGRES=1`, so they can no longer skip silently.
+35. `docs/architecture/data-model.md` and `docs/architecture/execution-model.md`
+    — the latter with Mermaid state diagrams for both machines and a
+    fencing-token sequence diagram.
 
 ## Verification
 
@@ -127,8 +167,8 @@ passed only because of container start ordering.
 1. **Celery is interim** (ADR-007). The custom scheduler, transactional outbox,
    direct RabbitMQ delivery and lease/fencing mechanism do not exist yet; the
    keep-or-replace decision belongs to Phase 4.
-2. **No domain models, migrations or API endpoints.** `api/v1/urls.py` is an
-   empty placeholder.
+2. **No API endpoints yet.** `api/v1/urls.py` is still an empty placeholder. The
+   domain models and their migrations exist as of Phase 1.
 3. **Readiness checks are shallow.** RabbitMQ is checked with a TCP connect,
    not an authenticated AMQP handshake. Redis is checked with a cache write,
    which would also pass against a different cache backend.
@@ -139,8 +179,10 @@ passed only because of container start ordering.
 ### Tooling
 
 5. **Base image pinned by tag, not digest.** `python:3.13-slim` can drift.
-6. **No integration or end-to-end test suite** beyond the compose smoke test.
-   `tests/integration/` and `tests/e2e/` are empty.
+6. **No end-to-end suite.** `tests/integration/` now covers concurrent state
+   transitions on real PostgreSQL, but there is no test that drives a workflow
+   from API request to worker completion; that becomes possible in Phase 5.
+   `tests/e2e/` is still empty.
 7. **Coverage is 100% of a very small codebase.** The number is not yet
    meaningful as a quality signal.
 8. **Pre-commit hooks use `language: system`**, so they depend on the local
