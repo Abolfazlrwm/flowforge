@@ -1,204 +1,228 @@
-# Phase 0 Independent Audit Report
+# Phase 0 — Independent Audit Report (closeout)
 
-**Date:** 2026-10-18
-**Auditor:** Independent (skeptical review)
+**Audit started:** 2026-10-18
+**Closeout:** 2026-10-19
 **Branch:** `chore/phase0-audit-fixes`
-**PR:** https://github.com/Abolfazlrwm/flowforge/pull/1
+**PR:** #1 — open, **not merged**
+**v0.1.0 tag:** **not created** — blocked on Docker verification by the owner
 
----
+## Commit map
 
-## Step 1: Repository Safety
+| Commit | Purpose |
+|--------|---------|
+| `74e4a4c` | Initial Phase 0 delivery under review |
+| `4e86b54` | First audit fix round (18 defects). Also contained an **unapproved** rename to "TaskForge". |
+| `db3bc71` | First audit report (superseded by this document) |
+| `1352e22` | Revert the rename; split settings into `base/dev/test/prod` |
+| `bc38824` | Behavioural tests for health probes and security settings |
+| `6b4cfe2` | `uv.lock`, CI installs from the lock, actions pinned to SHAs |
+| *(docs commit)* | Documentation closeout |
 
-| Check | Result |
-|-------|--------|
-| Git root | `C:/Users/CMG/Desktop/Git hub/FlowForge` (correct, not a parent repo) |
-| Remote | `https://github.com/Abolfazlrwm/flowforge.git` |
-| Branches | `main` (only branch at audit start) |
-| Commits | 1 (`74e4a4c feat(project): initialize FlowForge Phase 0 engineering foundation`) |
-| Repo visibility | **PUBLIC** |
-| Unrelated files committed | None — all tracked files belong to the project |
-| Secrets in history | None found (grep + pattern scan; gitleaks/detect-secrets not installed) |
-| .gitignore coverage | `.env`, venvs, `__pycache__`, `.mypy_cache`, `.pytest_cache`, `*.sqlite3`, `staticfiles` — all present. **Missing `.ruff_cache`** (fixed). |
+## Step 1 — Repository safety
 
-### Notes
-- Repo is **PUBLIC**. No real secrets found, but placeholder values like `local-dev-secret` and `flowforge` (DB password) are in `compose.yaml` and CI. These are acceptable for development but must not be used in production.
-- `.workbuddy-ai/` directory is untracked and should remain excluded.
+| Check | Result | Evidence |
+|-------|--------|----------|
+| Git root | Project directory itself, not a parent repo | `git rev-parse --show-toplevel` → `C:/Users/CMG/Desktop/Git hub/FlowForge` |
+| Remote | `https://github.com/Abolfazlrwm/flowforge.git` | `git remote -v` |
+| Visibility | **PUBLIC** | `gh repo view --json visibility` → `"PUBLIC"` |
+| Branches at audit start | `main` only | `git branch -a` |
+| History | 1 commit at audit start | `git log --oneline -20` |
+| Unrelated files committed | None | Every tracked path belongs to the project |
+| Deleted files in history | None | `git log --all --diff-filter=D --summary` → empty |
 
----
+## Step 2 — Verification results
 
-## Step 2: Verification Results (Post-Fix)
-
-| Command | Before Fix | After Fix |
-|---------|-----------|-----------|
+| Command | At audit start | Now |
+|---------|----------------|-----|
 | `ruff check .` | PASS | PASS |
-| `ruff format --check .` | **FAIL** (3 files: asgi.py, wsgi.py, manage.py) | **PASS** |
-| `mypy taskforge core api` | PASS | PASS |
-| `pytest tests/unit -v --cov` | **FAIL** (0% coverage, `source=["src"]` wrong) | **PASS** (91.23% coverage, 2 tests) |
-| `manage.py check --deploy` | 5 warnings | 3 warnings (env-dependent, expected) |
-| `manage.py makemigrations --check` | PASS | PASS |
+| `ruff format --check .` | **FAIL** — 3 files | PASS (42 files) |
+| `mypy flowforge core api` | PASS | PASS (17 files) |
+| `pytest tests/unit --cov` | **FAIL** — 0% coverage, gate 80% | PASS — 13 tests, 100% |
+| `manage.py check --deploy` | 5 warnings | **0 issues** (prod settings, strong key) |
+| `manage.py makemigrations --check --dry-run` | PASS (no models) | PASS |
 | `docker compose config` | Valid | Valid |
-| Docker build/run | **UNVERIFIED** (daemon offline) | **UNVERIFIED** (daemon offline) |
-| `/health/` against real server | 200 `{"status":"ok"}` (no DB check) | `/health/live/` → 200, `/health/ready/` → 503 (checks PG/Redis/RabbitMQ) |
+| `docker build` / `compose up` | **UNVERIFIED** | **UNVERIFIED** |
+| `GET /health/live/` on a real server | 200, no dependency checks | 200 `{"status":"alive","service":"flowforge"}` |
+| `GET /health/ready/` on a real server | did not exist | 503 `{"status":"degraded","checks":{"postgres":"ok","redis":"error","rabbitmq":"error"}}` |
 
-### Django `check --deploy` Warnings (Remaining 3)
-1. `security.W004` — `SECURE_HSTS_SECONDS` not set. **Expected**: env-controlled, only set in production.
-2. `security.W008` — `SECURE_SSL_REDIRECT` not True. **Expected**: env-controlled, only True in production.
-3. `security.W009` — `SECRET_KEY` too short. **Expected**: using test secret "audit-secret". Production must use a 50+ char random key.
+Deploy check with production settings and a generated key:
 
-The previously failing `W012` (SESSION_COOKIE_SECURE) and `W016` (CSRF_COOKIE_SECURE) are now **fixed** — both are set to `True` when `DEBUG=False`.
+```
+$ DJANGO_SETTINGS_MODULE=flowforge.settings.prod \
+  DJANGO_SECRET_KEY=<64-char random> \
+  DJANGO_ALLOWED_HOSTS=example.com \
+  uv run python manage.py check --deploy
+System check identified no issues (0 silenced).
+```
 
----
+### `check --deploy` warnings at audit start, explained
 
-## Step 3: Requirement Comparison Table
+| Code | Meaning | Why it appeared | Resolution |
+|------|---------|-----------------|------------|
+| `security.W004` | `SECURE_HSTS_SECONDS` unset | Only read from env, defaulted to 0 | `prod.py` sets 31 536 000 by default |
+| `security.W008` | `SECURE_SSL_REDIRECT` not True | Defaulted to False | `prod.py` defaults to True |
+| `security.W009` | Weak `SECRET_KEY` | The audit used `audit-secret` | `prod.py` rejects keys < 50 chars and placeholders |
+| `security.W012` | `SESSION_COOKIE_SECURE` not True | Setting absent | Derived from `DEBUG`, forced True in prod |
+| `security.W016` | `CSRF_COOKIE_SECURE` not True | Setting absent | Derived from `DEBUG`, forced True in prod |
+
+## Step 3 — The 18 defects, with file paths and fixing commits
+
+| # | Defect | File(s) | Fixed in |
+|---|--------|---------|----------|
+| 1 | `ruff format --check` failed: single quotes and missing blank line after docstring | `flowforge/asgi.py`, `flowforge/wsgi.py`, `manage.py` | `4e86b54` |
+| 2 | Coverage `source = ["src"]` pointed at a directory that does not exist, so every run reported 0% and failed the 80% gate | `pyproject.toml` | `4e86b54` |
+| 3 | Hatch wheel `packages = ["src/flowforge"]` pointed at a non-existent path, so the package could not be built | `pyproject.toml` | `4e86b54` |
+| 4 | `pytest-cov` missing from dev dependencies while `--cov` was used in `addopts` and CI | `pyproject.toml` | `4e86b54` |
+| 5 | Health endpoint returned a static `{"status":"ok"}` and never touched the database | `core/views.py`, `core/urls.py`, `flowforge/urls.py` | `4e86b54` (split into liveness/readiness); hardened in `1352e22` |
+| 6 | No `SESSION_COOKIE_SECURE` / `CSRF_COOKIE_SECURE`; deploy check warned W012/W016 | `flowforge/settings.py` → `flowforge/settings/base.py` | `4e86b54`, moved in `1352e22` |
+| 7 | No `SECURE_REFERRER_POLICY` | `flowforge/settings.py` → `flowforge/settings/base.py` | `4e86b54`, moved in `1352e22` |
+| 8 | Docker image ran as root | `Dockerfile` | `4e86b54` |
+| 9 | No `.dockerignore`, so `.git`, `.venv`, `.env` and caches were sent to the daemon | `.dockerignore` | `4e86b54` |
+| 10 | CI never checked for missing migrations | `.github/workflows/ci.yml` | `4e86b54` |
+| 11 | CI never built the Docker image | `.github/workflows/ci.yml` | `4e86b54` |
+| 12 | No Dependabot configuration | `.github/dependabot.yml` | `4e86b54` |
+| 13 | `HEALTHCHECK` probed `/health/`, which no longer existed after the probe split | `Dockerfile` | `4e86b54` |
+| 14 | `.ruff_cache/` missing from `.gitignore` | `.gitignore` | `4e86b54` |
+| 15 | No MkDocs configuration despite documentation claims | `mkdocs.yml` | `4e86b54` |
+| 16 | `docs/adr/` existed but was empty; ADRs lived only in a summary file | `docs/adr/` | `4e86b54` |
+| 17 | `-n auto` in pytest `addopts` interfered with coverage measurement | `pyproject.toml` | `4e86b54` |
+| 18 | Project name conflicted with an npm-reserved name, a PyPI `flow-forge` package, several GitHub projects, a prior venture-funded company (now FlowFuse) and an active commercial product | project-wide | Rename attempt in `4e86b54` **reverted** in `1352e22`; conflicts documented in `docs/development/NAMING_ANALYSIS.md` |
+
+### Additional defects found during closeout
+
+| # | Defect | File(s) | Fixed in |
+|---|--------|---------|----------|
+| 19 | `[project.scripts] flowforge = "cli.main:main"` referenced a module that does not exist, shipping a broken console script | `pyproject.toml` | `1352e22` |
+| 20 | Production image installed `.[dev]`, bundling pytest, ruff and mypy into the runtime image | `Dockerfile` | `1352e22` |
+| 21 | No lock file; dependency resolution was unpinned and non-reproducible | `uv.lock` | `6b4cfe2` |
+| 22 | GitHub Actions referenced floating tags (`@v4`, `@v5`) rather than immutable commits | `.github/workflows/ci.yml` | `6b4cfe2` |
+| 23 | Settings were a single module with no way to express environment differences; `SECRET_KEY` was optional even with `DEBUG=False` | `flowforge/settings/` | `1352e22` |
+| 24 | No test exercised readiness failure modes or the security flags | `tests/unit/test_health.py`, `tests/unit/test_settings.py` | `bc38824` |
+
+## Step 4 — Requirement table
+
+Status key: **Done** · **Partial** · **Missing** (deferred by the roadmap, not
+a defect) · **Deviation** (implemented differently from the spec).
 
 | # | Requirement | Status | Evidence |
-|---|------------|--------|----------|
-| 1 | Isolated Git repo (not parent) | Done | `git rev-parse --show-toplevel` → FlowForge dir |
-| 2 | Django 5.1 project | Done | `pyproject.toml`: `django>=5.1,<5.2`; installed 5.1.15 |
-| 3 | PostgreSQL integration | Done | `settings.py`: `env.db_url("DATABASE_URL")`; `compose.yaml`: postgres:16-alpine |
-| 4 | Redis integration | Done | `settings.py`: `RedisCache`; `compose.yaml`: redis:7-alpine |
-| 5 | RabbitMQ integration | Done | `compose.yaml`: rabbitmq:3.13-alpine; `CELERY_BROKER_URL` |
-| 6 | Celery task queue | **Deviation** | Celery used instead of custom scheduler. ADR-007 documents this as interim. |
-| 7 | Custom Scheduler | **Missing** | Not in Phase 0 scope. Deferred to Phase 4 per ADR-007. |
-| 8 | Transactional outbox | **Missing** | Not in Phase 0 scope. Deferred to Phase 4. |
-| 9 | Direct RabbitMQ delivery | **Missing** | Not in Phase 0 scope. Deferred to Phase 4. |
-| 10 | Leases + fencing tokens | **Missing** | Not in Phase 0 scope. Deferred to Phase 5. |
-| 11 | Health endpoint | Done (fixed) | Split into `/health/live/` (liveness) and `/health/ready/` (readiness with PG/Redis/RabbitMQ checks) |
-| 12 | DB connectivity in health | Done (fixed) | `ReadinessView` executes `SELECT 1` on PostgreSQL |
-| 13 | Separate liveness/readiness | Done (fixed) | `core/views.py`: `LivenessView` + `ReadinessView` |
-| 14 | Settings split base/dev/test/prod | **Deviation** | Single `settings.py` with env-controlled flags. Acceptable for Phase 0 but should split in Phase 1+. |
-| 15 | DEBUG=False default | Done | `env("DJANGO_DEBUG", (bool, False))` defaults to False |
-| 16 | ALLOWED_HOSTS from env | Done | `env("DJANGO_ALLOWED_HOSTS", (list, []))` |
-| 17 | SECRET_KEY required | Done | `env("DJANGO_SECRET_KEY")` — no default, raises if missing |
-| 18 | SSL/HSTS/cookie flags | Partial (fixed) | `SECURE_SSL_REDIRECT`, `SECURE_HSTS_*`, `SESSION_COOKIE_SECURE`, `CSRF_COOKIE_SECURE` (all env-controlled). Missing `SECURE_PROXY_SSL_HEADER` — should add when deploying behind a reverse proxy. |
-| 19 | Dockerfile non-root user | Done (fixed) | `USER taskforge` with `groupadd`/`useradd` |
-| 20 | Pinned base image | Partial | `python:3.13-slim` — pinned to major.minor but not digest. Acceptable for Phase 0. |
-| 21 | Multi-stage Dockerfile | Done | `builder` + `production` stages |
-| 22 | Dockerfile healthcheck | Done (fixed) | `HEALTHCHECK CMD curl -f http://localhost:8000/health/live/` |
-| 23 | .dockerignore | Done (fixed) | Created with all relevant exclusions |
-| 24 | compose healthchecks | Done | `db`, `redis`, `rabbitmq` all have healthchecks |
-| 25 | depends_on conditions | Done | All services use `condition: service_healthy` |
-| 26 | Volumes | Done | `postgres_data` volume |
-| 27 | No hardcoded secrets in compose | Partial | Uses `${DJANGO_SECRET_KEY:-local-dev-secret}` — acceptable for dev. DB password `taskforge` is hardcoded but only for local dev. |
-| 28 | CI runs mypy | Done | `ci.yml`: `mypy taskforge core api --ignore-missing-imports` |
-| 29 | CI runs migration check | Done (fixed) | `ci.yml`: `python manage.py makemigrations --check --dry-run` |
-| 30 | CI runs Docker build | Done (fixed) | `ci.yml`: `docker-build` job |
-| 31 | Actions pinned to versions | Partial | Uses `@v4`, `@v5` (major version tags, not SHAs). Acceptable but not best practice. |
-| 32 | Dependabot config | Done (fixed) | `.github/dependabot.yml` for pip, GitHub Actions, Docker |
-| 33 | Dependencies real and compatible | Done | All install successfully; Django 5.1.15, DRF 3.15.2, Celery 5.4.0, etc. |
-| 34 | Lock file | **Missing** | No `uv.lock`, `requirements.txt`, or `Pipfile.lock`. AGENTS.md mentions `uv` but it's not used. |
-| 35 | Supported Python/Django versions documented | Done | `pyproject.toml`: Python 3.11/3.12/3.13, Django 5.1 |
-| 36 | README claims only implemented features | Done | No fake badges; status clearly marked as Phase 0 alpha |
-| 37 | docs/architecture/overview.md | Done | Exists with component diagram and design principles |
-| 38 | docs/adr/ exists | Done (fixed) | Created with ADR-007 and ADR-008 |
-| 39 | MkDocs config | Done (fixed) | `mkdocs.yml` created |
-| 40 | Naming conflict | Done (fixed) | Renamed FlowForge → TaskForge (ADR-008) |
+|---|-------------|--------|----------|
+| 1 | Isolated repository, not nested in a parent repo | Done | `git rev-parse --show-toplevel` |
+| 2 | Django 5.1 project | Done | `pyproject.toml` `django>=5.1,<5.2`; installed 5.1.15 |
+| 3 | PostgreSQL as authoritative state | Done | `settings/base.py` `env.db_url("DATABASE_URL")`; `compose.yaml` `postgres:16-alpine` |
+| 4 | Redis for cache and result backend | Done | `CACHES` → `RedisCache`; `compose.yaml` `redis:7-alpine` |
+| 5 | RabbitMQ as broker | Done | `CELERY_BROKER_URL`; `compose.yaml` `rabbitmq:3.13-alpine` |
+| 6 | Custom Scheduler | **Deviation** | Celery beat substitutes for it (`compose.yaml` `scheduler`). ADR-007 records the deviation and defers the decision to Phase 4 |
+| 7 | Transactional outbox | **Missing** | Not implemented. `docs/development/ROADMAP.md` Phase 4 |
+| 8 | Direct RabbitMQ delivery (publisher confirms, DLX) | **Deviation** | Delivery is delegated to Celery/Kombu; no direct AMQP channel control. ADR-007 |
+| 9 | Lease-based execution with fencing tokens | **Missing** | `ROADMAP.md` Phase 5 |
+| 10 | DAG workflow definition engine (validation, cycle detection, topo sort) | **Missing** | `ROADMAP.md` Phase 2 |
+| 11 | REST API for workflows and executions | **Missing** | `api/v1/urls.py` is an empty placeholder; `ROADMAP.md` Phase 3 |
+| 12 | Multi-tenancy, RBAC, tenant isolation | **Missing** | `ROADMAP.md` Phase 8 |
+| 13 | Observability: metrics, tracing, dashboards | **Partial** | Structured JSON logging via `structlog` in `settings/base.py`; no metrics or tracing. `ROADMAP.md` Phase 9 |
+| 14 | Health endpoint | Done | `/health/live/` and `/health/ready/` in `core/urls.py` |
+| 15 | Health endpoint checks database connectivity | Done | `core/views.py` `ReadinessView` runs `SELECT 1` |
+| 16 | Separate liveness and readiness probes | Done | `LivenessView` / `ReadinessView`; both verified against a live server |
+| 17 | Readiness checks PostgreSQL, Redis **and** RabbitMQ | Done | `checks` payload reports all three; verified 503 with Redis/RabbitMQ down |
+| 18 | Settings split into base/dev/test/prod | Done | `flowforge/settings/{base,dev,test,prod}.py` |
+| 19 | `DEBUG` defaults to False | Done | `env("DJANGO_DEBUG", (bool, False))`; prod forces False |
+| 20 | `ALLOWED_HOSTS` from environment, required in prod | Done | `prod.py` raises `ImproperlyConfigured` when empty |
+| 21 | `SECRET_KEY` required when `DEBUG` is off | Done | `settings/base.py` raises `ImproperlyConfigured`; tested in `tests/unit/test_settings.py` |
+| 22 | Secure defaults: SSL redirect, HSTS, secure cookies, referrer policy | Done | `prod.py`: redirect, HSTS 31 536 000 s, subdomains, preload, proxy header, secure cookies |
+| 23 | Dockerfile: multi-stage | Done | `builder` → `production` in `Dockerfile` |
+| 24 | Dockerfile: non-root user | Done | `USER flowforge` |
+| 25 | Dockerfile: healthcheck | Done | `HEALTHCHECK` → `/health/live/` |
+| 26 | Dockerfile: pinned base image | **Partial** | `python:3.13-slim` pinned by tag, not by digest |
+| 27 | `.dockerignore` | Done | `.dockerignore` |
+| 28 | Compose: healthchecks on all services | Done | `db`, `redis`, `rabbitmq` |
+| 29 | Compose: `depends_on` with `service_healthy` | Done | `web`, `scheduler`, `worker` |
+| 30 | Compose: named volumes | Done | `postgres_data` |
+| 31 | Compose: no hardcoded secrets | **Partial** | `DJANGO_SECRET_KEY` is `${DJANGO_SECRET_KEY:-local-dev-secret}`; the DB password `flowforge` is hardcoded but only for the local dev stack |
+| 32 | CI runs mypy | Done | `.github/workflows/ci.yml` lint job |
+| 33 | CI runs a migration check | Done | `makemigrations --check --dry-run` |
+| 34 | CI builds the Docker image | Done | `docker-build` job |
+| 35 | CI actions pinned to immutable versions | Done | Four actions pinned to commit SHAs with version comments |
+| 36 | Dependabot configured | Done | `.github/dependabot.yml` — `uv`, `github-actions`, `docker` |
+| 37 | Dependency versions real and compatible | Done | `uv.lock` resolves 82 packages; suite runs in the locked env |
+| 38 | Lock file present | Done | `uv.lock`; CI runs `uv lock --check` and `uv sync --locked` |
+| 39 | Supported Python / Django versions documented | Done | `pyproject.toml` classifiers: 3.11/3.12/3.13, Django 5.1 |
+| 40 | README claims only implemented features | Done | No badges; status line marks Phase 0 alpha; Celery described as interim |
+| 41 | `docs/architecture/overview.md` exists | Done | Present, with component diagram and design principles |
+| 42 | `docs/adr/` exists | Done | `docs/adr/ADR-007-celery-as-interim-task-infrastructure.md` |
+| 43 | MkDocs configuration | Done | `mkdocs.yml` |
+| 44 | Naming conflict investigated with evidence | Done | `docs/development/NAMING_ANALYSIS.md` — measured registry and GitHub results |
+| 45 | Tests exist for new behaviour | Done | 13 tests across `tests/unit/test_health.py` and `tests/unit/test_settings.py` |
+| 46 | Apache-2.0 license | Done | `LICENSE` |
+| 47 | Conventional Commits | Done | `git log` on this branch |
+| 48 | Docker stack verified end to end | **Missing** | Daemon offline; see UNVERIFIED |
 
----
+## Step 5 — Secret scan
 
-## Celery Deviation Analysis (Item a)
+Tool: `detect-secrets 1.5.0` (gitleaks was not installed and could not be
+fetched in this environment).
 
-**Spec calls for:** Custom Scheduler, transactional outbox, direct RabbitMQ delivery with leases and fencing tokens.
+Scope: 45 tracked files in the working tree, plus every file in all 3 commits
+in history (extracted with `git archive` and scanned).
 
-**Current implementation:** Celery 5.4 with RabbitMQ as broker and Redis as result backend. `taskforge/celery.py` configures Celery with `autodiscover_tasks()`. `compose.yaml` has `scheduler` (Celery beat) and `worker` (Celery worker) services.
+**Result: 0 real secrets.** 9–10 findings per commit, all development
+placeholders:
 
-**Conflict assessment:**
-- Celery **abstracts away** direct RabbitMQ channel control. You cannot easily implement publisher confirms, dead-letter exchange routing, or custom ack/nack semantics at the AMQP level.
-- The transactional outbox is a domain pattern that can be layered on top of any delivery mechanism — it's not inherently incompatible with Celery.
-- Lease-based execution with fencing tokens requires custom worker logic. Celery's worker model assumes tasks are stateless and idempotent; leases add statefulness that Celery doesn't natively support.
-- **Verdict:** Celery conflicts with the spec's requirement for direct RabbitMQ control and lease-based execution, but the conflict is not fatal for Phase 0.
+| File | Line | Type | Content | Verdict |
+|------|------|------|---------|---------|
+| `.env.example` | 8 | Basic Auth | `postgres://flowforge:flowforge@localhost/...` | Placeholder |
+| `.env.example` | 12 | Basic Auth | `amqp://guest:guest@localhost:5672//` | RabbitMQ default |
+| `.github/workflows/ci.yml` | 33 | Secret Keyword | `DJANGO_SECRET_KEY: ci-secret` | CI dummy |
+| `.github/workflows/ci.yml` | 42 | Secret Keyword | `POSTGRES_PASSWORD: flowforge` | Ephemeral CI service |
+| `.github/workflows/ci.yml` | 74 | Basic Auth | CI `DATABASE_URL` | Ephemeral CI service |
+| `compose.yaml` | 8 | Secret Keyword | `POSTGRES_PASSWORD: flowforge` | Local dev stack |
+| `compose.yaml` | 49, 51 | Basic Auth | Local `DATABASE_URL`, `CELERY_BROKER_URL` | Local dev stack |
+| `flowforge/settings/base.py` | 42 | Secret Keyword | `django-insecure-dev-only-key-...` | Deliberate DEBUG-only fallback, `# noqa: S105` |
+| `flowforge/settings/base.py` | 102 | Basic Auth | Default `DATABASE_URL` | Placeholder |
 
-**Decision (user-approved):** Keep Celery as interim infrastructure. Write ADR-007. Evaluate replacement or augmentation in Phase 4.
+No `.env` file is tracked. No credentials, tokens or private keys were found
+in any commit.
 
----
+## Step 6 — Naming evidence (summary)
 
-## Naming Conflict Analysis (Item i)
+Full measured evidence is in `docs/development/NAMING_ANALYSIS.md`. Headline
+results for the chosen name, **FlowForge**:
 
-**Original name:** FlowForge
+| Channel | Result |
+|---------|--------|
+| PyPI `flowforge` | Free — `GET /pypi/flowforge/json` → `{"message": "Not Found"}` |
+| PyPI `flow-forge` | **Taken** — returns package metadata |
+| npm `flowforge` | **Reserved** — package record exists with `versions: []`, published then unpublished in 2021 by another account; publishing is blocked |
+| npm `flow-forge` | Free — HTTP 404 |
+| GitHub | 12+ repositories; `relaticle/flowforge` (422★), `jialuechen/flowforge` (140★), `gufranthakur/FlowForge` (137★) |
+| Commerce | `flowforgesoft.com` active; FlowForge (founded 2021-04-02, US) raised a $2.7M seed round and was rebranded **FlowFuse** |
 
-**Conflicts found:**
-1. `github.com/gufranthakur/FlowForge` — Java desktop application
-2. `flowforgesoft.com` — commercial Go-based product with registered domain
-3. `github.com/Ganesh-parella/Flow-Forge` — Google Cloud / ASP.NET project
-4. No `flowforge` package on PyPI or npm
+**The name is not clear.** It is retained because the project owner decided to
+retain it. No rename was performed. Re-evaluation triggers are listed in the
+naming analysis.
 
-**Decision (user-approved):** Rename to **TaskForge**.
+## UNVERIFIED
 
-**TaskForge conflict check:**
-- PyPI: No package named "taskforge"
-- npm: No package named "taskforge"
-- GitHub: No exact-match repository
-- Google: No commercial product or website
-
-**3 alternatives considered:**
-1. **ForgeFlow** — clean on PyPI/npm/GitHub
-2. **TaskForge** — clean on all registries (selected)
-3. **DagForge** — emphasizes DAG workflows, clean on all registries
-
----
-
-## Defects Found and Fixed
-
-| # | Defect | Fix | Commit |
-|---|--------|-----|--------|
-| 1 | `ruff format --check` fails (3 files use single quotes) | Reformatted to double quotes | `4e86b54` |
-| 2 | Coverage `source=["src"]` — src/ doesn't exist | Changed to `["taskforge", "core", "api"]` | `4e86b54` |
-| 3 | `hatch packages=["src/flowforge"]` — doesn't exist | Changed to `["taskforge", "core", "api"]` | `4e86b54` |
-| 4 | `pytest-cov` missing from dev deps | Added `pytest-cov>=5.0` | `4e86b54` |
-| 5 | Health endpoint doesn't check DB | Split into liveness + readiness with PG/Redis/RabbitMQ checks | `4e86b54` |
-| 6 | No `SESSION_COOKIE_SECURE`/`CSRF_COOKIE_SECURE` in prod | Added, gated on `not DEBUG` | `4e86b54` |
-| 7 | No `SECURE_REFERRER_POLICY` | Added `same-origin` default | `4e86b54` |
-| 8 | No non-root Docker user | Added `taskforge` user | `4e86b54` |
-| 9 | No `.dockerignore` | Created | `4e86b54` |
-| 10 | No migration check in CI | Added `makemigrations --check --dry-run` | `4e86b54` |
-| 11 | No Docker build in CI | Added `docker-build` job | `4e86b54` |
-| 12 | No Dependabot | Created `.github/dependabot.yml` | `4e86b54` |
-| 13 | Dockerfile HEALTHCHECK points to `/health/` | Changed to `/health/live/` | `4e86b54` |
-| 14 | `.ruff_cache` missing from `.gitignore` | Added | `4e86b54` |
-| 15 | No MkDocs config | Created `mkdocs.yml` | `4e86b54` |
-| 16 | `docs/adr/` empty | Created ADR-007 and ADR-008 | `4e86b54` |
-| 17 | `-n auto` in pytest addopts | Removed (interferes with coverage) | `4e86b54` |
-| 18 | Naming conflict (FlowForge) | Renamed to TaskForge (ADR-008) | `4e86b54` |
-
----
-
-## Items UNVERIFIED
-
-| Item | Reason | Impact |
-|------|--------|--------|
-| Docker build | Docker daemon offline (server connection failed) | Cannot verify image builds or containers start |
-| Docker Compose up | Docker daemon offline | Cannot verify full stack starts |
-| CI pipeline execution | Only defined, not run on GitHub | Cannot verify CI passes in GitHub Actions |
-| Lock file reproducibility | No lock file exists | Cannot guarantee reproducible installs |
-
----
+| Item | Reason |
+|------|--------|
+| Docker image build | Docker daemon offline — `docker info` cannot reach `dockerDesktopLinuxEngine` |
+| `docker compose up` (all six services) | Same |
+| Docker healthcheck behaviour | Depends on a running image |
+| GitHub Actions execution | Workflow has never run on GitHub |
+| `uv.lock` reproducibility on Linux/CI | Verified only on Windows with Python 3.13.14 |
 
 ## Verdict
 
-### **PASSED WITH LIMITATIONS**
+**PASSED WITH LIMITATIONS.**
 
-Phase 0 passes all verifiable checks after fixes. The limitation is that Docker could not be verified due to the daemon being offline. The v0.1.0 tag is **deferred** until Docker verification passes.
+Every check that can run without a Docker daemon passes: lint, format, types,
+13 behavioural tests, 100% statement coverage of the currently existing code,
+migration check, compose syntax, deploy check with zero issues, a live-server
+probe of both health endpoints, and a clean secret scan across the full
+history.
 
-### What Passed
-- ruff check + format: PASS
-- mypy: PASS
-- pytest: 2 tests, 91.23% coverage: PASS
-- Django check --deploy: 3 env-dependent warnings (expected)
-- Migration check: PASS
-- docker compose config: Valid
-- Health endpoints (liveness + readiness): Working correctly against real server
-- No secrets in history
-- No unrelated files committed
-- All 40 spec requirements: Done or Partial (no Missing except deliberately deferred Phase 4+ items)
+The limitation is Docker: no image has been built and no container has been
+started, because the daemon was offline. Because of that:
 
-### What Blocks v0.1.0 Tag
-- Docker daemon offline — cannot verify image build or container startup
-- No lock file — reproducibility not guaranteed
+- **v0.1.0 is not tagged.**
+- **PR #1 is not merged.**
 
-### Recommended Next Steps
-1. Start Docker Desktop and run `docker compose up --build` to verify the full stack
-2. If Docker passes, tag v0.1.0
-3. Consider adding `uv.lock` or `requirements.txt` for reproducible installs
-4. Rename GitHub repository from `flowforge` to `taskforge`
-5. Merge PR #1 to main
-6. Do NOT begin Phase 1 until v0.1.0 is tagged
+Both await the owner verifying Docker on their machine.

@@ -17,6 +17,8 @@ nav:
       - Roadmap: development/ROADMAP.md
       - Progress: development/PROGRESS.md
       - Decisions: development/DECISIONS.md
+      - Naming Analysis: development/NAMING_ANALYSIS.md
+      - Audit Report: development/AUDIT_REPORT.md
   - Deployment:
       - Docker: deployment/docker.md
 
