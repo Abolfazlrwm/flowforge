@@ -122,7 +122,20 @@ If this session is resumed cold, read this section first.
 
 ### In CI (authoritative)
 
-Run: https://github.com/Abolfazlrwm/flowforge/actions/runs/39211983697
+Phase 1 run: https://github.com/Abolfazlrwm/flowforge/actions/runs/39226452632
+
+| Job | Result |
+|-----|--------|
+| lint (ruff, ruff format, mypy) | PASS |
+| test — unit (143 passed, 97.55% coverage, gate 80%) | PASS |
+| test — integration (5 PostgreSQL concurrency tests, `REQUIRE_POSTGRES=1`) | PASS |
+| test — Codecov upload (`Upload queued for processing complete`) | PASS |
+| docker (build, compose up, health probes) | PASS |
+
+Note: the Codecov step was skipped on the Phase 0 run because no `CODECOV_TOKEN`
+existed. The secret was added on 2026-10-19 and the upload now succeeds.
+
+Phase 0 run: https://github.com/Abolfazlrwm/flowforge/actions/runs/39211983697
 
 | Job | Result |
 |-----|--------|
@@ -218,11 +231,12 @@ passed only because of container start ordering.
     the two deferrals are linked.
 14. **Celery stays at 5.4.0.** Interim infrastructure (ADR-007). Minor and major
     upgrades are ignored in `dependabot.yml`; patch releases still flow.
-15. **Codecov reporting is inactive.** The upload requires a `CODECOV_TOKEN`
-    secret that does not exist. The step now skips rather than pretending to
-    succeed, so no coverage data reaches Codecov and there is no badge. This
-    does not weaken the quality gate: the 80% threshold is enforced by
-    `pytest-cov` inside the test job.
+15. **Docker is verified in CI but not on the owner's machine.** The daemon is
+    offline locally, so `docker compose up` and the readiness probes have not been
+    run on the owner's hardware. The CI `docker` job (`build + compose up + health
+    probes`) is the only evidence. The owner's earlier rule — "do not tag until
+    Docker is verified on my machine" — therefore still applies to a local,
+    hands-on Docker check, which is separate from the CI verification.
 
 ## Dependency decisions
 
@@ -247,4 +261,7 @@ None. Phase 1 is unblocked.
 
 ## Next step
 
-Phase 1 (Domain Modeling) on `feat/phase1-domain-modeling`.
+Phase 1 is merged and tagged `v0.2.0`. Proceed to **Phase 2 — Workflow Definition
+Engine (v0.3.0)**: JSON workflow definitions, schema validation, DAG validation,
+cycle detection, topological sorting, dependency resolution, definition
+versioning.

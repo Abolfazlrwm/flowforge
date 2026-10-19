@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-10-19
+
+Phase 1 (Domain Modeling) is complete. The rules of the engine now live in
+`core/domain` as plain Python with no framework import, and the database enforces
+the same rules through six `CHECK` constraints. State transitions are single
+conditional `UPDATE`s; a fencing token incremented on claim makes a resurrected
+worker's write match zero rows.
+
+Verified by
+[CI run 39226452632](https://github.com/Abolfazlrwm/flowforge/actions/runs/39226452632)
+— `lint`, `test` (143 unit tests + 5 PostgreSQL concurrency tests) and `docker`
+all pass, and the Codecov upload (`Upload queued for processing complete`) was
+accepted.
+
 ### Added
 
 - Pure-Python domain layer in `core/domain/` with no Django imports, enforced by
