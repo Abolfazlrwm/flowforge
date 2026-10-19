@@ -1,5 +1,26 @@
 name: flowforge
 
+# Local development stack.
+#
+# The image target is `production` (so the container layout matches what ships),
+# but DJANGO_SETTINGS_MODULE points at the dev settings and the source tree is
+# bind-mounted over /app for hot reload. That is intentional: one Dockerfile
+# serves both purposes, and the dev stack exercises the same dependency install
+# as the shipped image.
+#
+# Shared environment. Defined once so the application services cannot drift
+# apart (they previously did: scheduler and worker were missing
+# DJANGO_ALLOWED_HOSTS).
+x-app-environment: &app-environment
+  DJANGO_SECRET_KEY: ${DJANGO_SECRET_KEY:-local-dev-secret}
+  DJANGO_DEBUG: "True"
+  DJANGO_SETTINGS_MODULE: flowforge.settings.dev
+  DJANGO_ALLOWED_HOSTS: localhost,127.0.0.1,web
+  DATABASE_URL: postgres://flowforge:flowforge@db:5432/flowforge
+  REDIS_URL: redis://redis:6379/0
+  CELERY_BROKER_URL: amqp://guest:guest@rabbitmq:5672//
+  CELERY_RESULT_BACKEND: redis://redis:6379/1
+
 services:
   db:
     image: postgres:16-alpine
@@ -38,83 +59,77 @@ services:
       timeout: 5s
       retries: 5
 
+  # One-shot migration gate.
+  #
+  # Django's migrate command is not safe to run concurrently against the same
+  # database: two processes racing on CREATE TABLE lose with
+  # `ProgrammingError: relation "..." already exists`. Previously web, worker
+  # and scheduler each ran migrate on startup, so the stack passed or failed
+  # depending on container start ordering.
+  #
+  # Every service that needs the schema now waits for this one to exit 0.
+  migrate:
+    build:
+      context: .
+      target: production
+    environment: *app-environment
+    depends_on:
+      db:
+        condition: service_healthy
+    volumes:
+      - .:/app
+    command: ["python", "manage.py", "migrate", "--noinput"]
+    restart: "no"
+
   web:
     build:
       context: .
       target: production
-    environment:
-      DJANGO_SECRET_KEY: ${DJANGO_SECRET_KEY:-local-dev-secret}
-      DJANGO_DEBUG: "True"
-      DJANGO_SETTINGS_MODULE: flowforge.settings.dev
-      DJANGO_ALLOWED_HOSTS: localhost,127.0.0.1,web
-      DATABASE_URL: postgres://flowforge:flowforge@db:5432/flowforge
-      REDIS_URL: redis://redis:6379/0
-      CELERY_BROKER_URL: amqp://guest:guest@rabbitmq:5672//
-      CELERY_RESULT_BACKEND: redis://redis:6379/1
+    environment: *app-environment
     ports:
       - "8000:8000"
     depends_on:
-      db:
-        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
       redis:
         condition: service_healthy
       rabbitmq:
         condition: service_healthy
     volumes:
       - .:/app
-    command: >
-      sh -c "python manage.py migrate --noinput &&
-             python manage.py runserver 0.0.0.0:8000"
+    command: ["python", "manage.py", "runserver", "0.0.0.0:8000"]
 
   scheduler:
     build:
       context: .
       target: production
-    environment:
-      DJANGO_SECRET_KEY: ${DJANGO_SECRET_KEY:-local-dev-secret}
-      DJANGO_DEBUG: "True"
-      DJANGO_SETTINGS_MODULE: flowforge.settings.dev
-      DATABASE_URL: postgres://flowforge:flowforge@db:5432/flowforge
-      REDIS_URL: redis://redis:6379/0
-      CELERY_BROKER_URL: amqp://guest:guest@rabbitmq:5672//
-      CELERY_RESULT_BACKEND: redis://redis:6379/1
+    environment: *app-environment
     depends_on:
-      db:
-        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
       redis:
         condition: service_healthy
       rabbitmq:
         condition: service_healthy
     volumes:
       - .:/app
-    command: >
-      sh -c "python manage.py migrate --noinput &&
-             celery -A flowforge beat -l info"
+    command: ["celery", "-A", "flowforge", "beat", "-l", "info"]
 
   worker:
     build:
       context: .
       target: production
-    environment:
-      DJANGO_SECRET_KEY: ${DJANGO_SECRET_KEY:-local-dev-secret}
-      DJANGO_DEBUG: "True"
-      DJANGO_SETTINGS_MODULE: flowforge.settings.dev
-      DATABASE_URL: postgres://flowforge:flowforge@db:5432/flowforge
-      REDIS_URL: redis://redis:6379/0
-      CELERY_BROKER_URL: amqp://guest:guest@rabbitmq:5672//
-      CELERY_RESULT_BACKEND: redis://redis:6379/1
+    environment: *app-environment
     depends_on:
-      db:
-        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
       redis:
         condition: service_healthy
       rabbitmq:
         condition: service_healthy
     volumes:
       - .:/app
-    command: >
-      sh -c "python manage.py migrate --noinput &&
-             celery -A flowforge worker -l info"
+    command: ["celery", "-A", "flowforge", "worker", "-l", "info"]
 
 volumes:
   postgres_data:
