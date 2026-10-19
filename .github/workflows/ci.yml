@@ -93,9 +93,54 @@ jobs:
           files: ./coverage.xml
           fail_ci_if_error: false
 
-  docker-build:
+  docker:
     runs-on: ubuntu-latest
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
-      - name: Build Docker image
+
+      - name: Build production image
         run: docker build --target production -t flowforge:ci .
+
+      - name: Start the full stack
+        run: docker compose up -d --build
+
+      - name: Wait for readiness
+        run: |
+          set -uo pipefail
+          code=""
+          for attempt in $(seq 1 90); do
+            code=$(curl -s -o /tmp/ready.json -w '%{http_code}' \
+              http://localhost:8000/health/ready/ || true)
+            if [ "$code" = "200" ]; then
+              echo "stack ready after ${attempt} attempt(s)"
+              cat /tmp/ready.json
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "stack never became ready; last status=${code}"
+          cat /tmp/ready.json 2>/dev/null || true
+          exit 1
+
+      - name: Liveness probe
+        run: |
+          set -euo pipefail
+          curl -fsS http://localhost:8000/health/live/ | tee /tmp/live.json
+          grep -Eq '"status": *"alive"' /tmp/live.json
+
+      - name: Readiness payload reports every dependency
+        run: |
+          set -euo pipefail
+          curl -fsS http://localhost:8000/health/ready/ | tee /tmp/ready-ok.json
+          grep -Eq '"postgres": *"ok"' /tmp/ready-ok.json
+          grep -Eq '"redis": *"ok"' /tmp/ready-ok.json
+          grep -Eq '"rabbitmq": *"ok"' /tmp/ready-ok.json
+
+      - name: Container logs
+        if: always()
+        run: docker compose logs --no-color --tail=200
+
+      - name: Tear down
+        if: always()
+        run: docker compose down -v
