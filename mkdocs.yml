@@ -1,8 +1,8 @@
-site_name: TaskForge
+site_name: FlowForge
 site_description: An open-source distributed workflow orchestration engine.
-site_url: https://Abolfazlrwm.github.io/taskforge
-repo_url: https://github.com/Abolfazlrwm/taskforge
-repo_name: Abolfazlrwm/taskforge
+site_url: https://Abolfazlrwm.github.io/flowforge
+repo_url: https://github.com/Abolfazlrwm/flowforge
+repo_name: Abolfazlrwm/flowforge
 
 theme:
   name: readthedocs

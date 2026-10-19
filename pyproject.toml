@@ -3,7 +3,7 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "taskforge"
+name = "flowforge"
 version = "0.1.0"
 description = "An open-source distributed workflow orchestration engine powered by Django, PostgreSQL, and RabbitMQ."
 readme = "README.md"
@@ -57,22 +57,22 @@ dev = [
     "httpx>=0.27",
 ]
 
-[project.scripts]
-taskforge = "cli.main:main"
+# NOTE: the `flowforge` console script is intentionally absent until the CLI
+# lands in Phase 10. Declaring it now would ship a broken entry point.
 
 [project.urls]
-Homepage = "https://github.com/Abolfazlrwm/taskforge"
-Documentation = "https://Abolfazlrwm.github.io/taskforge"
-Repository = "https://github.com/Abolfazlrwm/taskforge"
-Issues = "https://github.com/Abolfazlrwm/taskforge/issues"
+Homepage = "https://github.com/Abolfazlrwm/flowforge"
+Documentation = "https://Abolfazlrwm.github.io/flowforge"
+Repository = "https://github.com/Abolfazlrwm/flowforge"
+Issues = "https://github.com/Abolfazlrwm/flowforge/issues"
 
 [tool.hatch.build.targets.wheel]
-packages = ["taskforge", "core", "api"]
+packages = ["flowforge", "core", "api"]
 
 [tool.ruff]
 target-version = "py311"
 line-length = 100
-src = ["taskforge", "core", "api", "tests"]
+src = ["flowforge", "core", "api", "tests"]
 
 [tool.ruff.lint]
 select = [
@@ -87,7 +87,7 @@ ignore = [
 convention = "google"
 
 [tool.ruff.lint.per-file-ignores]
-"tests/**" = ["S101", "PLR2004", "D103"]
+"tests/**" = ["S101", "S105", "S106", "PLR2004", "D103"]
 "*/migrations/*" = ["ALL"]
 "manage.py" = ["PLC0415"]
 
@@ -110,10 +110,10 @@ plugins = ["mypy_django_plugin.main"]
 exclude = ["migrations", "tests", "venv", ".venv"]
 
 [tool.django-stubs]
-django_settings_module = "taskforge.settings"
+django_settings_module = "flowforge.settings.test"
 
 [tool.pytest.ini_options]
-DJANGO_SETTINGS_MODULE = "taskforge.settings"
+DJANGO_SETTINGS_MODULE = "flowforge.settings.test"
 python_files = ["test_*.py", "*_test.py"]
 python_classes = ["Test*"]
 python_functions = ["test_*"]
@@ -126,7 +126,7 @@ markers = [
 ]
 
 [tool.coverage.run]
-source = ["taskforge", "core", "api"]
+source = ["flowforge", "core", "api"]
 branch = true
 omit = [
     "*/migrations/*",

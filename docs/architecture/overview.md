@@ -1,6 +1,6 @@
 # Architecture Overview
 
-TaskForge is a distributed workflow orchestration engine built on a modular monolith architecture.
+FlowForge is a distributed workflow orchestration engine built on a modular monolith architecture.
 
 ## High-Level Components
 

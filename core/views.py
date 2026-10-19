@@ -1,4 +1,4 @@
-"""Core views for TaskForge."""
+"""Core views for FlowForge."""
 
 import socket
 from urllib.parse import urlparse
@@ -15,7 +15,7 @@ class LivenessView(View):
 
     def get(self, request: HttpRequest) -> JsonResponse:  # noqa: ARG002
         """Handle GET requests."""
-        return JsonResponse({"status": "alive", "service": "taskforge"})
+        return JsonResponse({"status": "alive", "service": "flowforge"})
 
 
 class ReadinessView(View):
