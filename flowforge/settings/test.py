@@ -8,14 +8,27 @@ the test suite.
 import os
 from typing import Any, cast
 
+# Read the raw process environment *before* ``base`` is imported. ``base``
+# calls ``environ.Env.read_env(BASE_DIR / ".env")``, which copies every value
+# in that file into ``os.environ``, so afterwards a file value is
+# indistinguishable from a variable the caller really supplied. Without this
+# snapshot, a developer's checked-out ``.env`` silently drags the whole suite
+# onto PostgreSQL and contradicts this module's own contract.
+#
+# CI sets DATABASE_URL as a job-level environment variable, so it is captured
+# here too and the CI behaviour is unchanged.
+SUPPLIED_DATABASE_URL: str | None = os.environ.get("DATABASE_URL")
+
 os.environ.setdefault("DJANGO_DEBUG", "False")
 os.environ.setdefault(
     "DJANGO_SECRET_KEY",
     "test-only-secret-key-with-more-than-fifty-characters-0123456789",
 )
 
-from .base import *  # noqa: F403
-from .base import BASE_DIR, LOGGING, env
+# E402: the imports must stay below the ``SUPPLIED_DATABASE_URL`` snapshot,
+# because ``base`` merges ``.env`` into ``os.environ`` on import.
+from .base import *  # noqa: E402,F403
+from .base import BASE_DIR, LOGGING  # noqa: E402
 
 DEBUG = False
 
@@ -39,8 +52,10 @@ CELERY_TASK_EAGER_PROPAGATES = True
 # Capture emails instead of sending them.
 EMAIL_BACKEND = "django.core.mail.backends.locmem.EmailBackend"
 
-# Prefer SQLite unless a DATABASE_URL is supplied (CI points at PostgreSQL).
-if not env("DATABASE_URL", default=None):
+# Prefer SQLite unless the caller genuinely supplied a DATABASE_URL in the
+# process environment (CI points the job at PostgreSQL). A value that only
+# exists inside ``.env`` is deliberately ignored — see the snapshot above.
+if not SUPPLIED_DATABASE_URL:
     DATABASES = {
         "default": {
             "ENGINE": "django.db.backends.sqlite3",
