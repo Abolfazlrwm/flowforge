@@ -1,0 +1,64 @@
+name: Feature request
+description: Propose a capability, or argue that a planned one is wrong.
+labels: ["enhancement", "needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        This project is built phase by phase against an explicit roadmap
+        (`docs/roadmap/`). Please say which phase your proposal belongs to, or
+        whether it argues that a planned design is wrong — the second kind is
+        more valuable.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: The problem
+      description: Describe the failure mode or gap, not the solution.
+      placeholder: |
+        A worker killed mid-task leaves the row in RUNNING forever, so the
+        workflow stalls with no visible reason.
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What you propose
+      description: The behaviour you want, and the trade-offs you accept.
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Including "do nothing". Why is this worth the complexity?
+
+  - type: dropdown
+    id: phase
+    attributes:
+      label: Phase
+      description: Which roadmap phase this belongs to, from `docs/roadmap/`.
+      options:
+        - Phase 1 — Domain modeling
+        - Phase 2 — State machine
+        - Phase 3 — API surface
+        - Phase 4 — Task infrastructure decision
+        - Phase 5 — Workers and leases
+        - Phase 6 — Transactional outbox
+        - Phase 7 — Scheduling
+        - Phase 8 — Observability
+        - Phase 9 — SDK and CLI
+        - Phase 10 — Deployment
+        - Phase 11 — Hardening and v1.0.0
+        - Not on the roadmap
+
+  - type: checkboxes
+    id: correctness
+    attributes:
+      label: Correctness impact
+      options:
+        - label: This affects delivery guarantees (duplicate or lost work)
+        - label: This affects observability (failures would become visible)
+        - label: This is ergonomics only
