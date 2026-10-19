@@ -76,6 +76,10 @@ site/
 *.seed
 *.pid.lock
 
+# SQLite test database. `flowforge.settings.test` puts it at the repository root
+# when no DATABASE_URL is supplied; it is a local artefact and never committed.
+test.sqlite3
+
 # Local agent tooling / scratch state
 .workbuddy-ai/
 .ds-history/
