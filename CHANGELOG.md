@@ -7,6 +7,83 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-10-19
+
+Phase 2 (Workflow Definition Engine) is complete. A definition is now a
+versioned value object that validates on the way in and on the way out, and
+publishing it is atomic, idempotent by content, and exclusive by
+`(name, version)` — so a run can be traced back to exactly the definition it
+executed.
+
+### Added
+
+- `core/domain/definition.py`: `TaskDefinition` and `WorkflowDefinition` as
+  frozen dataclasses with no framework import. Config is frozen into a
+  `MappingProxyType` so a caller's dict cannot mutate a validated definition,
+  and every config value is checked to be JSON-shaped at construction rather
+  than at `JSONField` save time.
+- `DependencyGraph` with duplicate-key, unknown-dependency and cycle detection,
+  plus topological order, levels, readiness, and transitive closures. Cycle
+  detection is iterative, so a 3000-deep chain whose back-edge sits at the far
+  end is found rather than overflowing the interpreter stack.
+- Determinism: `topological_order()` and `levels()` break ties by ascending task
+  key, so the same definition yields the same schedule regardless of declaration
+  order.
+- `core/domain/schema.py`: a Draft 2020-12 JSON Schema for definition payloads
+  reported with JSONPaths, kept separate from the graph checks it cannot
+  express (`additionalProperties: false` so a typo'd field is not silently
+  ignored; `uniqueItems` cannot catch a duplicate key across two objects, so the
+  domain does).
+- `WorkflowDefinition.fingerprint()`: a SHA-256 over name, version, description
+  and every task's key, type, sorted dependencies and frozen config. Identical
+  fingerprint means identical content, which is what makes republishing a no-op.
+- `core/repositories/definitions.py`: `publish_definition`, `load_definition`
+  and `definition_exists`. Publish forces the dependency graph before writing
+  anything, writes the workflow and its tasks in one transaction, and refuses
+  differing content under an existing `(name, version)`.
+- Migration `core/0002_definition_payload.py` adding `description`,
+  `task_type`, `depends_on` and `config`, so loading is lossless rather than
+  reconstructing a task type from its key.
+- `docs/architecture/definitions.md`: the definition lifecycle, why definitions
+  are value objects, why cycle detection is iterative, the shape-vs-graph
+  boundary, and an honest account of the publish race and what it does not
+  guarantee.
+
+### Changed
+
+- **`WorkflowDefinition.fingerprint()` now includes `description`.** Previously
+  a definition whose only change was its description returned the stored row
+  unchanged and silently discarded the new text — the caller believed one thing
+  and the database held another. Regression-guarded by
+  `test_a_changed_description_changes_the_fingerprint`.
+- **`TaskDefinition` validates config at construction.** `__hash__` and
+  `fingerprint()` were the only callers of the freeze, so a non-JSON config
+  value passed construction and surfaced later as an unattributed `TypeError`.
+- **`flowforge.settings.test` ignores a `DATABASE_URL` that exists only in
+  `.env`.** `base` merges `.env` into `os.environ`, which made a file value
+  indistinguishable from a caller-supplied one, so any developer with a checked-out
+  `.env` could not run the suite — contradicting the module's own "no external
+  services required" contract. The value is now snapshotted before `base` is
+  imported. CI is unaffected: it sets `DATABASE_URL` at job level.
+- `tests/integration/conftest.py` now holds the barrier, the per-thread
+  connection cleanup and the no-stragglers check, shared by the transition race
+  and the publish race.
+
+### Fixed
+
+- **`publish_definition` could not distinguish a cyclic definition until after it
+  had written rows.** The graph is a cached property; it is now forced before the
+  transaction opens, so a cyclic definition raises before anything is stored.
+- **`load_definition` was lossy.** It reconstructed `task_type` from the task key
+  and dropped dependencies, contradicting its own docstring and making the
+  fingerprint meaningless. It now round-trips through the same columns the
+  payload was parsed from.
+- **`load_definition` claimed graph validation but never forced it**, so a
+  manually broken `depends_on` loaded successfully.
+- **`ready_tasks` returned already-completed tasks.** A scheduler acting on that
+  would execute a task twice. Excluded from the result, and covered by a
+  Hypothesis property test rather than a hand-written case.
+
 ## [0.2.0] - 2026-10-19
 
 Phase 1 (Domain Modeling) is complete. The rules of the engine now live in
