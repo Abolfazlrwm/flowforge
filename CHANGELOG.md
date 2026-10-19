@@ -5,6 +5,39 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- **Django 5.1 → 5.2 LTS** (`django>=5.2,<5.3`). Django 5.1 reached end of
+  extended support on 2025-12-03 and received no security fixes. Owner decision,
+  recorded in [ADR-010](docs/adr/ADR-010-django-5-2-lts.md).
+- **Django REST Framework 3.15.2 → 3.17.2.** 3.17 is the first series declaring
+  support for Django 5.2; 3.15 does not.
+- GitHub Actions upgraded and re-pinned to commit SHAs: `actions/checkout`
+  v4 → v7.0.1, `actions/setup-python` v5 → v7.0.0,
+  `astral-sh/setup-uv` v6 → v10.3.0, `codecov/codecov-action` v4 → v7.1.1.
+- Dependabot now groups all GitHub Actions bumps into one PR and patch-level
+  Python bumps into one PR, so a regression can be attributed to a single change.
+
+### Fixed
+
+- **Codecov upload had been failing silently since Phase 0.** The action
+  rejected tokenless uploads (`Token required - not valid tokenless upload`)
+  while reporting success, so the job looked green with no coverage data
+  reaching Codecov. The step now skips when no `CODECOV_TOKEN` is configured and
+  fails loudly when one is.
+
+### Not upgraded, deliberately
+
+- **Python stays at 3.13.** Django 5.2 supports 3.14 only from 5.2.8, and "every
+  dependency verified on 3.14 in CI" has not been established. Docker image
+  bumps for Python are ignored until it is.
+- **redis-py stays at 5.x.** Celery 5.4 declares `redis<6.0.0` for its redis
+  integration, and Celery is interim (ADR-007).
+- **Celery stays at 5.4.0.** Interim infrastructure; the keep-or-replace
+  decision belongs to Phase 4.
+
 ## [0.1.0] - 2026-10-19
 
 First tagged release. Phase 0 (engineering foundation) is complete: the stack
