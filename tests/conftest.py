@@ -35,7 +35,7 @@ def workflow(db: None) -> WorkflowModel:  # noqa: ARG001 - `db` enables database
 @pytest.fixture
 def task(workflow: WorkflowModel) -> TaskModel:
     """A persisted task belonging to :func:`workflow`."""
-    return Task.objects.create(workflow=workflow, key="extract")
+    return Task.objects.create(workflow=workflow, key="extract", task_type="extract")
 
 
 @pytest.fixture
