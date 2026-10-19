@@ -1,6 +1,7 @@
 # FlowForge
 
 [![CI](https://github.com/Abolfazlrwm/flowforge/actions/workflows/ci.yml/badge.svg)](https://github.com/Abolfazlrwm/flowforge/actions/workflows/ci.yml)
+[![codecov](https://codecov.io/gh/Abolfazlrwm/flowforge/branch/main/graph/badge.svg)](https://codecov.io/gh/Abolfazlrwm/flowforge)
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue.svg)](pyproject.toml)
 
