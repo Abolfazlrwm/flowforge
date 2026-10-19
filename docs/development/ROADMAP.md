@@ -28,13 +28,13 @@
 
 ## Phase 2 — Workflow Definition Engine (v0.3.0)
 
-- [ ] JSON workflow definitions
-- [ ] Schema validation
-- [ ] DAG validation
-- [ ] Cycle detection
-- [ ] Topological sorting
-- [ ] Dependency resolution
-- [ ] Definition versioning
+- [x] JSON workflow definitions
+- [x] Schema validation
+- [x] DAG validation
+- [x] Cycle detection
+- [x] Topological sorting
+- [x] Dependency resolution
+- [x] Definition versioning
 
 ## Phase 3 — REST API (v0.4.0)
 
