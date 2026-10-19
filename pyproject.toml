@@ -22,11 +22,11 @@ classifiers = [
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
     "Framework :: Django",
-    "Framework :: Django :: 5.1",
+    "Framework :: Django :: 5.2",
 ]
 dependencies = [
-    "django>=5.1,<5.2",
-    "djangorestframework>=3.15,<3.16",
+    "django>=5.2,<5.3",
+    "djangorestframework>=3.17,<3.18",
     "django-filter>=24.2",
     "psycopg[binary]>=3.2,<4",
     "celery>=5.4,<5.5",
@@ -50,8 +50,14 @@ dev = [
     "faker>=30.0",
     "ruff>=0.6",
     "mypy>=1.11",
-    "django-stubs>=5.1",
-    "djangorestframework-stubs>=3.15",
+    # Stub packages track their target's version, and the direction of drift
+    # matters: stubs OLDER than the runtime produce visible false errors, while
+    # stubs NEWER than the runtime let mypy accept APIs that do not exist at
+    # runtime — a silent bug. So both are held at or behind the runtime:
+    # django-stubs 5.2.x matches Django 5.2 exactly; DRF stubs 3.16.x is the
+    # newest series that still accepts django-stubs 5.2 (3.17+ requires 6.x).
+    "django-stubs>=5.2,<5.3",
+    "djangorestframework-stubs>=3.16,<3.17",
     "pre-commit>=4.0",
     "coverage>=7.6",
     "httpx>=0.27",

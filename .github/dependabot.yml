@@ -7,6 +7,27 @@ updates:
     schedule:
       interval: "weekly"
     open-pull-requests-limit: 10
+    groups:
+      # Patch releases arrive as one PR instead of one per package.
+      python-patch:
+        applies-to: version-updates
+        update-types: ["patch"]
+    ignore:
+      # redis-py majors are blocked behind the interim Celery pin, not by
+      # preference. Celery 5.4 declares `redis<6.0.0` for its redis
+      # integration, and this project uses Celery's Redis result backend.
+      # Re-evaluate after the Phase 4 keep-or-replace decision (ADR-007);
+      # Celery 5.6 replaces the direct pin with `kombu[redis]`.
+      - dependency-name: "redis"
+        update-types: ["version-update:semver-major"]
+
+      # Celery is interim infrastructure (ADR-007). Phase 4 decides whether it
+      # is kept or replaced, so minor and major upgrades are deferred to avoid
+      # investing in a component that may be deleted. Patch releases still flow.
+      - dependency-name: "celery"
+        update-types:
+          - "version-update:semver-minor"
+          - "version-update:semver-major"
 
   # GitHub Actions are pinned to commit SHAs in .github/workflows/.
   # Dependabot rewrites both the SHA and the trailing version comment.
@@ -15,9 +36,25 @@ updates:
     schedule:
       interval: "weekly"
     open-pull-requests-limit: 5
+    groups:
+      # One PR for all action bumps. Upgrading them separately makes it
+      # impossible to tell which one broke a job, and they always need the same
+      # verification: a green CI run.
+      github-actions:
+        applies-to: version-updates
+        patterns: ["*"]
 
   - package-ecosystem: "docker"
     directory: "/"
     schedule:
       interval: "weekly"
     open-pull-requests-limit: 5
+    ignore:
+      # The Docker base image tracks the interpreter the project actually
+      # verifies. Django 5.2 supports Python 3.14 only from 5.2.8, and "all
+      # dependencies verified on 3.14" has not been established.
+      # Re-evaluate when the CI matrix gains 3.14 — see PROGRESS.md.
+      - dependency-name: "python"
+        update-types:
+          - "version-update:semver-minor"
+          - "version-update:semver-major"
