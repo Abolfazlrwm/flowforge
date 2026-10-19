@@ -1,4 +1,4 @@
-# Contributing to TaskForge
+# Contributing to FlowForge
 
 Thank you for your interest in contributing!
 
