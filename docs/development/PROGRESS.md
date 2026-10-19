@@ -10,7 +10,7 @@ Phase 0 — Engineering Foundation (closing)
 |------|-------|
 | Branch | `chore/phase0-audit-fixes` |
 | Pull request | #1 |
-| CI | Green — https://github.com/Abolfazlrwm/flowforge/actions/runs/39210906976 |
+| CI | Green — https://github.com/Abolfazlrwm/flowforge/actions/runs/39211983697 |
 | Docker | **Verified in CI** (build + `docker compose up` + health probes) |
 | v0.1.0 tag | Created after CI went green |
 | Phase 1 | Not started |
@@ -43,12 +43,16 @@ Phase 0 — Engineering Foundation (closing)
 17. MkDocs configuration.
 18. Makefile with `install`, `lint`, `format`, `typecheck`, `test`, `check`,
     `migrate`, `run`, `demo`, `compose-up`, `compose-down`, `clean`.
+19. Migrations run in a single one-shot `migrate` service that the application
+    services wait on, so three containers can no longer race on `CREATE TABLE`.
+20. `.gitattributes` forces LF in the working tree, so a Windows checkout is
+    byte-identical to what CI and the containers execute.
 
 ## Verification
 
 ### In CI (authoritative)
 
-Run: https://github.com/Abolfazlrwm/flowforge/actions/runs/39210906976
+Run: https://github.com/Abolfazlrwm/flowforge/actions/runs/39211983697
 
 | Job | Result |
 |-----|--------|
@@ -59,10 +63,19 @@ Run: https://github.com/Abolfazlrwm/flowforge/actions/runs/39210906976
 Docker job evidence:
 
 ```
-stack ready after 3 attempt(s)
+migrate status=exited exit=0
+stack ready after 2 attempt(s)
 {"status": "ready", "checks": {"postgres": "ok", "redis": "ok", "rabbitmq": "ok"}}
 {"status": "alive", "service": "flowforge"}
 ```
+
+An earlier run of the same commit series,
+[39211260120](https://github.com/Abolfazlrwm/flowforge/actions/runs/39211260120),
+failed in the docker job with `ProgrammingError: relation "django_session"
+already exists`. That was defect #25 (concurrent migrations), fixed in
+`a0571bf`. It is recorded rather than discarded because the previous green run
+[39210906976](https://github.com/Abolfazlrwm/flowforge/actions/runs/39210906976)
+passed only because of container start ordering.
 
 ### Locally (Windows, Python 3.13.14)
 
@@ -105,10 +118,14 @@ stack ready after 3 attempt(s)
 9. **Compose bind-mounts the source over `/app`**, which hides the image's
    `staticfiles/` output. Harmless with `DEBUG=True` (Django serves static
    itself) but wrong for a production-like run.
+10. **The migration gate needs Docker Compose v2.20+** for
+    `service_completed_successfully`. Older Compose silently ignores the
+    condition and the race returns. The stack is not yet gated on the Compose
+    version.
 
 ### Naming
 
-10. **The name "FlowForge" is conflicted** — npm name reserved, PyPI
+11. **The name "FlowForge" is conflicted** — npm name reserved, PyPI
     `flow-forge` taken, a prior venture-funded company (now FlowFuse), and an
     active `flowforgesoft.com`. Five alternatives were measured and all are
     taken on PyPI (ADR-009). Retained by owner-delegated decision.
