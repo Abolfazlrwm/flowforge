@@ -58,6 +58,6 @@ FlowForge is a distributed workflow orchestration engine built on a modular mono
 | Database     | PostgreSQL 16     |
 | Cache        | Redis 7           |
 | Broker       | RabbitMQ 3.13     |
-| Tasks        | Celery 5.4        |
+| Tasks        | Celery 5.4 (Phase 0 infra; custom scheduler planned for Phase 4) |
 | Logging      | structlog         |
 | Containers   | Docker / Kubernetes |
