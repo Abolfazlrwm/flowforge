@@ -1,0 +1,825 @@
+openapi: 3.0.3
+info:
+  title: FlowForge API
+  version: 0.4.0
+  description: |-
+    Workflow orchestration for DAG-shaped jobs.
+
+    Every failure is returned as `{"error": {"code", "message", "details"}}`.
+paths:
+  /api/v1/auth/token/:
+    post:
+      operationId: auth_token_create
+      tags:
+      - auth
+      requestBody:
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/AuthTokenRequest'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/AuthTokenRequest'
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AuthTokenRequest'
+        required: true
+      security:
+      - jwtAuth: []
+      - tokenAuth: []
+      - cookieAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthToken'
+          description: ''
+  /api/v1/auth/jwt/:
+    post:
+      operationId: auth_jwt_create
+      description: |-
+        Takes a set of user credentials and returns an access and refresh JSON web
+        token pair to prove the authentication of those credentials.
+      tags:
+      - auth
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TokenObtainPairRequest'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/TokenObtainPairRequest'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/TokenObtainPairRequest'
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TokenObtainPair'
+          description: ''
+  /api/v1/auth/jwt/refresh/:
+    post:
+      operationId: auth_jwt_refresh_create
+      description: |-
+        Takes a refresh type JSON web token and returns an access type JSON web
+        token if the refresh token is valid.
+      tags:
+      - auth
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TokenRefreshRequest'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/TokenRefreshRequest'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/TokenRefreshRequest'
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TokenRefresh'
+          description: ''
+  /api/v1/auth/me/:
+    get:
+      operationId: auth_me_retrieve
+      description: Return the caller's own account.
+      tags:
+      - auth
+      security:
+      - jwtAuth: []
+      - tokenAuth: []
+      - cookieAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+          description: ''
+  /api/v1/workflows/:
+    get:
+      operationId: workflows_list
+      description: List published definitions, or publish a new one.
+      parameters:
+      - name: cursor
+        required: false
+        in: query
+        description: The pagination cursor value.
+        schema:
+          type: string
+      - in: query
+        name: name
+        schema:
+          type: string
+      - in: query
+        name: name__startswith
+        schema:
+          type: string
+      - name: ordering
+        required: false
+        in: query
+        description: Which field to use when ordering the results.
+        schema:
+          type: string
+      - name: page_size
+        required: false
+        in: query
+        description: Number of results to return per page.
+        schema:
+          type: integer
+      - in: query
+        name: version
+        schema:
+          type: integer
+      tags:
+      - workflows
+      security:
+      - jwtAuth: []
+      - tokenAuth: []
+      - cookieAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaginatedWorkflowSummaryList'
+          description: ''
+    post:
+      operationId: workflows_create
+      description: |-
+        Publish a definition.
+
+        The body is validated by the JSON Schema in `core.domain.schema`, not by
+        a serializer: that schema is also what the parser and the persistence
+        round trip use, and a second validator here would drift from it.
+      tags:
+      - workflows
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/WorkflowDefinitionDocRequest'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/WorkflowDefinitionDocRequest'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/WorkflowDefinitionDocRequest'
+        required: true
+      security:
+      - jwtAuth: []
+      - tokenAuth: []
+      - cookieAuth: []
+      responses:
+        '201':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Workflow'
+          description: ''
+        '200':
+          description: Identical definition already published.
+        '400':
+          description: Malformed payload, or an invalid graph.
+  /api/v1/workflows/{name}/{version}/:
+    get:
+      operationId: workflows_retrieve
+      description: |-
+        One published definition, by name and version.
+
+        `(name, version)` is the domain's identity for a definition, so the URL uses
+        it rather than the row's UUID. A client that knows which definition it wants
+        already knows both values; making it look up an id first would be a second
+        round trip for nothing.
+      parameters:
+      - in: path
+        name: name
+        schema:
+          type: string
+        required: true
+      - in: path
+        name: version
+        schema:
+          type: integer
+        required: true
+      tags:
+      - workflows
+      security:
+      - jwtAuth: []
+      - tokenAuth: []
+      - cookieAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Workflow'
+          description: ''
+  /api/v1/runs/:
+    get:
+      operationId: runs_list
+      description: List the caller's runs, or trigger a new one.
+      parameters:
+      - in: query
+        name: created_after
+        schema:
+          type: string
+          format: date-time
+      - in: query
+        name: created_before
+        schema:
+          type: string
+          format: date-time
+      - name: cursor
+        required: false
+        in: query
+        description: The pagination cursor value.
+        schema:
+          type: string
+      - name: ordering
+        required: false
+        in: query
+        description: Which field to use when ordering the results.
+        schema:
+          type: string
+      - name: page_size
+        required: false
+        in: query
+        description: Number of results to return per page.
+        schema:
+          type: integer
+      - in: query
+        name: state
+        schema:
+          type: string
+      - in: query
+        name: workflow
+        schema:
+          type: string
+      tags:
+      - runs
+      security:
+      - jwtAuth: []
+      - tokenAuth: []
+      - cookieAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaginatedWorkflowRunSummaryList'
+          description: ''
+    post:
+      operationId: runs_create
+      description: |-
+        Trigger a run of a published definition.
+
+        The idempotency key is optional, and its absence is not an error — it
+        just means the caller accepts that a retry creates a second run.
+      parameters:
+      - in: header
+        name: Idempotency-Key
+        schema:
+          type: string
+        description: Replaying the same key returns the original run instead of creating
+          a second one.
+      tags:
+      - runs
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TriggerRequest'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/TriggerRequest'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/TriggerRequest'
+        required: true
+      security:
+      - jwtAuth: []
+      - tokenAuth: []
+      - cookieAuth: []
+      responses:
+        '202':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WorkflowRun'
+          description: ''
+        '400':
+          description: The body is not a valid trigger.
+        '404':
+          description: No such published definition.
+        '422':
+          description: Idempotency-Key reused with a different body.
+  /api/v1/runs/{id}/:
+    get:
+      operationId: runs_retrieve
+      description: |-
+        One run and the state of each of its tasks.
+
+        A run belonging to somebody else is a 403, not a 404: the row exists and the
+        caller is simply not allowed to read it. Hiding it would be a second,
+        contradictory policy layered on the first.
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: string
+          format: uuid
+        required: true
+      tags:
+      - runs
+      security:
+      - jwtAuth: []
+      - tokenAuth: []
+      - cookieAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WorkflowRun'
+          description: ''
+components:
+  schemas:
+    AuthToken:
+      type: object
+      properties:
+        token:
+          type: string
+          readOnly: true
+      required:
+      - token
+    AuthTokenRequest:
+      type: object
+      properties:
+        username:
+          type: string
+          writeOnly: true
+          minLength: 1
+        password:
+          type: string
+          writeOnly: true
+          minLength: 1
+      required:
+      - password
+      - username
+    PaginatedWorkflowRunSummaryList:
+      type: object
+      required:
+      - results
+      properties:
+        next:
+          type: string
+          nullable: true
+          format: uri
+          example: http://api.example.org/accounts/?cursor=cD00ODY%3D"
+        previous:
+          type: string
+          nullable: true
+          format: uri
+          example: http://api.example.org/accounts/?cursor=cj0xJnA9NDg3
+        results:
+          type: array
+          items:
+            $ref: '#/components/schemas/WorkflowRunSummary'
+    PaginatedWorkflowSummaryList:
+      type: object
+      required:
+      - results
+      properties:
+        next:
+          type: string
+          nullable: true
+          format: uri
+          example: http://api.example.org/accounts/?cursor=cD00ODY%3D"
+        previous:
+          type: string
+          nullable: true
+          format: uri
+          example: http://api.example.org/accounts/?cursor=cj0xJnA9NDg3
+        results:
+          type: array
+          items:
+            $ref: '#/components/schemas/WorkflowSummary'
+    State6d9Enum:
+      enum:
+      - pending
+      - running
+      - succeeded
+      - failed
+      - cancelled
+      type: string
+      description: |-
+        * `pending` - Pending
+        * `running` - Running
+        * `succeeded` - Succeeded
+        * `failed` - Failed
+        * `cancelled` - Cancelled
+    Task:
+      type: object
+      description: One task of a published definition.
+      properties:
+        key:
+          type: string
+          readOnly: true
+        task_type:
+          type: string
+          readOnly: true
+        depends_on:
+          readOnly: true
+        config:
+          readOnly: true
+      required:
+      - config
+      - depends_on
+      - key
+      - task_type
+    TaskDocRequest:
+      type: object
+      description: |-
+        Documentation-only mirror of one task in `core.domain.schema`.
+
+        Never validated. See the module docstring.
+      properties:
+        key:
+          type: string
+          minLength: 1
+        task_type:
+          type: string
+          minLength: 1
+        depends_on:
+          type: array
+          items:
+            type: string
+            minLength: 1
+        config:
+          type: object
+          additionalProperties: {}
+      required:
+      - key
+      - task_type
+    TaskRun:
+      type: object
+      description: One task's progress within a run.
+      properties:
+        id:
+          type: string
+          format: uuid
+          readOnly: true
+        task_key:
+          type: string
+          readOnly: true
+        state:
+          allOf:
+          - $ref: '#/components/schemas/TaskRunStateEnum'
+          readOnly: true
+        attempt:
+          type: integer
+          readOnly: true
+        fencing_token:
+          type: integer
+          readOnly: true
+        lease_owner:
+          type: string
+          readOnly: true
+          nullable: true
+        lease_expires_at:
+          type: string
+          format: date-time
+          readOnly: true
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+          readOnly: true
+        started_at:
+          type: string
+          format: date-time
+          readOnly: true
+          nullable: true
+        finished_at:
+          type: string
+          format: date-time
+          readOnly: true
+          nullable: true
+      required:
+      - attempt
+      - created_at
+      - fencing_token
+      - finished_at
+      - id
+      - lease_expires_at
+      - lease_owner
+      - started_at
+      - state
+      - task_key
+    TaskRunStateEnum:
+      enum:
+      - pending
+      - ready
+      - running
+      - succeeded
+      - failed
+      - retrying
+      - cancelled
+      type: string
+      description: |-
+        * `pending` - Pending
+        * `ready` - Ready
+        * `running` - Running
+        * `succeeded` - Succeeded
+        * `failed` - Failed
+        * `retrying` - Retrying
+        * `cancelled` - Cancelled
+    TokenObtainPair:
+      type: object
+      properties:
+        access:
+          type: string
+          readOnly: true
+        refresh:
+          type: string
+          readOnly: true
+      required:
+      - access
+      - refresh
+    TokenObtainPairRequest:
+      type: object
+      properties:
+        username:
+          type: string
+          writeOnly: true
+          minLength: 1
+        password:
+          type: string
+          writeOnly: true
+          minLength: 1
+      required:
+      - password
+      - username
+    TokenRefresh:
+      type: object
+      properties:
+        access:
+          type: string
+          readOnly: true
+      required:
+      - access
+    TokenRefreshRequest:
+      type: object
+      properties:
+        refresh:
+          type: string
+          writeOnly: true
+          minLength: 1
+      required:
+      - refresh
+    TriggerRequest:
+      type: object
+      description: 'The body of a run trigger: which published definition to instantiate.'
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 200
+        version:
+          type: integer
+          minimum: 1
+      required:
+      - name
+      - version
+    User:
+      type: object
+      description: The authenticated caller, as `/auth/me/` reports them.
+      properties:
+        id:
+          type: integer
+          readOnly: true
+        username:
+          type: string
+          readOnly: true
+        email:
+          type: string
+          format: email
+          readOnly: true
+        is_staff:
+          type: boolean
+          readOnly: true
+        is_active:
+          type: boolean
+          readOnly: true
+      required:
+      - email
+      - id
+      - is_active
+      - is_staff
+      - username
+    Workflow:
+      type: object
+      description: A published definition, with its tasks.
+      properties:
+        id:
+          type: string
+          format: uuid
+          readOnly: true
+        name:
+          type: string
+          readOnly: true
+        version:
+          type: integer
+          readOnly: true
+          default: 1
+        description:
+          type: string
+          readOnly: true
+        created_at:
+          type: string
+          format: date-time
+          readOnly: true
+        tasks:
+          type: array
+          items:
+            $ref: '#/components/schemas/Task'
+          readOnly: true
+      required:
+      - created_at
+      - description
+      - id
+      - name
+      - tasks
+      - version
+    WorkflowDefinitionDocRequest:
+      type: object
+      description: |-
+        Documentation-only mirror of `WORKFLOW_DEFINITION_SCHEMA`.
+
+        Exists so the OpenAPI document can name the fields instead of describing the
+        body as a free-form object. `test_doc_serializer_matches_the_schema` asserts
+        it stays in step with the real schema, which is the validator.
+      properties:
+        name:
+          type: string
+          minLength: 1
+        version:
+          type: integer
+        description:
+          type: string
+          minLength: 1
+        tasks:
+          type: array
+          items:
+            $ref: '#/components/schemas/TaskDocRequest'
+      required:
+      - name
+      - tasks
+      - version
+    WorkflowRun:
+      type: object
+      description: A run, with the state of each of its tasks.
+      properties:
+        id:
+          type: string
+          format: uuid
+          readOnly: true
+        workflow_name:
+          type: string
+          readOnly: true
+        workflow_version:
+          type: integer
+          readOnly: true
+        state:
+          allOf:
+          - $ref: '#/components/schemas/State6d9Enum'
+          readOnly: true
+        created_at:
+          type: string
+          format: date-time
+          readOnly: true
+        started_at:
+          type: string
+          format: date-time
+          readOnly: true
+          nullable: true
+        finished_at:
+          type: string
+          format: date-time
+          readOnly: true
+          nullable: true
+        task_runs:
+          type: array
+          items:
+            $ref: '#/components/schemas/TaskRun'
+          readOnly: true
+      required:
+      - created_at
+      - finished_at
+      - id
+      - started_at
+      - state
+      - task_runs
+      - workflow_name
+      - workflow_version
+    WorkflowRunSummary:
+      type: object
+      description: A run in a list, without its task runs.
+      properties:
+        id:
+          type: string
+          format: uuid
+          readOnly: true
+        workflow_name:
+          type: string
+          readOnly: true
+        workflow_version:
+          type: integer
+          readOnly: true
+        state:
+          allOf:
+          - $ref: '#/components/schemas/State6d9Enum'
+          readOnly: true
+        created_at:
+          type: string
+          format: date-time
+          readOnly: true
+        started_at:
+          type: string
+          format: date-time
+          readOnly: true
+          nullable: true
+        finished_at:
+          type: string
+          format: date-time
+          readOnly: true
+          nullable: true
+      required:
+      - created_at
+      - finished_at
+      - id
+      - started_at
+      - state
+      - workflow_name
+      - workflow_version
+    WorkflowSummary:
+      type: object
+      description: |-
+        A definition in a list, without its tasks.
+
+        The task list is what makes a definition large; a cursor-paginated list of
+        20 definitions should not carry every task of every one of them.
+      properties:
+        id:
+          type: string
+          format: uuid
+          readOnly: true
+        name:
+          type: string
+          readOnly: true
+        version:
+          type: integer
+          readOnly: true
+          default: 1
+        description:
+          type: string
+          readOnly: true
+        created_at:
+          type: string
+          format: date-time
+          readOnly: true
+        task_count:
+          type: integer
+          readOnly: true
+      required:
+      - created_at
+      - description
+      - id
+      - name
+      - task_count
+      - version
+  securitySchemes:
+    cookieAuth:
+      type: apiKey
+      in: cookie
+      name: sessionid
+    jwtAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+    tokenAuth:
+      type: apiKey
+      in: header
+      name: Authorization
+      description: Token-based authentication with required prefix "Token"
