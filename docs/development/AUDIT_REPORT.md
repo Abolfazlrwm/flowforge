@@ -16,7 +16,14 @@
 | `1352e22` | Revert the rename; split settings into `base/dev/test/prod` |
 | `bc38824` | Behavioural tests for health probes and security settings |
 | `6b4cfe2` | `uv.lock`, CI installs from the lock, actions pinned to SHAs |
-| *(docs commit)* | Documentation closeout |
+| `7fd07aa` | Documentation closeout |
+| `0a27d5f` | Docker build: install from `uv.lock`, copy `README.md` |
+| `82c4ccc` | CI: bring up the compose stack and probe both health endpoints |
+| `e9a2417` | ADR-009: owner-delegated project name evaluation |
+| `da10a23` | README rewrite and a Makefile with verifiable targets |
+| `3b6dc37` | Record the CI verification of the Docker stack |
+| `a0571bf` | One-shot `migrate` gate; shared compose env anchor (defects #25, #26) |
+| `d654298` | `.gitattributes` forcing LF (defect #27) |
 
 ## Step 1 — Repository safety
 
@@ -98,6 +105,14 @@ System check identified no issues (0 silenced).
 | 22 | GitHub Actions referenced floating tags (`@v4`, `@v5`) rather than immutable commits | `.github/workflows/ci.yml` | `6b4cfe2` |
 | 23 | Settings were a single module with no way to express environment differences; `SECRET_KEY` was optional even with `DEBUG=False` | `flowforge/settings/` | `1352e22` |
 | 24 | No test exercised readiness failure modes or the security flags | `tests/unit/test_health.py`, `tests/unit/test_settings.py` | `bc38824` |
+
+### Defects found after the first green run
+
+| # | Defect | File(s) | Fixed in |
+|---|--------|---------|----------|
+| 25 | `web`, `worker` and `scheduler` each ran `migrate` on startup, racing on `CREATE TABLE`. Surfaced as `django.db.utils.ProgrammingError: relation "django_session" already exists` in CI run [39211260120](https://github.com/Abolfazlrwm/flowforge/actions/runs/39211260120); the earlier green run [39210906976](https://github.com/Abolfazlrwm/flowforge/actions/runs/39210906976) passed only by start-order luck | `compose.yaml`, `.github/workflows/ci.yml` | `a0571bf` |
+| 26 | `scheduler` and `worker` were missing `DJANGO_ALLOWED_HOSTS` — the three duplicated `environment:` blocks had already drifted | `compose.yaml` | `a0571bf` |
+| 27 | `core.autocrlf=true` with no `.gitattributes` wrote CRLF into the working tree; the first shell script committed would fail with `/bin/sh\r: bad interpreter` inside Linux containers | `.gitattributes` | `d654298` |
 
 ## Step 4 — Requirement table
 
@@ -201,28 +216,32 @@ naming analysis.
 
 ## UNVERIFIED
 
-| Item | Reason |
+The Docker gaps below were closed by running the stack in GitHub Actions,
+which is the authoritative environment. Nothing here was verified on the
+owner's machine.
+
+| Item | Status |
 |------|--------|
-| Docker image build | Docker daemon offline — `docker info` cannot reach `dockerDesktopLinuxEngine` |
-| `docker compose up` (all six services) | Same |
-| Docker healthcheck behaviour | Depends on a running image |
-| GitHub Actions execution | Workflow has never run on GitHub |
-| `uv.lock` reproducibility on Linux/CI | Verified only on Windows with Python 3.13.14 |
+| Docker image build | **Verified in CI** — [39211983697](https://github.com/Abolfazlrwm/flowforge/actions/runs/39211983697), job `docker` |
+| `docker compose up` (all six services) | **Verified in CI** — `migrate status=exited exit=0`, then `stack ready after 2 attempt(s)` |
+| Docker healthcheck behaviour | **Verified in CI** — liveness and readiness probes asserted, all three dependency checks `ok` |
+| GitHub Actions execution | **Verified** — `lint`, `test`, `docker` all PASS |
+| `uv.lock` reproducibility on Linux/CI | **Verified** — CI installs with `uv sync --locked` and `uv lock --check` passes |
+| Docker on the owner's machine | **Still UNVERIFIED.** No local daemon was available. |
 
 ## Verdict
 
-**PASSED WITH LIMITATIONS.**
+**PASSED.**
 
-Every check that can run without a Docker daemon passes: lint, format, types,
-13 behavioural tests, 100% statement coverage of the currently existing code,
-migration check, compose syntax, deploy check with zero issues, a live-server
-probe of both health endpoints, and a clean secret scan across the full
-history.
+Every check runs somewhere it can be trusted: lint, format, mypy strict, 13
+behavioural tests, 100% statement coverage of the code that exists, migration
+check, deploy check with zero issues, and a clean secret scan across the full
+history — locally. Docker build, the full six-service compose stack and both
+health endpoints — in GitHub Actions.
 
-The limitation is Docker: no image has been built and no container has been
-started, because the daemon was offline. Because of that:
+Three further defects (#25–#27) were found *by* that CI run and fixed rather
+than explained away. #25 in particular had already produced one false green:
+the stack passed while the migration race was still present.
 
-- **v0.1.0 is not tagged.**
-- **PR #1 is not merged.**
-
-Both await the owner verifying Docker on their machine.
+The remaining limitations are the ones listed in
+`docs/development/PROGRESS.md`, none of which block v0.1.0.

@@ -69,7 +69,8 @@ offered instead.
 
 ## Quickstart (60 seconds)
 
-Requires Docker with Compose v2.
+Requires Docker with Compose v2.20 or newer (`service_completed_successfully`
+gates the application services on a one-shot migration container).
 
 ```bash
 git clone https://github.com/Abolfazlrwm/flowforge.git
@@ -102,7 +103,7 @@ uv run python manage.py runserver
 | Liveness probe `GET /health/live/` | Implemented |
 | Readiness probe `GET /health/ready/` (PostgreSQL, Redis, RabbitMQ) | Implemented |
 | Multi-stage Docker image, non-root user, healthcheck | Implemented |
-| Docker Compose stack (db, redis, rabbitmq, web, scheduler, worker) | Implemented |
+| Docker Compose stack (db, redis, rabbitmq, one-shot migrate, web, scheduler, worker) | Implemented |
 | CI: lint, format, mypy, migration check, tests, compose smoke test | Implemented |
 | Dependency lock file (`uv.lock`) used by CI and the image | Implemented |
 | Domain models, state machines | **Not implemented** (Phase 1) |
