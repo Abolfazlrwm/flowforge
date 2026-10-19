@@ -176,6 +176,11 @@ passed only because of container start ordering.
     the two deferrals are linked.
 14. **Celery stays at 5.4.0.** Interim infrastructure (ADR-007). Minor and major
     upgrades are ignored in `dependabot.yml`; patch releases still flow.
+15. **Codecov reporting is inactive.** The upload requires a `CODECOV_TOKEN`
+    secret that does not exist. The step now skips rather than pretending to
+    succeed, so no coverage data reaches Codecov and there is no badge. This
+    does not weaken the quality gate: the 80% threshold is enforced by
+    `pytest-cov` inside the test job.
 
 ## Dependency decisions
 
@@ -189,7 +194,7 @@ nine separate merges, so a regression can be attributed to one change.
 | actions/checkout | 4 → 7.0.1 | **Taken.** Verified by the `lint`/`test`/`docker` jobs. |
 | actions/setup-python | 5 → 7.0.0 | **Taken.** Same. |
 | astral-sh/setup-uv | 6 → 10.3.0 | **Taken.** Same. |
-| codecov/codecov-action | 4 → 7.1.1 | **Taken, with a caveat.** `fail_ci_if_error: false` means a broken upload is silent, so a green job does not prove it worked. See the note in `ci.yml`. |
+| codecov/codecov-action | 4 → 7.1.1 | **Taken, and a pre-existing defect fixed.** The upload had been failing with `Token required - not valid tokenless upload` since Phase 0 while the step reported success. It now skips visibly when no token exists, and fails loudly when one does. |
 | redis | 5.3.1 → 8.1.0 | **Declined.** Blocked by Celery 5.4's `redis<6` (limitation 13). Ignore rule added. |
 | celery | 5.4.0 → 5.6.3 | **Declined.** Interim; Phase 4 decides (limitation 14). Ignore rule added. |
 | python (Docker) | 3.13-slim → 3.14-slim | **Declined.** Not verified in CI (limitation 12). Ignore rule added. |
