@@ -78,7 +78,7 @@ body:
       description: Python, Django, PostgreSQL, Redis, RabbitMQ, Docker.
       placeholder: |
         Python 3.13.12
-        Django 5.1
+        Django 5.2
         PostgreSQL 16
         Redis 7
         RabbitMQ 3.13
