@@ -105,6 +105,17 @@ jobs:
       - name: Start the full stack
         run: docker compose up -d --build
 
+      # The migrate service is a one-shot gate that web/worker/scheduler wait
+      # on. Assert it exited 0, so a broken migration fails loudly here rather
+      # than surfacing as a readiness timeout.
+      - name: Migration gate exited cleanly
+        run: |
+          set -euo pipefail
+          cid="$(docker compose ps -aq migrate)"
+          test -n "$cid"
+          docker inspect -f 'migrate status={{.State.Status}} exit={{.State.ExitCode}}' "$cid"
+          test "$(docker inspect -f '{{.State.ExitCode}}' "$cid")" = "0"
+
       - name: Wait for readiness
         run: |
           set -uo pipefail
@@ -121,6 +132,7 @@ jobs:
           done
           echo "stack never became ready; last status=${code}"
           cat /tmp/ready.json 2>/dev/null || true
+          docker compose ps || true
           exit 1
 
       - name: Liveness probe
