@@ -15,6 +15,12 @@ publishing it is atomic, idempotent by content, and exclusive by
 `(name, version)` — so a run can be traced back to exactly the definition it
 executed.
 
+Verified by
+[CI run 39252710339](https://github.com/Abolfazlrwm/flowforge/actions/runs/39252710339)
+— `lint`, `test` (270 unit tests, 98.12% coverage, 8 PostgreSQL concurrency
+tests) and `docker` all pass, and the Codecov upload
+(`Upload queued for processing complete`) was accepted.
+
 ### Added
 
 - `core/domain/definition.py`: `TaskDefinition` and `WorkflowDefinition` as

@@ -2,7 +2,7 @@
 
 ## Current Phase
 
-**Phase 2 — Workflow Definition Engine: COMPLETE, pending CI on the PR.** Phase 0
+**Phase 2 — Workflow Definition Engine: COMPLETE, CI green on PR #21.** Phase 0
 and Phase 1 are closed and released.
 
 ## Resume point
@@ -26,7 +26,7 @@ If this session is resumed cold, read this section first.
 | Phase 0 PR | #1 — **MERGED** as `97c17bf` |
 | Stack upgrade | **MERGED** as `525e919` (Django 5.2 LTS, DRF 3.17, Actions re-pinned) |
 | Phase 1 | **MERGED** as `869720f`, tagged `v0.2.0` |
-| CI | See "Verification" — each phase's run is the authoritative one |
+| CI | Phase 2 run `39252710339` — `lint`, `test`, `docker` all green |
 | Docker | **Verified in CI** (build + `docker compose up` + health probes). **Not** verified on the owner's machine; the daemon is offline there |
 | v0.1.0 tag | Created — annotated, points at `97c17bf` |
 | v0.2.0 tag | Created — annotated, points at `869720f` |
@@ -188,6 +188,26 @@ If this session is resumed cold, read this section first.
 ## Verification
 
 ### In CI (authoritative)
+
+Phase 2 run: https://github.com/Abolfazlrwm/flowforge/actions/runs/39252710339
+
+| Job | Result |
+|-----|--------|
+| lint (ruff, ruff format, mypy) | PASS |
+| test — unit (270 passed, 98.12% coverage, gate 80%) | PASS |
+| test — integration (8 PostgreSQL concurrency tests, `REQUIRE_POSTGRES=1`) | PASS |
+| test — Codecov upload (`Upload queued for processing complete`) | PASS |
+| docker (build, compose up, health probes) | PASS |
+
+The integration step ran all eight tests for real — the five transition races
+from Phase 1 and the three new publish races:
+
+```
+tests/integration/test_concurrent_publish.py::test_publishing_identical_content_concurrently_yields_one_workflow PASSED
+tests/integration/test_concurrent_publish.py::test_publishing_different_content_concurrently_holds_one_definition PASSED
+tests/integration/test_concurrent_publish.py::test_definition_exists_is_true_for_the_different_content_race PASSED
+============================== 8 passed in 2.52s ===============================
+```
 
 Phase 1 run: https://github.com/Abolfazlrwm/flowforge/actions/runs/39226452632
 | Job | Result |
@@ -357,8 +377,8 @@ domain one.
 
 ## Ordering note
 
-The CI URL for Phase 2 is added in a second commit inside the same PR, once the
-run is actually green. Committing a CI URL before the run exists would be a claim
-rather than a verification, and the Codecov upload (disabled in Phase 0 by
-exactly that kind of assumption) is the precedent for why the URL is not written
-in advance.
+The CI URL for Phase 2 was added in a second commit inside the same PR, once the
+run was actually green (`39252710339`). Committing a CI URL before the run exists
+would be a claim rather than a verification, and the Codecov upload — disabled in
+Phase 0 by exactly that kind of assumption — is the precedent for why the URL is
+not written in advance.
