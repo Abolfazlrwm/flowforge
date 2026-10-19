@@ -6,8 +6,8 @@ section of `docs/development/PROGRESS.md`.
 
 ## Current Phase
 
-**Phase 2 — Workflow Definition Engine: NEXT.** Phase 1 is merged, tagged `v0.2.0`,
-and released. Phase 0 is closed and released.
+**Phase 3 — REST API: NEXT.** Phase 2 is merged, tagged `v0.3.0`, and released.
+Phases 0 and 1 are closed and released.
 
 ## Completed (Phase 0)
 
@@ -58,25 +58,62 @@ not exercise.
   with `fail_ci_if_error: true`, and the README carries the badge.
 - Known limitations: `docs/development/PROGRESS.md`.
 
+## Phase 2 outcome
+
+- PR merged with a merge commit; `v0.3.0` tagged (annotated) and released.
+- **270 unit tests, 98.12% coverage** (gate 80%). 8 PostgreSQL tests: the 5
+  transition races from Phase 1 plus 3 new publish races. All concurrency tests
+  skip locally (SQLite) and run in CI with `REQUIRE_POSTGRES=1`.
+- `docs/architecture/definitions.md` documents the definition lifecycle, the
+  shape-vs-graph boundary, and what the publish race does not guarantee.
+- **Four real defects were found and fixed during the phase**, each of them the
+  same laziness class: a validation that existed but was never forced.
+  - the parser accepted cyclic payloads because `graph` was a cached property
+    nothing touched;
+  - `load_definition` claimed graph validation and never forced it;
+  - `ready_tasks` returned already-completed tasks, so a scheduler acting on it
+    would run a task twice;
+  - config JSON-shape was only checked at `__hash__`/`fingerprint()`, so a
+    non-JSON value surfaced later as an unattributed `TypeError`.
+  In every case the fix was to force the check at the boundary, and to add a
+  regression test that is verified to **fail** without the fix.
+- Plus one honest fix: `fingerprint()` omitted `description`, so publishing a
+  definition whose only change was its description silently returned the stored
+  row. Verified to fail without the fix before restoring it.
+- **A local-environment defect was found rather than assumed**: `flowforge.settings.test`
+  honoured a `DATABASE_URL` from `.env` because `base` merges the file into
+  `os.environ`. A developer with a checked-out `.env` could not run the suite at
+  all, contradicting the module's own "no external services" contract. The value
+  is now snapshotted before `base` is imported; CI is unaffected.
+- Known limitations: `docs/development/PROGRESS.md` (notably: the publish races
+  are CI-verified only, and `publish_definition` does not serialise concurrent
+  first-publishes).
+
 ## Current Phase scope
 
-**Phase 1: Domain Modeling — COMPLETE** (merged as `869720f`, tagged `v0.2.0`,
-released). Unblocked: issue #11 was resolved by moving to Django 5.2 LTS (ADR-010).
+**Phase 2: Workflow Definition Engine — COMPLETE.**
 
-Delivered in Phase 1:
-- `core/domain/`: pure-Python state machines, entities, services — no Django import
-  (enforced by AST + subprocess import tests).
-- `core/models.py` + `core/migrations/0001_initial.py`: UUID PKs, six `CHECK`
-  constraints, five query-justified indexes.
-- `core/repositories/transitions.py`: atomic conditional-UPDATE transitions with
-  fencing tokens.
-- 143 unit tests (97.55% coverage) + 5 PostgreSQL concurrency tests; Hypothesis
-  stateful property tests; CI runs concurrency tests with `REQUIRE_POSTGRES=1`.
-- `docs/architecture/data-model.md` and `docs/architecture/execution-model.md`.
+Delivered in Phase 2:
+- `core/domain/definition.py`: `TaskDefinition` and `WorkflowDefinition` (frozen
+  dataclasses) and `DependencyGraph` — duplicate-key, unknown-dependency and
+  iterative cycle detection; topological order, levels, readiness, transitive
+  closures; deterministic ties.
+- `core/domain/schema.py`: Draft 2020-12 shape validation reported with JSONPaths,
+  kept separate from the graph checks the standard cannot express.
+- `core/repositories/definitions.py`: `publish_definition` (atomic, idempotent by
+  fingerprint, exclusive by `(name, version)`), `load_definition` (lossless,
+  re-validates on the way out), `definition_exists`.
+- `core/migrations/0002_definition_payload.py`: `description`, `task_type`,
+  `depends_on`, `config` columns.
+- Hypothesis property tests using a `@st.composite dags()` strategy that builds
+  graphs acyclic by construction, plus an `arbitrary_graphs()` strategy for
+  cycle-soundness.
+- 3 publish-race tests on real PostgreSQL; shared barrier/connection machinery
+  moved to `tests/integration/conftest.py`.
 
-**Phase 2: Workflow Definition Engine** — next. See `docs/development/ROADMAP.md`.
-Planned tasks: JSON workflow definitions, schema validation, DAG validation, cycle
-detection, topological sorting, dependency resolution, definition versioning.
+**Phase 3: REST API** — next. See `docs/development/ROADMAP.md`. The domain layer
+it needs already exists, so Phase 3 is an API concern (serializers, views, status
+codes, auth, pagination, OpenAPI) rather than a domain one.
 
 ## Decisions
 
