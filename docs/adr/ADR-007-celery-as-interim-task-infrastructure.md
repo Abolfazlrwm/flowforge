@@ -6,7 +6,7 @@
 
 ## Context
 
-The TaskForge specification calls for a custom Scheduler with the following
+The FlowForge specification calls for a custom Scheduler with the following
 features:
 
 - **Transactional outbox** to avoid dual-write problems between PostgreSQL
@@ -25,8 +25,8 @@ Docker Compose, CI, and the development environment can be exercised end-to-end.
 
 ## Decision
 
-**Keep Celery for Phase 0 and Phase 1.** Write an ADR documenting the
-deviation. In Phase 4 (Scheduler), evaluate whether to:
+**Keep Celery for Phase 0 and Phase 1.** In Phase 4 (Scheduler), evaluate
+whether to:
 
 1. **Replace Celery** with a custom scheduler + direct RabbitMQ delivery as
    specified in the original spec, or
@@ -55,8 +55,8 @@ This decision will be made at Phase 4 based on:
 
 - The `scheduler` and `worker` services in `compose.yaml` use Celery beat and
   Celery worker commands.
-- The `taskforge/celery.py` module exists and is imported in
-  `taskforge/__init__.py`.
+- The `flowforge/celery.py` module exists and is imported in
+  `flowforge/__init__.py`.
 - Celery settings (`CELERY_*`) are present in `settings.py`.
 - The architecture overview and ROADMAP documents reference Celery as interim
   infrastructure.

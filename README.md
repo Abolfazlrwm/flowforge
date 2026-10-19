@@ -1,4 +1,4 @@
-# TaskForge
+# FlowForge
 
 An open-source distributed workflow orchestration engine powered by Django, PostgreSQL, and RabbitMQ.
 
@@ -6,7 +6,7 @@ An open-source distributed workflow orchestration engine powered by Django, Post
 
 ## Overview
 
-TaskForge is a production-oriented workflow orchestration platform that enables teams to define, schedule, and execute directed acyclic graph (DAG) workflows across distributed workers. It is designed with correctness, reliability, and observability as first-class concerns.
+FlowForge is a production-oriented workflow orchestration platform that enables teams to define, schedule, and execute directed acyclic graph (DAG) workflows across distributed workers. It is designed with correctness, reliability, and observability as first-class concerns.
 
 ## Architecture
 
@@ -30,8 +30,8 @@ TaskForge is a production-oriented workflow orchestration platform that enables 
 
 1. Clone the repository:
    ```bash
-   git clone https://github.com/Abolfazlrwm/taskforge.git
-   cd taskforge
+   git clone https://github.com/Abolfazlrwm/flowforge.git
+   cd flowforge
    ```
 
 2. Create and activate a virtual environment:
@@ -85,7 +85,7 @@ ruff check .
 ruff format .
 
 # Type checking
-mypy taskforge core api --ignore-missing-imports
+mypy flowforge core api --ignore-missing-imports
 
 # Tests
 pytest tests/unit -v

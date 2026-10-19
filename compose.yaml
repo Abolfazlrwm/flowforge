@@ -1,18 +1,18 @@
-name: taskforge
+name: flowforge
 
 services:
   db:
     image: postgres:16-alpine
     environment:
-      POSTGRES_USER: taskforge
-      POSTGRES_PASSWORD: taskforge
-      POSTGRES_DB: taskforge
+      POSTGRES_USER: flowforge
+      POSTGRES_PASSWORD: flowforge
+      POSTGRES_DB: flowforge
     volumes:
       - postgres_data:/var/lib/postgresql/data
     ports:
       - "5432:5432"
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U taskforge -d taskforge"]
+      test: ["CMD-SHELL", "pg_isready -U flowforge -d flowforge"]
       interval: 5s
       timeout: 5s
       retries: 5
@@ -45,8 +45,9 @@ services:
     environment:
       DJANGO_SECRET_KEY: ${DJANGO_SECRET_KEY:-local-dev-secret}
       DJANGO_DEBUG: "True"
+      DJANGO_SETTINGS_MODULE: flowforge.settings.dev
       DJANGO_ALLOWED_HOSTS: localhost,127.0.0.1,web
-      DATABASE_URL: postgres://taskforge:taskforge@db:5432/taskforge
+      DATABASE_URL: postgres://flowforge:flowforge@db:5432/flowforge
       REDIS_URL: redis://redis:6379/0
       CELERY_BROKER_URL: amqp://guest:guest@rabbitmq:5672//
       CELERY_RESULT_BACKEND: redis://redis:6379/1
@@ -72,7 +73,8 @@ services:
     environment:
       DJANGO_SECRET_KEY: ${DJANGO_SECRET_KEY:-local-dev-secret}
       DJANGO_DEBUG: "True"
-      DATABASE_URL: postgres://taskforge:taskforge@db:5432/taskforge
+      DJANGO_SETTINGS_MODULE: flowforge.settings.dev
+      DATABASE_URL: postgres://flowforge:flowforge@db:5432/flowforge
       REDIS_URL: redis://redis:6379/0
       CELERY_BROKER_URL: amqp://guest:guest@rabbitmq:5672//
       CELERY_RESULT_BACKEND: redis://redis:6379/1
@@ -87,7 +89,7 @@ services:
       - .:/app
     command: >
       sh -c "python manage.py migrate --noinput &&
-             celery -A taskforge beat -l info"
+             celery -A flowforge beat -l info"
 
   worker:
     build:
@@ -96,7 +98,8 @@ services:
     environment:
       DJANGO_SECRET_KEY: ${DJANGO_SECRET_KEY:-local-dev-secret}
       DJANGO_DEBUG: "True"
-      DATABASE_URL: postgres://taskforge:taskforge@db:5432/taskforge
+      DJANGO_SETTINGS_MODULE: flowforge.settings.dev
+      DATABASE_URL: postgres://flowforge:flowforge@db:5432/flowforge
       REDIS_URL: redis://redis:6379/0
       CELERY_BROKER_URL: amqp://guest:guest@rabbitmq:5672//
       CELERY_RESULT_BACKEND: redis://redis:6379/1
@@ -111,7 +114,7 @@ services:
       - .:/app
     command: >
       sh -c "python manage.py migrate --noinput &&
-             celery -A taskforge worker -l info"
+             celery -A flowforge worker -l info"
 
 volumes:
   postgres_data:

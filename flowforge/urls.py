@@ -1,4 +1,4 @@
-"""Root URL configuration for TaskForge."""
+"""Root URL configuration for FlowForge."""
 
 from django.contrib import admin
 from django.urls import include, path
