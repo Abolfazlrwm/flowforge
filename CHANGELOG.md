@@ -7,6 +7,46 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Pure-Python domain layer in `core/domain/` with no Django imports, enforced by
+  an AST scan and a subprocess import test that blocks `django` on
+  `sys.meta_path`.
+- `WorkflowRunState` (5 values) and `TaskRunState` (7 values) as `StrEnum`, with
+  the `StrEnum` equality trap documented and tested as regression prevention.
+- `StateMachine[T]` generic with validated `Transition` tables, rejecting
+  duplicate edges, edges out of terminal states, dead ends and cross-enum states
+  at import time.
+- `WORKFLOW_RUN_MACHINE` (5 edges) and `TASK_RUN_MACHINE` (9 edges) in
+  `core/domain/machines.py`. Cancellation is three distinct edges
+  (`cancel_pending`, `cancel_ready`, `cancel_running`) so the audit log names the
+  source state.
+- Frozen dataclass entities (`Workflow`, `Task`, `WorkflowRun`, `TaskRun`) with
+  `__post_init__` invariants: terminal/finish-time equivalence, running/lease
+  equivalence, finish-after-start, positive attempt and non-negative fencing
+  token.
+- Domain services (`initial_task_run_state`, `derive_workflow_run_state`) with
+  precedence-based derivation: cancelled > failed > all-succeeded > running >
+  pending.
+- Persistence models (`core/models.py`) with UUID PKs, six `CHECK` constraints,
+  and named indexes justified by the query each serves (see
+  `docs/architecture/data-model.md`).
+- Atomic conditional-UPDATE transition repository
+  (`core/repositories/transitions.py`) with fencing token increment on claim and
+  stale-token rejection on finish. No `SELECT ... FOR UPDATE`, no sleep, no
+  retry loop.
+- Hypothesis stateful property tests (`RuleBasedStateMachine`) for state-machine
+  reachability, terminality, and no-self-loops, plus derivation precedence
+  properties.
+- Concurrency tests on real PostgreSQL
+  (`tests/integration/test_concurrent_transitions.py`): 16 threads with a
+  `threading.Barrier`, proving exactly one claim wins, exactly one start wins,
+  and a stale fencing token loses even under concurrency.
+- Architecture documentation: `docs/architecture/data-model.md` (entity model,
+  constraints, index justification, known costs) and
+  `docs/architecture/execution-model.md` (state diagrams, transition protocol,
+  fencing-token sequence, lease lifecycle).
+
 ### Changed
 
 - **Django 5.1 → 5.2 LTS** (`django>=5.2,<5.3`). Django 5.1 reached end of

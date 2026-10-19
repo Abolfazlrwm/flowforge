@@ -17,14 +17,14 @@
 
 ## Phase 1 — Domain Modeling (v0.2.0)
 
-- [ ] Workflow entities
-- [ ] Task entities
-- [ ] WorkflowRun
-- [ ] TaskRun
-- [ ] State machines
-- [ ] Domain services
-- [ ] Persistence models
-- [ ] State transition tests
+- [x] Workflow entities
+- [x] Task entities
+- [x] WorkflowRun
+- [x] TaskRun
+- [x] State machines
+- [x] Domain services
+- [x] Persistence models
+- [x] State transition tests
 
 ## Phase 2 — Workflow Definition Engine (v0.3.0)
 
