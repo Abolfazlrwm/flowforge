@@ -3,11 +3,13 @@
 > Full ADR documents are in [`docs/adr/`](../adr/). This file provides a
 > summary index.
 
-## ADR-001: Python 3.11+ and Django 5.1
+## ADR-001: Python 3.11+ and Django 5.2 LTS
 
 **Context:** Need a stable, modern Python/Django baseline.
-**Decision:** Target Python 3.11+; develop on 3.13. Use Django 5.1.
-**Rationale:** Django 5.1 supports Python 3.10–3.13. Python 3.11+ provides significant performance improvements and typing features.
+**Decision:** Target Python 3.11+; develop on 3.13. Use Django 5.2 LTS.
+**Rationale:** Django 5.1 reached end of extended support on 2025-12-03, so it receives no security fixes. Django 5.2 LTS is supported until April 2028 and runs on Python 3.10–3.13 (3.14 from 5.2.8). Python 3.11+ provides significant performance improvements and typing features.
+
+> Superseded the original Django 5.1 pin on 2026-10-19. See [ADR-010](../adr/ADR-010-django-5-2-lts.md).
 
 ## ADR-002: Modular Monolith with Separate Runtime Processes
 
