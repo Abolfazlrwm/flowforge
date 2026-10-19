@@ -67,6 +67,9 @@ docker-compose.override.yml
 
 # Documentation
 docs/_build/
+# MkDocs output. `mkdocs build --strict` runs in CI; the artefact is never
+# committed, and Pages deployment is deferred to Phase 10.
+site/
 
 # Misc
 *.pid

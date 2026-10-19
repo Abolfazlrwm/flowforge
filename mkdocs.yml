@@ -5,8 +5,22 @@ repo_url: https://github.com/Abolfazlrwm/flowforge
 repo_name: Abolfazlrwm/flowforge
 
 theme:
-  name: readthedocs
-  highlightjs: true
+  name: material
+  features:
+    - navigation.sections
+    - navigation.top
+    - content.code.copy
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
 
 nav:
   - Home: index.md
@@ -15,6 +29,8 @@ nav:
       - Data Model: architecture/data-model.md
       - Execution Model: architecture/execution-model.md
       - Workflow Definitions: architecture/definitions.md
+  - API:
+      - Overview: api/overview.md
   - Development:
       - Setup: development/setup.md
       - Roadmap: development/ROADMAP.md
@@ -24,6 +40,11 @@ nav:
       - Audit Report: development/AUDIT_REPORT.md
   - Deployment:
       - Docker: deployment/docker.md
+  - ADRs:
+      - Index: adr/index.md
+      - Celery as interim task infrastructure: adr/ADR-007-celery-as-interim-task-infrastructure.md
+      - Project name evaluation: adr/ADR-009-project-name-evaluation.md
+      - Django 5.2 LTS: adr/ADR-010-django-5-2-lts.md
 
 plugins:
   - search
@@ -33,3 +54,15 @@ markdown_extensions:
   - codehilite
   - toc:
       permalink: true
+  - pymdownx.superfences:
+      # Without this block the Mermaid in the architecture documents renders as
+      # a plain code block instead of a diagram. `--strict` proves the extension
+      # loaded; it cannot prove a diagram is syntactically valid Mermaid.
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+
+# Also set in the file, not only on the command line, so a local `mkdocs build`
+# fails on exactly what CI fails on instead of printing warnings and passing.
+strict: true
