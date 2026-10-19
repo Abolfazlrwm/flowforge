@@ -20,6 +20,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Dependabot now groups all GitHub Actions bumps into one PR and patch-level
   Python bumps into one PR, so a regression can be attributed to a single change.
 
+### Fixed
+
+- **Codecov upload had been failing silently since Phase 0.** The action
+  rejected tokenless uploads (`Token required - not valid tokenless upload`)
+  while reporting success, so the job looked green with no coverage data
+  reaching Codecov. The step now skips when no `CODECOV_TOKEN` is configured and
+  fails loudly when one is.
+
 ### Not upgraded, deliberately
 
 - **Python stays at 3.13.** Django 5.2 supports 3.14 only from 5.2.8, and "every
