@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security vulnerability
+    url: https://github.com/Abolfazlrwm/flowforge/security/advisories/new
+    about: Report privately through a security advisory. Do not open a public issue.
+  - name: Design question or open-ended discussion
+    url: https://github.com/Abolfazlrwm/flowforge/discussions
+    about: For "how should this work" questions rather than a concrete defect.

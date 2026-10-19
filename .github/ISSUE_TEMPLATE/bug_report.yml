@@ -1,0 +1,85 @@
+name: Bug report
+description: Something behaves differently from what the docs say.
+labels: ["bug", "needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Before filing: this project is in early development. Check
+        `docs/development/PROGRESS.md` first — the behaviour you are seeing may
+        be listed there as a known limitation.
+
+        Do not report security issues here. See `SECURITY.md`.
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What you observed, as concretely as possible.
+      placeholder: |
+        The readiness probe returned 200 while RabbitMQ was down.
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected
+      description: What the docs or the design say should happen, and where.
+      placeholder: |
+        docs/architecture/health.md says readiness must return 503 when a
+        dependency is unreachable.
+    validations:
+      required: true
+
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      description: Commands, in order. Include the full command, not a summary.
+      placeholder: |
+        1. docker compose up -d
+        2. docker compose stop rabbitmq
+        3. curl -i http://localhost:8000/health/ready/
+    validations:
+      required: true
+
+  - type: textarea
+    id: output
+    attributes:
+      label: Relevant output
+      description: Paste logs, tracebacks or probe payloads. Redact secrets.
+      render: shell
+
+  - type: input
+    id: version
+    attributes:
+      label: Version or commit
+      description: The tag, release, or commit SHA you are running.
+      placeholder: v0.1.0 / 97c17bf
+    validations:
+      required: true
+
+  - type: dropdown
+    id: environment
+    attributes:
+      label: Where did this happen
+      multiple: true
+      options:
+        - Docker Compose stack
+        - Local virtualenv (uv run)
+        - CI
+        - Production deployment
+
+  - type: textarea
+    id: versions
+    attributes:
+      label: Versions
+      description: Python, Django, PostgreSQL, Redis, RabbitMQ, Docker.
+      placeholder: |
+        Python 3.13.12
+        Django 5.1
+        PostgreSQL 16
+        Redis 7
+        RabbitMQ 3.13
+        Docker 27.x / Compose v2.29
