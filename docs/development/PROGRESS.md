@@ -2,17 +2,31 @@
 
 ## Current Phase
 
-Phase 0 — Engineering Foundation (closing)
+**Phase 0 — Engineering Foundation: CLOSED.** Phase 1 is not started.
+
+## Resume point
+
+If this session is resumed cold, read this section first.
+
+| Question | Answer |
+|----------|--------|
+| Where is the work | `main` is the only long-lived branch. Phase 0 is merged and tagged. |
+| What is released | `v0.1.0`, annotated tag on `97c17bf`, with a GitHub Release. |
+| What is next | Phase 1 — Domain Modeling, target `v0.2.0`. |
+| What blocks Phase 1 | **Issue #11** — Django 5.1 is past end-of-life. The domain models and their migrations should not be written against an unsupported framework, so this needs an owner decision first. |
+| What else is open | Eight Dependabot PRs (#2–#9). Deliberately unmerged; see "Pending decisions". |
 
 ## Status
 
 | Item | State |
 |------|-------|
-| Branch | `chore/phase0-audit-fixes` |
-| Pull request | #1 |
-| CI | Green — https://github.com/Abolfazlrwm/flowforge/actions/runs/39211983697 |
+| Branch | `main` |
+| Phase 0 PR | #1 — **MERGED** as `97c17bf` |
+| CI | Green — https://github.com/Abolfazlrwm/flowforge/actions/runs/39212369063 |
 | Docker | **Verified in CI** (build + `docker compose up` + health probes) |
-| v0.1.0 tag | Created after CI went green |
+| v0.1.0 tag | Created — annotated, points at `97c17bf` |
+| GitHub Release | Published — https://github.com/Abolfazlrwm/flowforge/releases/tag/v0.1.0 |
+| Branch protection | Active on `main`: `lint`, `test`, `docker` required, strict, no force push |
 | Phase 1 | Not started |
 
 ## Completed
@@ -47,6 +61,16 @@ Phase 0 — Engineering Foundation (closing)
     services wait on, so three containers can no longer race on `CREATE TABLE`.
 20. `.gitattributes` forces LF in the working tree, so a Windows checkout is
     byte-identical to what CI and the containers execute.
+21. Repository configuration: description, ten topics, Discussions enabled,
+    secret scanning and push protection on, Dependabot security updates on,
+    branch auto-delete, auto-merge, and "update branch" allowed.
+22. Branch protection on `main` — `lint`, `test`, `docker` required, branch must
+    be up to date, force pushes and deletions blocked, conversations must be
+    resolved. Approving reviews are set to 0 because GitHub forbids
+    self-approval and this is a single-maintainer project.
+23. Issue templates (defect, feature request) with blank issues disabled and
+    security reports routed to a private advisory; a pull request template that
+    asks for evidence rather than a claim; 36 labels; 11 phase milestones.
 
 ## Verification
 
@@ -130,10 +154,25 @@ passed only because of container start ordering.
     active `flowforgesoft.com`. Five alternatives were measured and all are
     taken on PyPI (ADR-009). Retained by owner-delegated decision.
 
+## Pending decisions
+
+These are waiting on the owner. They are listed here so they cannot quietly
+become assumptions.
+
+| # | Question | Why it is not decided here |
+|---|----------|----------------------------|
+| [#11](https://github.com/Abolfazlrwm/flowforge/issues/11) | Django 5.1 is past end-of-life (extended support ended 2025-12-03). Move to 5.2 LTS? | "Django 5.1" was an explicit owner decision. Changing the declared stack is not a call to make unilaterally — and Phase 1 writes the migrations that this affects. |
+| [#8](https://github.com/Abolfazlrwm/flowforge/pull/8) | Django 5.1.15 → 5.2.18 | Same decision as #11, expressed as a dependency bump. |
+| [#3](https://github.com/Abolfazlrwm/flowforge/pull/3) | Python 3.13-slim → 3.14-slim | "Python 3.13" was an explicit owner decision. |
+| [#7](https://github.com/Abolfazlrwm/flowforge/pull/7) | redis-py 5.3.1 → 8.1.0 | Three major versions. Needs a compatibility read, not a rubber stamp. |
+| [#9](https://github.com/Abolfazlrwm/flowforge/pull/9) | Celery 5.4.0 → 5.6.3 | Celery is interim (ADR-007). Bumping it now, before the Phase 4 keep-or-replace decision, spends effort on a component that may be removed. |
+| [#2](https://github.com/Abolfazlrwm/flowforge/pull/2), [#4](https://github.com/Abolfazlrwm/flowforge/pull/4), [#5](https://github.com/Abolfazlrwm/flowforge/pull/5), [#6](https://github.com/Abolfazlrwm/flowforge/pull/6) | GitHub Actions major bumps (checkout 4→7, setup-python 5→7, setup-uv 6→10, codecov 4→7) | Each needs its own CI run to prove it still works; batching them hides which one broke. Low risk, no urgency. |
+
 ## Blockers
 
-None. Docker is verified in CI; no local daemon is required.
+Phase 1 is blocked on decision #11. Everything else is unblocked.
 
 ## Next step
 
-Merge PR #1, tag `v0.1.0`, then begin Phase 1 (Domain Modeling).
+Get a decision on #11, then start Phase 1 (Domain Modeling) on
+`feat/phase1-domain-modeling`.
