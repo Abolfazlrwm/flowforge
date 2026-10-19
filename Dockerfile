@@ -3,7 +3,7 @@
 # ---------------------------------------------------------------------------
 # Builder: resolve dependencies from uv.lock into an isolated virtualenv
 # ---------------------------------------------------------------------------
-FROM python:3.13-slim AS builder
+FROM python:3.14-slim AS builder
 
 COPY --from=ghcr.io/astral-sh/uv:0.12.5 /uv /uvx /bin/
 
@@ -34,7 +34,7 @@ RUN uv sync --locked --no-editable
 # ---------------------------------------------------------------------------
 # Production
 # ---------------------------------------------------------------------------
-FROM python:3.13-slim AS production
+FROM python:3.14-slim AS production
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
