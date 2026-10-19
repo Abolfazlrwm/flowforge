@@ -97,7 +97,7 @@ uv run python manage.py runserver
 
 | Capability | State |
 |------------|-------|
-| Django 5.1 project with split settings (`base`/`dev`/`test`/`prod`) | Implemented |
+| Django 5.2 LTS project with split settings (`base`/`dev`/`test`/`prod`) | Implemented |
 | PostgreSQL, Redis, RabbitMQ configuration via `django-environ` | Implemented |
 | `SECRET_KEY` required whenever `DEBUG` is off | Implemented |
 | Liveness probe `GET /health/live/` | Implemented |

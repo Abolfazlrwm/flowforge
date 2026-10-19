@@ -18,12 +18,12 @@ jobs:
   lint:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
-      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e  # v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884  # v10.3.0
         with:
           version: ${{ env.UV_VERSION }}
           enable-cache: true
-      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065  # v5
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
         with:
           python-version: "3.13"
       - name: Verify lock file is current
@@ -69,13 +69,16 @@ jobs:
       DATABASE_URL: postgres://flowforge:flowforge@localhost:5432/flowforge
       REDIS_URL: redis://localhost:6379/0
       CELERY_BROKER_URL: amqp://guest:guest@localhost:5672//
+      # Optional. Codecov rejects tokenless uploads, so without this secret the
+      # upload step is skipped rather than failing silently behind a green job.
+      CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
-      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e  # v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884  # v10.3.0
         with:
           version: ${{ env.UV_VERSION }}
           enable-cache: true
-      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065  # v5
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
         with:
           python-version: "3.13"
       - name: Install from lock file
@@ -87,17 +90,28 @@ jobs:
       - name: Run tests
         run: uv run pytest tests/unit -v --cov --cov-report=xml
       - name: Upload coverage
-        uses: codecov/codecov-action@b9fd7d16f6d7d1b5d2bec1a2887e65ceed900238  # v4
-        if: github.event_name == 'pull_request'
+        # Codecov rejects tokenless uploads ("Token required - not valid
+        # tokenless upload") and the action still reports success, so this step
+        # was a green box over a failure from Phase 0 until 2026-10-19.
+        #
+        # It is now skipped when no token is configured, so "skipped" is an
+        # honest signal. When a token IS present, fail_ci_if_error is true so a
+        # broken upload turns the job red instead of passing quietly.
+        #
+        # The 80% gate is enforced by pytest-cov regardless; Codecov only adds
+        # PR annotations and a badge.
+        if: github.event_name == 'pull_request' && env.CODECOV_TOKEN != ''
+        uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5  # v7.1.1
         with:
           files: ./coverage.xml
-          fail_ci_if_error: false
+          token: ${{ secrets.CODECOV_TOKEN }}
+          fail_ci_if_error: true
 
   docker:
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
 
       - name: Build production image
         run: docker build --target production -t flowforge:ci .

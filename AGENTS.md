@@ -6,12 +6,12 @@ section of `docs/development/PROGRESS.md`.
 
 ## Current Phase
 
-**Phase 0 is CLOSED. Phase 1 is NOT started — it is blocked on issue #11.**
+**Phase 1 — Domain Modeling: IN PROGRESS.** Phase 0 is closed and released.
 
 ## Completed (Phase 0)
 
 - Repository initialized with an isolated `.git`.
-- Django 5.1 project created (package: `flowforge`).
+- Django project created (package: `flowforge`); now on **5.2 LTS** (ADR-010).
 - PostgreSQL, Redis, RabbitMQ integration configured.
 - Settings split into `flowforge/settings/{base,dev,test,prod}.py`.
 - `SECRET_KEY` required whenever `DEBUG` is off.
@@ -46,14 +46,10 @@ were racing on `migrate`. **A green run is evidence that one interleaving
 worked, not that the system is correct.** When a check passes, ask what it did
 not exercise.
 
-## Next Phase
+## Current Phase scope
 
-**Phase 1: Domain Modeling** — not started.
-
-Blocked on **issue #11**: Django 5.1 is past end-of-life (extended support
-ended 2025-12-03). Phase 1 writes the migrations that this decision affects, so
-do not start until the owner chooses between staying on 5.1 and moving to 5.2
-LTS.
+**Phase 1: Domain Modeling** — in progress. Unblocked: issue #11 was resolved by
+moving to Django 5.2 LTS (ADR-010).
 
 Planned tasks:
 - Workflow entities (Workflow, Task)
@@ -66,8 +62,13 @@ Planned tasks:
 ## Decisions
 
 - Python 3.11+ (developing on 3.13).
-- Django 5.1 — **owner decision, currently under review in issue #11 because
-  5.1 is out of support.** Do not change it unilaterally.
+- **Django 5.2 LTS** — owner decision on 2026-10-19, recorded in ADR-010.
+  Django 5.1 reached end of extended support on 2025-12-03. Do not change the
+  framework version unilaterally.
+- **Python 3.13.** 3.14 is deferred until it is verified in CI; the Docker
+  ecosystem ignores Python minor/major bumps for that reason.
+- **redis-py stays below 6 and Celery stays at 5.4.0** until the Phase 4
+  keep-or-replace decision. Celery 5.4 declares `redis<6.0.0`.
 - Modular monolith with independent runtime processes.
 - `django-environ` for 12-factor configuration.
 - `uv` for dependency resolution; `uv.lock` is the source of truth for CI.

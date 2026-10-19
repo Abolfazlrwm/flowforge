@@ -2,7 +2,7 @@
 
 ## Current Phase
 
-**Phase 0 — Engineering Foundation: CLOSED.** Phase 1 is not started.
+**Phase 1 — Domain Modeling: IN PROGRESS.** Phase 0 is closed and released.
 
 ## Resume point
 
@@ -12,9 +12,10 @@ If this session is resumed cold, read this section first.
 |----------|--------|
 | Where is the work | `main` is the only long-lived branch. Phase 0 is merged and tagged. |
 | What is released | `v0.1.0`, annotated tag on `97c17bf`, with a GitHub Release. |
+| Framework | **Django 5.2 LTS** (owner decision, [ADR-010](../adr/ADR-010-django-5-2-lts.md)). Python stays at 3.13. |
 | What is next | Phase 1 — Domain Modeling, target `v0.2.0`. |
-| What blocks Phase 1 | **Issue #11** — Django 5.1 is past end-of-life. The domain models and their migrations should not be written against an unsupported framework, so this needs an owner decision first. |
-| What else is open | Dependabot PRs (#2–#9, #12 at the time of writing). Deliberately unmerged; see "Pending decisions". The exact set grows as Dependabot runs — treat the table below as the current snapshot, not a fixed list. |
+| What blocks Phase 1 | **Nothing.** Issue #11 was closed by ADR-010. |
+| What else is open | Nothing pending an owner decision. The Dependabot backlog was resolved as one coordinated stack upgrade; see "Dependency decisions". |
 
 ## Status
 
@@ -26,8 +27,10 @@ If this session is resumed cold, read this section first.
 | Docker | **Verified in CI** (build + `docker compose up` + health probes) |
 | v0.1.0 tag | Created — annotated, points at `97c17bf` |
 | GitHub Release | Published — https://github.com/Abolfazlrwm/flowforge/releases/tag/v0.1.0 |
-| Branch protection | Active on `main`: `lint`, `test`, `docker` required, strict, no force push |
-| Phase 1 | Not started |
+| Branch protection | Active on `main`: `lint`, `test`, `docker` required, strict, no force push, 0 approving reviews |
+| Django | **5.2 LTS** (ADR-010) |
+| Python | 3.13 (3.14 deferred — see limitations) |
+| Phase 1 | In progress |
 
 ## Completed
 
@@ -71,6 +74,9 @@ If this session is resumed cold, read this section first.
 23. Issue templates (defect, feature request) with blank issues disabled and
     security reports routed to a private advisory; a pull request template that
     asks for evidence rather than a claim; 36 labels; 11 phase milestones.
+24. Coordinated stack upgrade: Django 5.2 LTS and DRF 3.17.2, four GitHub
+    Actions majors re-pinned to commit SHAs, Dependabot grouping, and ignore
+    rules with reasons for the three declined upgrades (ADR-010).
 
 ## Verification
 
@@ -154,26 +160,49 @@ passed only because of container start ordering.
     active `flowforgesoft.com`. Five alternatives were measured and all are
     taken on PyPI (ADR-009). Retained by owner-delegated decision.
 
-## Pending decisions
+### Dependency deferrals
 
-These are waiting on the owner. They are listed here so they cannot quietly
-become assumptions.
+12. **Python stays at 3.13.** Django 5.2 supports Python 3.14 only from 5.2.8.
+    The compiled dependencies do ship `cp314` wheels (`psycopg-binary` 11,
+    `pydantic-core` 31, `rpds-py` 29) and the rest are pure Python, but "every
+    dependency verified on 3.14 in CI" has not been demonstrated: that needs a
+    3.14 entry in the CI matrix *and* a matching Docker base image. Docker
+    Python minor/major bumps are ignored in `dependabot.yml` until then.
+13. **redis-py is pinned below 6 by Celery, not by preference.** Celery 5.4
+    declares `redis<6.0.0` for its redis integration, and this project uses
+    Celery's Redis result backend. redis-py 8.1.0 cannot be adopted until the
+    Phase 4 keep-or-replace decision (ADR-007). Note that Celery 5.6 replaces
+    the direct pin with `kombu[redis]`, so upgrading Celery would unblock it —
+    the two deferrals are linked.
+14. **Celery stays at 5.4.0.** Interim infrastructure (ADR-007). Minor and major
+    upgrades are ignored in `dependabot.yml`; patch releases still flow.
+15. **Codecov reporting is inactive.** The upload requires a `CODECOV_TOKEN`
+    secret that does not exist. The step now skips rather than pretending to
+    succeed, so no coverage data reaches Codecov and there is no badge. This
+    does not weaken the quality gate: the 80% threshold is enforced by
+    `pytest-cov` inside the test job.
 
-| # | Question | Why it is not decided here |
-|---|----------|----------------------------|
-| [#11](https://github.com/Abolfazlrwm/flowforge/issues/11) | Django 5.1 is past end-of-life (extended support ended 2025-12-03). Move to 5.2 LTS? | "Django 5.1" was an explicit owner decision. Changing the declared stack is not a call to make unilaterally — and Phase 1 writes the migrations that this affects. |
-| [#8](https://github.com/Abolfazlrwm/flowforge/pull/8) | Django 5.1.15 → 5.2.18 | Same decision as #11, expressed as a dependency bump. |
-| [#3](https://github.com/Abolfazlrwm/flowforge/pull/3) | Python 3.13-slim → 3.14-slim | "Python 3.13" was an explicit owner decision. |
-| [#7](https://github.com/Abolfazlrwm/flowforge/pull/7) | redis-py 5.3.1 → 8.1.0 | Three major versions. Needs a compatibility read, not a rubber stamp. |
-| [#9](https://github.com/Abolfazlrwm/flowforge/pull/9) | Celery 5.4.0 → 5.6.3 | Celery is interim (ADR-007). Bumping it now, before the Phase 4 keep-or-replace decision, spends effort on a component that may be removed. |
-| [#12](https://github.com/Abolfazlrwm/flowforge/pull/12) | djangorestframework 3.15.2 → 3.17.2 | Two minor versions; the API surface in Phase 3 is written against it, so the version should be settled before the endpoints are. |
-| [#2](https://github.com/Abolfazlrwm/flowforge/pull/2), [#4](https://github.com/Abolfazlrwm/flowforge/pull/4), [#5](https://github.com/Abolfazlrwm/flowforge/pull/5), [#6](https://github.com/Abolfazlrwm/flowforge/pull/6) | GitHub Actions major bumps (checkout 4→7, setup-python 5→7, setup-uv 6→10, codecov 4→7) | Each needs its own CI run to prove it still works; batching them hides which one broke. Low risk, no urgency. |
+## Dependency decisions
+
+The Dependabot backlog was resolved as a single coordinated upgrade rather than
+nine separate merges, so a regression can be attributed to one change.
+
+| Package | Proposed | Outcome |
+|---------|----------|---------|
+| Django | 5.1.15 → 5.2.18 | **Taken.** Owner decision, ADR-010. 5.1 is out of support. |
+| djangorestframework | 3.15.2 → 3.17.2 | **Taken.** 3.17 is the first series declaring Django 5.2 support. |
+| actions/checkout | 4 → 7.0.1 | **Taken.** Verified by the `lint`/`test`/`docker` jobs. |
+| actions/setup-python | 5 → 7.0.0 | **Taken.** Same. |
+| astral-sh/setup-uv | 6 → 10.3.0 | **Taken.** Same. |
+| codecov/codecov-action | 4 → 7.1.1 | **Taken, and a pre-existing defect fixed.** The upload had been failing with `Token required - not valid tokenless upload` since Phase 0 while the step reported success. It now skips visibly when no token exists, and fails loudly when one does. |
+| redis | 5.3.1 → 8.1.0 | **Declined.** Blocked by Celery 5.4's `redis<6` (limitation 13). Ignore rule added. |
+| celery | 5.4.0 → 5.6.3 | **Declined.** Interim; Phase 4 decides (limitation 14). Ignore rule added. |
+| python (Docker) | 3.13-slim → 3.14-slim | **Declined.** Not verified in CI (limitation 12). Ignore rule added. |
 
 ## Blockers
 
-Phase 1 is blocked on decision #11. Everything else is unblocked.
+None. Phase 1 is unblocked.
 
 ## Next step
 
-Get a decision on #11, then start Phase 1 (Domain Modeling) on
-`feat/phase1-domain-modeling`.
+Phase 1 (Domain Modeling) on `feat/phase1-domain-modeling`.
