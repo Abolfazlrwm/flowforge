@@ -6,7 +6,8 @@ section of `docs/development/PROGRESS.md`.
 
 ## Current Phase
 
-**Phase 1 — Domain Modeling: IN PROGRESS.** Phase 0 is closed and released.
+**Phase 2 — Workflow Definition Engine: NEXT.** Phase 1 is merged, tagged `v0.2.0`,
+and released. Phase 0 is closed and released.
 
 ## Completed (Phase 0)
 
@@ -46,18 +47,36 @@ were racing on `migrate`. **A green run is evidence that one interleaving
 worked, not that the system is correct.** When a check passes, ask what it did
 not exercise.
 
+## Phase 1 outcome
+
+- PR #20 merged as `869720f`; `v0.2.0` tagged (annotated) and released.
+- CI run `39226452632`: lint, test (143 unit + 5 PostgreSQL concurrency), docker
+  all green; Codecov upload succeeded (token added 2026-10-19).
+- Coverage: 97.55% (gate 80%).
+- **Codecov reporting is now active.** The step had been failing silently since
+  Phase 0 (tokenless upload rejected while reporting success); it now succeeds
+  with `fail_ci_if_error: true`, and the README carries the badge.
+- Known limitations: `docs/development/PROGRESS.md`.
+
 ## Current Phase scope
 
-**Phase 1: Domain Modeling** — in progress. Unblocked: issue #11 was resolved by
-moving to Django 5.2 LTS (ADR-010).
+**Phase 1: Domain Modeling — COMPLETE** (merged as `869720f`, tagged `v0.2.0`,
+released). Unblocked: issue #11 was resolved by moving to Django 5.2 LTS (ADR-010).
 
-Planned tasks:
-- Workflow entities (Workflow, Task)
-- Execution entities (WorkflowRun, TaskRun)
-- State machines and transition rules
-- Domain services for workflow lifecycle
-- Persistence models and migrations
-- Comprehensive state transition tests
+Delivered in Phase 1:
+- `core/domain/`: pure-Python state machines, entities, services — no Django import
+  (enforced by AST + subprocess import tests).
+- `core/models.py` + `core/migrations/0001_initial.py`: UUID PKs, six `CHECK`
+  constraints, five query-justified indexes.
+- `core/repositories/transitions.py`: atomic conditional-UPDATE transitions with
+  fencing tokens.
+- 143 unit tests (97.55% coverage) + 5 PostgreSQL concurrency tests; Hypothesis
+  stateful property tests; CI runs concurrency tests with `REQUIRE_POSTGRES=1`.
+- `docs/architecture/data-model.md` and `docs/architecture/execution-model.md`.
+
+**Phase 2: Workflow Definition Engine** — next. See `docs/development/ROADMAP.md`.
+Planned tasks: JSON workflow definitions, schema validation, DAG validation, cycle
+detection, topological sorting, dependency resolution, definition versioning.
 
 ## Decisions
 
