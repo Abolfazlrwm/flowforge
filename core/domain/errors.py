@@ -52,3 +52,48 @@ class InvariantViolationError(DomainError):
     the failure surfaces as a domain error at the point of construction rather
     than as an ``IntegrityError`` from whichever query happened to write first.
     """
+
+
+class DefinitionError(DomainError):
+    """A workflow definition cannot be used as written.
+
+    This is a *validation* error: it means the submitted definition is malformed
+    or internally inconsistent. It is raised before anything is persisted, so a
+    rejected definition never leaves a half-built `Workflow` row behind.
+    """
+
+
+class DuplicateTaskKeyError(DefinitionError):
+    """Two tasks in one definition share a key."""
+
+    def __init__(self, key: str, source: str = "") -> None:
+        self.key = key
+        where = f" (declared in {source})" if source else ""
+        super().__init__(f"duplicate task key {key!r}{where}")
+
+
+class UnknownDependencyError(DefinitionError):
+    """A task names a dependency that is not a task in the definition."""
+
+    def __init__(self, key: str, dependency: str) -> None:
+        self.key = key
+        self.dependency = dependency
+        super().__init__(f"task {key!r} depends on unknown task {dependency!r}")
+
+
+class CyclicDependencyError(DefinitionError):
+    """The dependency graph contains a cycle.
+
+    ``cycle`` holds the nodes of one cycle in dependency order, so the message
+    renders as a path that closes on itself.
+
+    An empty tuple is accepted. ``DependencyGraph.levels`` raises this error as a
+    defensive guard and cannot always name the cycle, and indexing ``cycle[0]``
+    unconditionally would have turned that guard into an ``IndexError`` — a
+    confusing failure raised from inside the error constructor.
+    """
+
+    def __init__(self, cycle: tuple[str, ...]) -> None:
+        self.cycle = cycle
+        path = " -> ".join((*cycle, cycle[0])) if cycle else "(cycle could not be named)"
+        super().__init__(f"dependency cycle detected: {path}")

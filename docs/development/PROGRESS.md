@@ -2,8 +2,8 @@
 
 ## Current Phase
 
-**Phase 1 — Domain Modeling: COMPLETE, pending CI on the PR.** Phase 0 is closed
-and released.
+**Phase 2 — Workflow Definition Engine: COMPLETE, CI green on PR #21.** Phase 0
+and Phase 1 are closed and released.
 
 ## Resume point
 
@@ -11,28 +11,30 @@ If this session is resumed cold, read this section first.
 
 | Question | Answer |
 |----------|--------|
-| Where is the work | `feat/phase1-domain-modeling`, branched from `main` at `525e919`. |
-| What is released | `v0.1.0` (Phase 0) and the Django 5.2 LTS stack upgrade on `main`. |
+| Where is the work | `feat/phase2-workflow-definition-engine`, branched from `main` at `f85e609`. |
+| What is released | `v0.1.0` (Phase 0), `v0.2.0` (Phase 1), and the Django 5.2 LTS stack upgrade. |
 | Framework | **Django 5.2 LTS** (owner decision, [ADR-010](../adr/ADR-010-django-5-2-lts.md)). Python stays at 3.13. |
-| What is next | Tag `v0.2.0`, then Phase 2 — Workflow Definition Engine. |
-| What blocks Phase 1 | **Nothing.** |
+| What is next | Tag `v0.3.0`, then Phase 3 — REST API. |
+| What blocks Phase 2 | **Nothing.** |
 | What else is open | Nothing pending an owner decision. |
 
 ## Status
 
 | Item | State |
 |------|-------|
-| Branch | `feat/phase1-domain-modeling` |
+| Branch | `feat/phase2-workflow-definition-engine` |
 | Phase 0 PR | #1 — **MERGED** as `97c17bf` |
 | Stack upgrade | **MERGED** as `525e919` (Django 5.2 LTS, DRF 3.17, Actions re-pinned) |
-| CI | See "Verification" — the Phase 1 run is the authoritative one |
+| Phase 1 | **MERGED** as `869720f`, tagged `v0.2.0` |
+| CI | Phase 2 run `39252710339` — `lint`, `test`, `docker` all green |
 | Docker | **Verified in CI** (build + `docker compose up` + health probes). **Not** verified on the owner's machine; the daemon is offline there |
 | v0.1.0 tag | Created — annotated, points at `97c17bf` |
-| GitHub Release | Published — https://github.com/Abolfazlrwm/flowforge/releases/tag/v0.1.0 |
+| v0.2.0 tag | Created — annotated, points at `869720f` |
+| GitHub Releases | Published for v0.1.0 and v0.2.0 |
 | Branch protection | Active on `main`: `lint`, `test`, `docker` required, strict, no force push, 0 approving reviews |
 | Django | **5.2 LTS** (ADR-010) |
 | Python | 3.13 (3.14 deferred — see limitations) |
-| Phase 1 | Complete — 143 unit tests, 5 PostgreSQL concurrency tests |
+| Phase 2 | Complete — 270 unit tests, 8 PostgreSQL tests (5 transition races, 3 publish races) |
 
 ## Completed
 
@@ -118,12 +120,96 @@ If this session is resumed cold, read this section first.
     — the latter with Mermaid state diagrams for both machines and a
     fencing-token sequence diagram.
 
+### Phase 2 — Workflow Definition Engine
+
+36. `TaskDefinition` and `WorkflowDefinition` as frozen dataclasses in
+    `core/domain/definition.py`, with no framework import. `config` is normalised
+    into a `MappingProxyType` so a caller's dict cannot mutate a validated
+    definition.
+37. Config is validated to be JSON-shaped **at construction**. The freeze was
+    only reachable through `__hash__` and `fingerprint()`, so a non-JSON value
+    passed construction and surfaced later as an unattributed `TypeError` — the
+    same laziness class as the unforced `graph` below.
+38. `DependencyGraph` validates duplicate keys, unknown dependencies and cycles
+    in its constructor. Cycle detection is **iterative** (an explicit stack of
+    `(node, next_child_index)` frames), so a 3000-deep chain whose back-edge sits
+    at the far end is found. A recursive walker overflows at roughly 1000 frames.
+39. `topological_order()`, `levels()`, `ready_tasks()`, `is_ready()`,
+    `transitive_dependencies_of()`, `transitive_dependents_of()` and the container
+    protocol, all deterministic — ties broken by ascending task key.
+40. `core/domain/schema.py`: a Draft 2020-12 schema for payload shape, reported
+    with JSONPaths. JSON Schema deliberately stops at types and required fields;
+    duplicate keys, dangling references and cycles are domain errors, because the
+    standard cannot express them.
+41. A payload that is **both** malformed and cyclic produces the shape error —
+    the cheaper fix first. Both branches are tested.
+42. `WorkflowDefinition.fingerprint()` over name, version, description and every
+    task's content. **`description` is included**: omitting it meant a definition
+    whose only change was its description silently returned the stored row, with
+    the caller believing text the database did not hold. Regression-guarded, and
+    verified to fail without the fix.
+43. `core/repositories/definitions.py`: `publish_definition` forces the graph
+    **before** the transaction opens, writes the workflow and its tasks in one
+    transaction, and is idempotent by fingerprint. Differing content under an
+    existing `(name, version)` raises `DefinitionConflictError`.
+44. `load_definition` round-trips losslessly and **re-validates on the way out**,
+    so a manual `UPDATE` or a data-loss migration is caught at read time rather
+    than at schedule time inside a transaction. It refuses rows predating
+    `core.0002` by name instead of guessing a `task_type`.
+45. Migration `core/0002_definition_payload.py` adding `description`,
+    `task_type`, `depends_on` and `config` as columns, so loading is lossless
+    rather than reconstructing `task_type` from the task key.
+46. Hypothesis property tests: `@st.composite dags()` builds graphs acyclic by
+    construction (task `t{i}` may only depend on `t{<i}`), while
+    `arbitrary_graphs()` covers cycle-soundness — a rejected graph's reported
+    cycle is checked edge by edge against the declared edges, and an acyclic
+    graph must never be rejected. Invariants include permutation, levels
+    partitioning, readiness safety, drainability, determinism across declaration
+    order, and closure correctness.
+47. Publish-race tests on real PostgreSQL: 16 threads, one `threading.Barrier`,
+    no sleeps. Two races — identical content and conflicting content. `OperationalError`
+    (PostgreSQL's `deadlock detected`) is deliberately **not** an accepted
+    outcome, so a deadlock fails the test.
+48. `ready_tasks()` returning already-completed tasks was found and fixed. A
+    scheduler acting on that would execute a task twice.
+49. `flowforge.settings.test` now ignores a `DATABASE_URL` that exists only in
+    `.env`. `base` merges the file into `os.environ`, which made a file value
+    indistinguishable from a caller-supplied one and broke the suite's own "no
+    external services" contract on any machine with a checked-out `.env`. CI is
+    unaffected because it sets the variable at job level.
+50. `tests/integration/conftest.py` now holds the barrier, per-thread connection
+    cleanup and the no-stragglers check, shared by the transition race and the
+    publish race, with a second entry point for races whose losers are expected
+    to raise.
+51. `docs/architecture/definitions.md`: lifecycle diagram, why definitions are
+    value objects, why cycle detection is iterative, the shape-vs-graph boundary,
+    and an honest account of what the publish race does **not** guarantee.
+
 ## Verification
 
 ### In CI (authoritative)
 
-Phase 1 run: https://github.com/Abolfazlrwm/flowforge/actions/runs/39226452632
+Phase 2 run: https://github.com/Abolfazlrwm/flowforge/actions/runs/39252710339
 
+| Job | Result |
+|-----|--------|
+| lint (ruff, ruff format, mypy) | PASS |
+| test — unit (270 passed, 98.12% coverage, gate 80%) | PASS |
+| test — integration (8 PostgreSQL concurrency tests, `REQUIRE_POSTGRES=1`) | PASS |
+| test — Codecov upload (`Upload queued for processing complete`) | PASS |
+| docker (build, compose up, health probes) | PASS |
+
+The integration step ran all eight tests for real — the five transition races
+from Phase 1 and the three new publish races:
+
+```
+tests/integration/test_concurrent_publish.py::test_publishing_identical_content_concurrently_yields_one_workflow PASSED
+tests/integration/test_concurrent_publish.py::test_publishing_different_content_concurrently_holds_one_definition PASSED
+tests/integration/test_concurrent_publish.py::test_definition_exists_is_true_for_the_different_content_race PASSED
+============================== 8 passed in 2.52s ===============================
+```
+
+Phase 1 run: https://github.com/Abolfazlrwm/flowforge/actions/runs/39226452632
 | Job | Result |
 |-----|--------|
 | lint (ruff, ruff format, mypy) | PASS |
@@ -237,6 +323,25 @@ passed only because of container start ordering.
     probes`) is the only evidence. The owner's earlier rule — "do not tag until
     Docker is verified on my machine" — therefore still applies to a local,
     hands-on Docker check, which is separate from the CI verification.
+16. **The Phase 2 publish-race tests have not run on the developer's machine.**
+    A local PostgreSQL is listening on `localhost:5432` but rejects the
+    `flowforge` credentials in `.env` (`password authentication failed`), so the
+    three new concurrency tests skip locally — the same CI-only coverage Phase 1's
+    transition races have. The developer's own credentials were not changed to
+    force a local run: the owner's database is not theirs to modify. CI supplies
+    `POSTGRES_PASSWORD: flowforge`, so the tests run for real there.
+17. **`publish_definition` does not serialise concurrent first-publishes.**
+    `select_for_update()` cannot lock a row that does not exist, so two callers
+    publishing the same `(name, version)` for the first time both see "not there"
+    and both insert. The unique constraint picks the winner and the loser's
+    transaction rolls back, which leaves the database correct — but the loser sees
+    an `IntegrityError` rather than a friendly conflict, and it is the caller's
+    job to retry. Serialising would need a whole-range lock or a retry loop;
+    neither was added. Documented in `docs/architecture/definitions.md`.
+18. **`docs/architecture/definitions.md` is the only new architecture document,
+    and its Mermaid diagram is not rendered in CI.** There is no Markdown link
+    checker and no diagram render step in the pipeline; the diagram is verified
+    by reading, not by a build.
 
 ## Dependency decisions
 
@@ -257,11 +362,23 @@ nine separate merges, so a regression can be attributed to one change.
 
 ## Blockers
 
-None. Phase 1 is unblocked.
+None. Phase 2 is unblocked.
 
 ## Next step
 
-Phase 1 is merged and tagged `v0.2.0`. Proceed to **Phase 2 — Workflow Definition
-Engine (v0.3.0)**: JSON workflow definitions, schema validation, DAG validation,
-cycle detection, topological sorting, dependency resolution, definition
-versioning.
+Phase 2 is complete. Proceed to **Phase 3 — REST API (v0.4.0)**: workflow
+management endpoints, execution endpoints, authentication, authorization,
+pagination, error handling, OpenAPI documentation.
+
+The publish domain layer Phase 3 needs is already in place — `publish_definition`,
+`load_definition`, `definition_exists`, the payload schema and the fingerprint —
+so Phase 3 is an API concern (serializers, views, status codes) rather than a
+domain one.
+
+## Ordering note
+
+The CI URL for Phase 2 was added in a second commit inside the same PR, once the
+run was actually green (`39252710339`). Committing a CI URL before the run exists
+would be a claim rather than a verification, and the Codecov upload — disabled in
+Phase 0 by exactly that kind of assumption — is the precedent for why the URL is
+not written in advance.
