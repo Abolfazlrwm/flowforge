@@ -11,6 +11,7 @@ from __future__ import annotations
 from django.db import transaction
 
 from core.domain.definition import WorkflowDefinition
+from core.domain.services import derive_workflow_run_state
 from core.domain.states import TaskRunState, WorkflowRunState
 from core.models import TaskRun, WorkflowRun
 from core.repositories.definitions import load_definition
@@ -95,20 +96,58 @@ def advance_workflow_run(run: WorkflowRun) -> tuple[int, int]:
                 promoted += 1
 
         # Start the run as soon as it has any live work to do.
-        if run.state == WorkflowRunState.PENDING.value and (
-            promoted > 0
-            or TaskRun.objects.filter(
-                workflow_run=run,
-                state__in=[TaskRunState.READY.value, TaskRunState.RUNNING.value],
-            ).exists()
-        ):
-            transition_workflow_run(
+        if (
+            run.state == WorkflowRunState.PENDING.value
+            and (
+                promoted > 0
+                or TaskRun.objects.filter(
+                    workflow_run=run,
+                    state__in=[TaskRunState.READY.value, TaskRunState.RUNNING.value],
+                ).exists()
+            )
+            and transition_workflow_run(
                 run_id=run.id,
                 expected=WorkflowRunState.PENDING,
                 target=WorkflowRunState.RUNNING,
             )
+        ):
+            # The in-memory row still says PENDING; the completion check below
+            # must see RUNNING or it would skip a run that just started.
+            run.refresh_from_db()
 
         enqueued = enqueue_ready_tasks(run)
+
+        # Complete the run when its tasks have resolved. The scheduler owns the
+        # run's lifecycle; a worker only owns one task run. The precedence lives
+        # in `derive_workflow_run_state`, so it is not re-implemented here.
+        derived = derive_workflow_run_state(
+            TaskRunState(task_run.state) for task_run in TaskRun.objects.filter(workflow_run=run)
+        )
+        if run.state == WorkflowRunState.RUNNING.value:
+            if derived is WorkflowRunState.SUCCEEDED:
+                transition_workflow_run(
+                    run_id=run.id,
+                    expected=WorkflowRunState.RUNNING,
+                    target=WorkflowRunState.SUCCEEDED,
+                )
+            elif derived is WorkflowRunState.FAILED:
+                transition_workflow_run(
+                    run_id=run.id,
+                    expected=WorkflowRunState.RUNNING,
+                    target=WorkflowRunState.FAILED,
+                )
+            elif derived is WorkflowRunState.CANCELLED:
+                transition_workflow_run(
+                    run_id=run.id,
+                    expected=WorkflowRunState.RUNNING,
+                    target=WorkflowRunState.CANCELLED,
+                )
+        elif run.state == WorkflowRunState.PENDING.value and derived is WorkflowRunState.CANCELLED:
+            transition_workflow_run(
+                run_id=run.id,
+                expected=WorkflowRunState.PENDING,
+                target=WorkflowRunState.CANCELLED,
+            )
 
     return (promoted, enqueued)
 
