@@ -127,7 +127,7 @@ def test_outage_leaves_rows_pending_then_recovery_drains_them_once() -> None:
 
     # A dead port: the connection fails before any publish, so the transaction
     # rolls back and every row stays pending.
-    dead = RabbitPublisher("amqp://guest:guest@127.0.0.1:1//")
+    dead = RabbitPublisher("amqp://guest:guest@127.0.0.1:1/")
     try:
         with pytest.raises(pika.exceptions.AMQPError):
             publish_once(dead)

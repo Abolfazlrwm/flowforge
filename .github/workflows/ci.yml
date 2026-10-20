@@ -121,8 +121,10 @@ jobs:
       rabbitmq:
         image: rabbitmq:3.13-alpine
         env:
-          RABBITMQ_DEFAULT_USER: guest
-          RABBITMQ_DEFAULT_PASS: guest
+          # Not `guest`: RabbitMQ restricts guest to loopback, and the runner
+          # reaches the service over the Docker bridge, not 127.0.0.1.
+          RABBITMQ_DEFAULT_USER: flowforge
+          RABBITMQ_DEFAULT_PASS: flowforge
         options: >-
           --health-cmd "rabbitmq-diagnostics -q ping"
           --health-interval 10s
@@ -134,7 +136,7 @@ jobs:
       DJANGO_SETTINGS_MODULE: flowforge.settings.test
       DATABASE_URL: postgres://flowforge:flowforge@localhost:5432/flowforge
       REDIS_URL: redis://localhost:6379/0
-      RABBITMQ_URL: amqp://guest:guest@localhost:5672//
+      RABBITMQ_URL: amqp://flowforge:flowforge@localhost:5672/
       # Optional. Codecov rejects tokenless uploads, so without this secret the
       # upload step is skipped rather than failing silently behind a green job.
       CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
