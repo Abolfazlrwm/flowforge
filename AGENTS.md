@@ -6,8 +6,8 @@ section of `docs/development/PROGRESS.md`.
 
 ## Current Phase
 
-**Phase 3 — REST API: NEXT.** Phase 2 is merged, tagged `v0.3.0`, and released.
-Phases 0 and 1 are closed and released.
+**Phase 4 — Scheduler: NEXT.** Phase 3 is complete (PR #23, CI run
+`39454512221`); Phases 0–2 are merged, tagged and released.
 
 ## Completed (Phase 0)
 
@@ -89,31 +89,55 @@ not exercise.
   are CI-verified only, and `publish_definition` does not serialise concurrent
   first-publishes).
 
+## Phase 3 outcome
+
+- **78 API tests**; 348 unit tests in total, 98.30% coverage, `api/` at 100%.
+  The 8 PostgreSQL concurrency tests run in CI and all passed.
+- `docs/api/openapi.yaml` is committed and a `schema` CI job fails on any drift.
+  Generation was verified deterministic by generating twice and diffing.
+- **Two defects were found by writing the tests, not by reading the code:**
+  - `flowforge.settings.test` disabled throttling by emptying
+    `DEFAULT_THROTTLE_RATES`, which left `ScopedRateThrottle` installed and
+    turned every scoped request into a 500. It now removes
+    `DEFAULT_THROTTLE_CLASSES`, and a test asserts every declared scope has a
+    rate.
+  - `IdempotencyMismatchError` was raised but never mapped, so the 422 the views
+    and the schema promise was a 500. It is mapped now, and 422 was added to the
+    status table.
+  Both regression tests were reverted against the unfixed code to prove they
+  fail without the fix.
+- **One commit on this branch is broken in isolation.** `66484a0` added
+  `api/views.py`, which unpacks `(workflow, created)` from
+  `publish_definition`, but the matching change to `core/repositories/definitions.py`
+  landed in `082d4ab`. The branch tip is consistent; the intermediate commit is
+  not, so a bisect across it will fail to import. Recorded rather than hidden.
+- Known limitations: `docs/api/overview.md` (no scheduler; throttle counters are
+  per-process unless the cache is shared; the schema is checked for drift, not
+  for semantics) and `docs/development/PROGRESS.md`.
+
 ## Current Phase scope
 
-**Phase 2: Workflow Definition Engine — COMPLETE.**
+**Phase 3: REST API — COMPLETE.**
 
-Delivered in Phase 2:
-- `core/domain/definition.py`: `TaskDefinition` and `WorkflowDefinition` (frozen
-  dataclasses) and `DependencyGraph` — duplicate-key, unknown-dependency and
-  iterative cycle detection; topological order, levels, readiness, transitive
-  closures; deterministic ties.
-- `core/domain/schema.py`: Draft 2020-12 shape validation reported with JSONPaths,
-  kept separate from the graph checks the standard cannot express.
-- `core/repositories/definitions.py`: `publish_definition` (atomic, idempotent by
-  fingerprint, exclusive by `(name, version)`), `load_definition` (lossless,
-  re-validates on the way out), `definition_exists`.
-- `core/migrations/0002_definition_payload.py`: `description`, `task_type`,
-  `depends_on`, `config` columns.
-- Hypothesis property tests using a `@st.composite dags()` strategy that builds
-  graphs acyclic by construction, plus an `arbitrary_graphs()` strategy for
-  cycle-soundness.
-- 3 publish-race tests on real PostgreSQL; shared barrier/connection machinery
-  moved to `tests/integration/conftest.py`.
+Delivered in Phase 3:
+- `api/views.py`: five views. Each picks a queryset, declares permissions and
+  throttles, calls one service, serialises the result. No business logic.
+- `api/serializers.py`: output rendered from the database, not from the
+  in-memory definition. Definition input is still validated only by
+  `core.domain.schema`; `WorkflowDefinitionDoc` is a documentation mirror kept in
+  step by `test_doc_serializer_matches_the_schema`.
+- `api/errors.py`: one envelope for every failure, with domain-to-HTTP mapping in
+  one place and unknown exceptions deliberately not swallowed.
+- `api/permissions.py`, `api/pagination.py`, `api/filters.py`: the declared
+  rules for who may write, how a list is paged, and which query parameters exist.
+- Auth: DRF token and JWT, both checked against `is_active`.
+- Idempotent triggers backed by a unique index on `(user, key)`.
+- `docs/api/openapi.yaml` committed; `schema` CI job fails on drift.
 
-**Phase 3: REST API** — next. See `docs/development/ROADMAP.md`. The domain layer
-it needs already exists, so Phase 3 is an API concern (serializers, views, status
-codes, auth, pagination, OpenAPI) rather than a domain one.
+**Phase 4: Scheduler** — next. See `docs/development/ROADMAP.md`. The state
+machines, transitions repository and fencing tokens already exist; Phase 4 is
+the eligibility rule, the claim loop, and the outbox — plus the ADR-007 decision
+on whether Celery stays.
 
 ## Decisions
 
