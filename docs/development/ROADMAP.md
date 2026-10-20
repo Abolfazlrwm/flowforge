@@ -58,14 +58,14 @@
 
 ## Phase 5 — Distributed Workers (v0.6.0)
 
-- [ ] Worker process
-- [ ] Task consumption
-- [ ] Task execution
-- [ ] Heartbeats
-- [ ] Lease management
-- [ ] Fencing tokens
-- [ ] Result persistence
-- [ ] Graceful shutdown
+- [x] Worker process
+- [x] Task consumption
+- [x] Task execution
+- [x] Heartbeats
+- [x] Lease management
+- [x] Fencing tokens
+- [x] Result persistence (task outcome; handler return values are Phase 6)
+- [x] Graceful shutdown
 
 ## Phase 6 — Reliability (v0.7.0)
 
