@@ -27,7 +27,7 @@ def api_client() -> APIClient:
 
 
 @pytest.fixture
-def workflow(db: None) -> WorkflowModel:  # noqa: ARG001 - `db` enables database access
+def workflow(db: None) -> WorkflowModel:
     """A persisted workflow definition."""
     return Workflow.objects.create(name="etl", version=1)
 

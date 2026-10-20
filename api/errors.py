@@ -29,6 +29,7 @@ from typing import Any
 from core.domain.errors import DefinitionError
 from core.domain.schema import DefinitionSchemaError
 from core.repositories.definitions import DefinitionConflictError
+from core.repositories.idempotency import IdempotencyMismatchError
 from rest_framework import status
 from rest_framework.exceptions import APIException
 from rest_framework.response import Response
@@ -49,6 +50,7 @@ class ErrorCode(StrEnum):
     NOT_FOUND = "not_found"
     METHOD_NOT_ALLOWED = "method_not_allowed"
     CONFLICT = "conflict"
+    IDEMPOTENCY_MISMATCH = "idempotency_mismatch"
     THROTTLED = "throttled"
     SERVER_ERROR = "server_error"
 
@@ -71,6 +73,10 @@ _BY_STATUS: dict[int, tuple[ErrorCode, str]] = {
         "That method is not allowed on this resource.",
     ),
     status.HTTP_409_CONFLICT: (ErrorCode.CONFLICT, "The request conflicts with existing state."),
+    status.HTTP_422_UNPROCESSABLE_ENTITY: (
+        ErrorCode.IDEMPOTENCY_MISMATCH,
+        "The request could not be processed.",
+    ),
     status.HTTP_429_TOO_MANY_REQUESTS: (
         ErrorCode.THROTTLED,
         "Request was throttled. Retry later.",
@@ -139,6 +145,16 @@ def api_exception_handler(exc: Exception, context: dict[str, Any]) -> Response |
         return Response(
             error_body(ErrorCode.CONFLICT, str(exc)),
             status=status.HTTP_409_CONFLICT,
+        )
+    if isinstance(exc, IdempotencyMismatchError):
+        # 422, not 409: the resource does not conflict — the *request* does. A
+        # client that reuses a key with a different body has a bug, and
+        # replaying the original response would silently discard this request.
+        # This is a plain `Exception`, so without this branch it would fall
+        # through to the 500 path.
+        return Response(
+            error_body(ErrorCode.IDEMPOTENCY_MISMATCH, str(exc)),
+            status=status.HTTP_422_UNPROCESSABLE_ENTITY,
         )
     if isinstance(exc, (DefinitionError, DefinitionSchemaError)):
         # A malformed or internally inconsistent definition. The message names the
