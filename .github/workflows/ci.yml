@@ -116,10 +116,25 @@ jobs:
           --health-retries 5
         ports:
           - 6379:6379
+      # A real broker so the publisher's confirm/mandatory/outage guarantees are
+      # exercised, not assumed. Pinned tag matches compose.yaml.
+      rabbitmq:
+        image: rabbitmq:3.13-alpine
+        env:
+          RABBITMQ_DEFAULT_USER: guest
+          RABBITMQ_DEFAULT_PASS: guest
+        options: >-
+          --health-cmd "rabbitmq-diagnostics -q ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5672:5672
     env:
       DJANGO_SETTINGS_MODULE: flowforge.settings.test
       DATABASE_URL: postgres://flowforge:flowforge@localhost:5432/flowforge
       REDIS_URL: redis://localhost:6379/0
+      RABBITMQ_URL: amqp://guest:guest@localhost:5672//
       # Optional. Codecov rejects tokenless uploads, so without this secret the
       # upload step is skipped rather than failing silently behind a green job.
       CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
@@ -148,10 +163,11 @@ jobs:
       #
       # REQUIRE_POSTGRES=1 turns the skip into a failure, so a database
       # misconfiguration goes red here instead of passing quietly.
-      - name: Run integration tests (real PostgreSQL)
+      - name: Run integration tests (real PostgreSQL and RabbitMQ)
         run: uv run pytest tests/integration -v
         env:
           REQUIRE_POSTGRES: "1"
+          REQUIRE_RABBITMQ: "1"
 
       - name: Upload coverage
         # Codecov rejects tokenless uploads ("Token required - not valid

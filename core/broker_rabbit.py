@@ -6,9 +6,15 @@ imports pika. The contract is publisher confirms: a message is only considered
 delivered once the broker acknowledges it, which is what lets :func:`publish_once`
 mark the outbox row *after* a real delivery rather than before.
 
-This module has not been exercised against a live broker in CI (no RabbitMQ there);
-it is validated structurally and the delivery-confirmation path is the property the
-worker's ``dispatch_id`` de-duplication relies on.
+Publishing is **mandatory**: if no queue is bound to the exchange/routing key, the
+broker returns the message and pika raises ``UnroutableError``, which this class
+surfaces as :class:`PublisherError`. That is what keeps an outbox row pending when
+the worker's queue does not exist yet, instead of marking it delivered into the
+void.
+
+These behaviours are exercised against a real broker in
+``tests/integration/test_rabbit_publisher.py`` (CI runs them with
+``REQUIRE_RABBITMQ=1``).
 """
 
 from __future__ import annotations
@@ -69,7 +75,12 @@ class RabbitPublisher:
                     delivery_mode=2,  # persistent — survive a broker restart
                     content_type="application/json",
                 ),
+                # mandatory: an unroutable message is returned, not silently
+                # dropped, so the outbox row stays pending until a queue exists.
+                mandatory=True,
             )
+        except pika.exceptions.UnroutableError as exc:
+            raise PublisherError("message was unroutable (no queue bound to the exchange)") from exc
         except pika.exceptions.NackError as exc:
             raise PublisherError("broker rejected the message") from exc
         if confirmed is False:

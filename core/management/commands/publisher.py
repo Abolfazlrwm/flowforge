@@ -56,9 +56,16 @@ class Command(BaseCommand):
             self.stdout.write("Publisher started.")
             try:
                 while True:
-                    published = publish_once(publisher)
-                    if published:
-                        self.stdout.write(f"Delivered {published} message(s).")
+                    try:
+                        published = publish_once(publisher)
+                    except Exception as exc:  # stay alive through a broker outage
+                        # The sweep's transaction rolled back, so every row is still
+                        # pending. Log and retry; after recovery the next sweep drains
+                        # them. Crashing here would leave the process dead forever.
+                        self.stderr.write(f"Publisher sweep failed, retrying: {exc}")
+                    else:
+                        if published:
+                            self.stdout.write(f"Delivered {published} message(s).")
                     time.sleep(interval)
             except KeyboardInterrupt:
                 self.stdout.write("Publisher stopped.")
