@@ -2,8 +2,8 @@
 
 ## Current Phase
 
-**Phase 4 — Scheduler: COMPLETE (v0.5.1).** Phases 0–3 are closed and released.
-Phase 5 — Distributed Workers — is next.
+**Phase 5 — Distributed Workers: COMPLETE (v0.6.0).** Phases 0–4 are closed and
+released. Phase 6 — Reliability — is next.
 
 ## Resume point
 
@@ -11,13 +11,13 @@ If this session is resumed cold, read this section first.
 
 | Question | Answer |
 |----------|--------|
-| Where is the work | `feat/phase4-scheduler-impl`, branched from `main` at `f6bba2d` (after ADR-011). |
-| What is released | `v0.1.0` (Phase 0), `v0.2.0` (Phase 1), `v0.3.0` (Phase 2), `v0.4.0` (Phase 3). |
+| Where is the work | `feat/phase5-worker`, branched from `main` at `a8a5337`. |
+| What is released | `v0.1.0` (Phase 0), `v0.2.0` (Phase 1), `v0.3.0` (Phase 2), `v0.4.0` (Phase 3), `v0.5.0` (Phase 4), `v0.5.1` (Phase 4 gap). |
 | Framework | **Django 5.2 LTS** (owner decision, [ADR-010](../adr/ADR-010-django-5-2-lts.md)). Python stays at 3.13. |
 | Message broker | **RabbitMQ via pika**, no Celery ([ADR-011](../adr/ADR-011-custom-scheduler-and-transactional-outbox.md)). `RABBITMQ_URL` is the one broker. |
-| What is next | Merge PR #25, tag `v0.5.0`, then Phase 5 — Distributed Workers (the consumer loop). |
-| What blocks Phase 5 | **Nothing.** |
-| What else is open | Nothing pending an owner decision. `RabbitPublisher` is verified against a real broker in CI (v0.5.1). |
+| What is next | Merge PR #28, tag `v0.6.0`, then Phase 6 — Reliability (retries, dead-letter, backoff). |
+| What blocks Phase 6 | **Nothing.** |
+| What else is open | Nothing pending an owner decision. |
 
 ## Status
 
@@ -40,7 +40,8 @@ If this session is resumed cold, read this section first.
 | Branch protection | Active on `main`: `lint`, `test`, `docker` required, strict, no force push, 0 approving reviews |
 | Django | **5.2 LTS** (ADR-010) |
 | Python | 3.13 (3.14 deferred — see limitations) |
-| Phase 4 | Complete — 373 unit, 11 PostgreSQL, 5 RabbitMQ integration tests; no Celery. Publisher verified against a real broker (v0.5.1). |
+| Phase 4 | Complete — scheduler, outbox, publisher, lease reaper; no Celery. Publisher verified against a real broker (v0.5.1). |
+| Phase 5 | Complete — worker with manual ack, prefetch, trusted handlers, lease+fencing, heartbeat, graceful shutdown. End-to-end sample reaches `SUCCEEDED` in the compose CI job. |
 
 ## Completed
 
@@ -230,6 +231,29 @@ If this session is resumed cold, read this section first.
     instead of a TCP connect, and `mandatory=True` keeps an unroutable dispatch
     pending instead of dropping it.
 
+### Phase 5 — Distributed Workers
+
+63. `core/worker/registry.py` + `core/worker/builtin.py`: a trusted, in-process
+    handler registry. A dispatch names a `task_type`; nothing in it is imported or
+    executed as code, and an unknown type fails the task.
+64. `core/worker/consumer.py`: manual ack (`auto_ack=False`), prefetch, a lease
+    heartbeat thread, a graceful stop, and a `process` method separated from pika
+    so the decisions are unit-testable.
+65. `core/repositories/transitions.py`: `renew_lease`, the heartbeat's conditional
+    `UPDATE` that matches only while the token still owns the row.
+66. `manage.py worker`: consumes dispatches; SIGTERM/SIGINT stop after the in-flight
+    message is acked.
+67. `advance_workflow_run` now completes the workflow run when its tasks resolve
+    (`derive_workflow_run_state`), so a correct run no longer stays `RUNNING`.
+68. `manage.py sample_run` + a `worker` compose service: the end-to-end sample
+    (echo → add → noop) the docker CI job drives to `SUCCEEDED`.
+69. Tests: unit (success, handler failure, unknown type, duplicate delivery, finish
+    failure, stale finish, malformed payload, heartbeat, killed-worker stale
+    rejection, registry, run completion); integration (end-to-end consume,
+    duplicate delivery, lost ack redelivery, graceful shutdown).
+70. `docs/architecture/execution-model.md` records the worker's contract and what it
+    does not claim.
+
 ## Verification
 
 ### In CI (authoritative)
@@ -308,9 +332,9 @@ passed only because of container start ordering.
 
 ### Architectural
 
-1. **No worker yet.** The scheduler, outbox, publisher and lease reaper exist
-   (Phase 4), but nothing consumes a dispatch message and executes the task: the
-   worker loop is Phase 5. A dispatched task is therefore not yet run.
+1. **Handler return values are not persisted.** The worker records the task
+   outcome (SUCCEEDED/FAILED) durably, but a handler's return value is discarded.
+   Result storage belongs to Phase 6; today the outcome is the result.
 2. **The publisher's broker path is verified against a real broker in CI** (v0.5.1).
    `tests/integration/test_rabbit_publisher.py` runs against a RabbitMQ service
    container with `REQUIRE_RABBITMQ=1`: confirms + arrival, mandatory routing,
@@ -416,20 +440,18 @@ nine separate merges, so a regression can be attributed to one change.
 
 ## Blockers
 
-None. Phase 5 is unblocked. `RabbitPublisher` is verified against a real broker in
-CI (v0.5.1), so no owner-side verification remains.
+None. Phase 6 is unblocked.
 
 ## Next step
 
-Phase 4 is complete. Merge PR #25, tag `v0.5.0`, then proceed to **Phase 5 —
-Distributed Workers (v0.6.0)**: consume a dispatch message, claim the task run
-with the `fencing_token` from the payload, execute it, and call
-`finish_task_run`. The claim primitive, lease and fencing machinery already
-exist, so Phase 5 is the consumer loop and the handler registry.
+Phase 5 is complete. Merge PR #28, tag `v0.6.0`, then proceed to **Phase 6 —
+Reliability (v0.7.0)**: retry policies, exponential backoff, dead-letter handling,
+and persisting handler results. The `retrying` state and `schedule_retry` edge
+already exist; Phase 6 is the policy that drives them and the DLQ.
 
-Phase 4 left one thing Phase 5 will feel: **nothing consumes a dispatch
-message.** The publisher delivers it to RabbitMQ, and no process reads it yet, so
-a dispatched task is not executed until the worker exists.
+Phase 5 left one thing Phase 6 will feel: **a failed task does not retry.** The
+worker marks it FAILED and the run FAILED; nothing schedules a retry or a
+dead-letter route yet.
 
 ## Ordering note
 
