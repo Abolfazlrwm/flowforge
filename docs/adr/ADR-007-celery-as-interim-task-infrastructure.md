@@ -1,7 +1,8 @@
 # ADR-007: Celery as Interim Task Infrastructure (Phase 0)
 
 **Date:** 2026-10-18
-**Status:** Accepted — Interim (to be revisited in Phase 4)
+**Status:** Superseded in Phase 4 by [ADR-011](ADR-011-custom-scheduler-and-transactional-outbox.md)
+(owner decision 2026-10-20)
 **Supersedes:** None
 
 ## Context
