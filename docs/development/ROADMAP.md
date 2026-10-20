@@ -38,13 +38,13 @@
 
 ## Phase 3 — REST API (v0.4.0)
 
-- [ ] Workflow management endpoints
-- [ ] Execution endpoints
-- [ ] Authentication
-- [ ] Authorization
-- [ ] Pagination
-- [ ] Error handling
-- [ ] OpenAPI documentation
+- [x] Workflow management endpoints
+- [x] Execution endpoints
+- [x] Authentication
+- [x] Authorization
+- [x] Pagination
+- [x] Error handling
+- [x] OpenAPI documentation
 
 ## Phase 4 — Scheduler (v0.5.0)
 
