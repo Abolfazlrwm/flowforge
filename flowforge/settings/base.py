@@ -7,6 +7,7 @@ Environment selection is done via ``DJANGO_SETTINGS_MODULE``:
 - ``flowforge.settings.prod`` — production (secure defaults enforced)
 """
 
+from datetime import timedelta
 from pathlib import Path
 
 import environ
@@ -60,8 +61,12 @@ INSTALLED_APPS = [
     "django.contrib.messages",
     "django.contrib.staticfiles",
     "rest_framework",
+    "rest_framework.authtoken",
+    "django_filters",
+    "drf_spectacular",
     "django_structlog",
     "core",
+    "api",
 ]
 
 MIDDLEWARE = [
@@ -149,17 +154,77 @@ CSRF_COOKIE_SECURE = not DEBUG
 # DRF
 # ---------------------------------------------------------------------------
 REST_FRAMEWORK = {
+    # JWT first, then DRF's own token. Both are supported because they fail
+    # differently: a JWT is short-lived and stateless, a token is revocable by
+    # deleting a row. Clients that need immediate revocation use the token.
     "DEFAULT_AUTHENTICATION_CLASSES": [
+        "rest_framework_simplejwt.authentication.JWTAuthentication",
+        "rest_framework.authentication.TokenAuthentication",
         "rest_framework.authentication.SessionAuthentication",
     ],
+    # A view that forgets to declare a permission is authenticated-only, never
+    # public. Every view also names its class explicitly so the rule is visible
+    # where it is applied.
     "DEFAULT_PERMISSION_CLASSES": [
-        "rest_framework.permissions.IsAuthenticated",
+        "api.permissions.IsAuthenticatedAndActive",
     ],
-    "DEFAULT_PAGINATION_CLASS": "rest_framework.pagination.PageNumberPagination",
+    "DEFAULT_PAGINATION_CLASS": "api.pagination.StandardCursorPagination",
     "PAGE_SIZE": 20,
+    "DEFAULT_FILTER_BACKENDS": [
+        "django_filters.rest_framework.DjangoFilterBackend",
+        "rest_framework.filters.OrderingFilter",
+    ],
     "DEFAULT_RENDERER_CLASSES": [
         "rest_framework.renderers.JSONRenderer",
     ],
+    # One envelope for every failure. See `api/errors.py`.
+    "EXCEPTION_HANDLER": "api.errors.api_exception_handler",
+    "DEFAULT_SCHEMA_CLASS": "drf_spectacular.openapi.AutoSchema",
+    "DEFAULT_THROTTLE_CLASSES": [
+        "rest_framework.throttling.ScopedRateThrottle",
+    ],
+    # Per-scope rates. The scopes are declared on the views that use them, so a
+    # rate is never a number with no owner.
+    "DEFAULT_THROTTLE_RATES": {
+        "auth": "10/min",
+        "trigger": "60/min",
+        "read": "300/min",
+    },
+}
+
+# ---------------------------------------------------------------------------
+# Auth tokens
+# ---------------------------------------------------------------------------
+# JWT access tokens are short-lived because they cannot be revoked; the refresh
+# token is what a client exchanges. `ROTATE_REFRESH_TOKENS` plus
+# `BLACKLIST_AFTER_ROTATION` would need the token_blacklist app, which adds
+# tables for a property (revocation) that DRF's plain token already provides —
+# so it is deliberately not enabled here.
+SIMPLE_JWT = {
+    "ACCESS_TOKEN_LIFETIME": timedelta(minutes=15),
+    "REFRESH_TOKEN_LIFETIME": timedelta(days=7),
+    "AUTH_HEADER_TYPES": ("Bearer",),
+}
+
+SPECTACULAR_SETTINGS = {
+    "TITLE": "FlowForge API",
+    "DESCRIPTION": (
+        "Workflow orchestration for DAG-shaped jobs.\n\n"
+        'Every failure is returned as `{"error": {"code", "message", "details"}}`.'
+    ),
+    "VERSION": "0.4.0",
+    "SERVE_INCLUDE_SCHEMA": False,
+    # The schema is committed and checked in CI, so a drift between code and
+    # `docs/api/openapi.yaml` fails the build rather than being discovered by a
+    # client.
+    "SCHEMA_PATH_PREFIX": "/api/v1",
+    "COMPONENT_SPLIT_REQUEST": True,
+    "SORT_OPERATIONS": False,
+    # NOTE: `WorkflowRun.state` and `TaskRun.state` are `StrEnum`s whose value
+    # sets overlap, so drf-spectacular cannot always derive distinct component
+    # names and emits one cosmetic "enum naming collision" warning when it
+    # generates this schema. It is deterministic, does not change the output
+    # file, and does not affect the committed-schema drift check below.
 }
 
 # ---------------------------------------------------------------------------

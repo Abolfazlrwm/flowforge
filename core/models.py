@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import uuid
 
+from django.conf import settings
 from django.db import models
 from django.db.models import F, Q
 
@@ -116,6 +117,17 @@ class WorkflowRun(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
     started_at = models.DateTimeField(null=True, blank=True)
     finished_at = models.DateTimeField(null=True, blank=True)
+    # Who started this run. Nullable because a run can be started by the
+    # scheduler itself (a scheduled or retried trigger) with no request behind
+    # it. SET_NULL rather than CASCADE: deleting a user must not delete the
+    # history of what their workflows did.
+    requested_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="workflow_runs",
+    )
 
     class Meta:
         """Table-level rules and the indexes behind named queries."""
@@ -232,3 +244,63 @@ class TaskRun(models.Model):
     def __str__(self) -> str:
         """Readable label for the admin and logs."""
         return f"task {self.task_id} in run {self.workflow_run_id} ({self.state})"
+
+
+class IdempotencyKey(models.Model):
+    """A claim on an ``Idempotency-Key`` header, scoped to one user.
+
+    The uniqueness constraint here is the whole mechanism behind "N parallel
+    requests with the same key create exactly one run". Each request tries to
+    insert its claim; the unique index on ``(user, key)`` lets exactly one win,
+    and the losers block until the winner commits, then fail with an
+    ``IntegrityError`` and read back what the winner produced.
+
+    A separate table rather than a column on ``WorkflowRun``, for two reasons:
+
+    * **It scopes to the user, not the run.** Two users may legitimately choose
+      the same key, and neither should be able to guess or block the other's.
+    * **It records the response.** Replaying a request must return the original
+      status and body, not a freshly computed one that may differ because state
+      moved on.
+
+    ``request_fingerprint`` is what distinguishes a replay from a *misuse*: the
+    same key with a different payload is a client bug, and returning the original
+    response for it would silently discard the second request.
+    """
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="idempotency_keys",
+    )
+    key = models.CharField(max_length=255)
+    request_fingerprint = models.CharField(max_length=64)
+    response_status = models.PositiveSmallIntegerField()
+    response_body = models.JSONField()
+    workflow_run = models.ForeignKey(
+        WorkflowRun,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="idempotency_keys",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        """Table-level rules."""
+
+        constraints = [
+            # The race is resolved by this constraint, not by a lock: a row that
+            # does not exist yet cannot be locked, and PostgreSQL has no gap locks
+            # to make `select_for_update()` help.
+            models.UniqueConstraint(fields=["user", "key"], name="uniq_idempotency_user_key"),
+        ]
+        indexes = [
+            # Replay lookup: the only query this table serves.
+            models.Index(fields=["user", "key"], name="idx_idempotency_lookup"),
+        ]
+
+    def __str__(self) -> str:
+        """Readable label for the admin and logs."""
+        return f"idempotency {self.key!r} for user {self.user_id}"

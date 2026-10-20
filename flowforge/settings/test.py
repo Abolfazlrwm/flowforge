@@ -28,7 +28,7 @@ os.environ.setdefault(
 # E402: the imports must stay below the ``SUPPLIED_DATABASE_URL`` snapshot,
 # because ``base`` merges ``.env`` into ``os.environ`` on import.
 from .base import *  # noqa: E402,F403
-from .base import BASE_DIR, LOGGING  # noqa: E402
+from .base import BASE_DIR, LOGGING, REST_FRAMEWORK  # noqa: E402
 
 DEBUG = False
 
@@ -67,3 +67,17 @@ if not SUPPLIED_DATABASE_URL:
 _logging = cast("dict[str, Any]", LOGGING)
 _logging["root"] = {"handlers": ["console"], "level": "WARNING"}
 LOGGING = _logging
+
+# Throttling is real in production (see base.py), but the bulk API tests disable
+# it so they cannot flake on a *cumulative* rate limit across test methods that
+# share a user. The behaviour itself is covered by a dedicated test that
+# installs the throttle class and a tight rate with `override_settings`.
+#
+# Removing the *classes* is what disables throttling. Emptying the rates leaves
+# `ScopedRateThrottle` installed, and it then raises `ImproperlyConfigured` for
+# every view that names a `throttle_scope` — a 500 on each request, which is the
+# opposite of disabling the check.
+REST_FRAMEWORK = {
+    **REST_FRAMEWORK,
+    "DEFAULT_THROTTLE_CLASSES": [],
+}

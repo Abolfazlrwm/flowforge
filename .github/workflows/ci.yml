@@ -39,6 +39,58 @@ jobs:
         env:
           DJANGO_SETTINGS_MODULE: flowforge.settings.test
 
+  docs:
+    # The documentation site was never built before Phase 3: mkdocs was not in
+    # the dependency set, no job ran it, and the nav referenced a `docs/index.md`
+    # that did not exist. `--strict` turns a broken internal link, a nav entry
+    # with no target, and an unparseable page into a build failure.
+    #
+    # What this does NOT catch: a Mermaid diagram whose syntax is wrong. The
+    # extension loading is all the build can prove, and that gap is recorded as
+    # a limitation rather than implied away.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884  # v10.3.0
+        with:
+          version: ${{ env.UV_VERSION }}
+          enable-cache: true
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
+        with:
+          python-version: "3.13"
+      - name: Install from lock file
+        run: uv sync --locked --extra dev
+      - name: Build documentation (strict)
+        run: uv run mkdocs build --strict
+
+  schema:
+    # `docs/api/openapi.yaml` is committed, so the schema shown to clients is a
+    # reviewed artifact rather than a file that changes whenever a view changes.
+    # This job regenerates it and fails if the committed file is stale, which is
+    # what makes "the docs are the API" true: a code change that alters the
+    # contract will not pass review until the schema has been regenerated and
+    # committed alongside it.
+    runs-on: ubuntu-latest
+    env:
+      DJANGO_SETTINGS_MODULE: flowforge.settings.test
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884  # v10.3.0
+        with:
+          version: ${{ env.UV_VERSION }}
+          enable-cache: true
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
+        with:
+          python-version: "3.13"
+      - name: Verify lock file is current
+        run: uv lock --check
+      - name: Install from lock file
+        run: uv sync --locked --extra dev
+      - name: Generate the OpenAPI schema
+        run: uv run python manage.py spectacular --file docs/api/openapi.yaml
+      - name: Verify the committed schema is not stale
+        run: git diff --exit-code docs/api/openapi.yaml
+
   test:
     runs-on: ubuntu-latest
     services:
