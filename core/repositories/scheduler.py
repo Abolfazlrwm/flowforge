@@ -25,27 +25,31 @@ from core.repositories.transitions import (
 def enqueue_ready_tasks(run: WorkflowRun) -> int:
     """Create one outbox row per READY task run that lacks one for its generation.
 
-    Runs inside the caller's transaction. Locks the READY rows it touches so two
-    schedulers cannot both dispatch the same task. Returns the number of rows
-    created (not the number considered).
+    Opens its own transaction (a savepoint when the caller already has one) so
+    ``select_for_update`` is always legal — PostgreSQL rejects it outside a
+    transaction, and a caller that forgot one would otherwise fail only in
+    production. Locks the READY rows it touches so two schedulers cannot both
+    dispatch the same task. Returns the number of rows created (not the number
+    considered).
     """
-    ready = list(
-        TaskRun.objects.select_for_update()
-        .filter(workflow_run=run, state=TaskRunState.READY.value)
-        .select_related("task")
-    )
     enqueued = 0
-    for task_run in ready:
-        if (
-            create_dispatch(
-                task_run=task_run,
-                workflow_run=run,
-                fencing_token_snapshot=task_run.fencing_token,
-                attempt_snapshot=task_run.attempt,
-            )
-            is not None
-        ):
-            enqueued += 1
+    with transaction.atomic():
+        ready = list(
+            TaskRun.objects.select_for_update()
+            .filter(workflow_run=run, state=TaskRunState.READY.value)
+            .select_related("task")
+        )
+        for task_run in ready:
+            if (
+                create_dispatch(
+                    task_run=task_run,
+                    workflow_run=run,
+                    fencing_token_snapshot=task_run.fencing_token,
+                    attempt_snapshot=task_run.attempt,
+                )
+                is not None
+            ):
+                enqueued += 1
     return enqueued
 
 
