@@ -18,8 +18,7 @@ x-app-environment: &app-environment
   DJANGO_ALLOWED_HOSTS: localhost,127.0.0.1,web
   DATABASE_URL: postgres://flowforge:flowforge@db:5432/flowforge
   REDIS_URL: redis://redis:6379/0
-  CELERY_BROKER_URL: amqp://guest:guest@rabbitmq:5672//
-  CELERY_RESULT_BACKEND: redis://redis:6379/1
+  RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672//
 
 services:
   db:
@@ -63,7 +62,7 @@ services:
   #
   # Django's migrate command is not safe to run concurrently against the same
   # database: two processes racing on CREATE TABLE lose with
-  # `ProgrammingError: relation "..." already exists`. Previously web, worker
+  # `ProgrammingError: relation "..." already exists`. Previously web, publisher
   # and scheduler each ran migrate on startup, so the stack passed or failed
   # depending on container start ordering.
   #
@@ -113,9 +112,9 @@ services:
         condition: service_healthy
     volumes:
       - .:/app
-    command: ["celery", "-A", "flowforge", "beat", "-l", "info"]
+    command: ["python", "manage.py", "scheduler"]
 
-  worker:
+  publisher:
     build:
       context: .
       target: production
@@ -129,7 +128,7 @@ services:
         condition: service_healthy
     volumes:
       - .:/app
-    command: ["celery", "-A", "flowforge", "worker", "-l", "info"]
+    command: ["python", "manage.py", "publisher"]
 
 volumes:
   postgres_data:
