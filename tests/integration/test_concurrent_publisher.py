@@ -17,7 +17,14 @@ from core.repositories import enqueue_ready_tasks
 
 from tests.integration.conftest import require_postgres, run_concurrently
 
-pytestmark = pytest.mark.django_db
+pytestmark = [
+    pytest.mark.integration,
+    pytest.mark.concurrency,
+    # transaction=True commits the seeded rows so the threads' separate
+    # connections can see them. The default transaction-wrapped mode would hide
+    # uncommitted rows from every thread and the publishers would find nothing.
+    pytest.mark.django_db(transaction=True),
+]
 
 
 def _seed(count: int) -> None:
