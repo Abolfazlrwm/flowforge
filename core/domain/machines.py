@@ -97,6 +97,16 @@ TASK_RUN_MACHINE: StateMachine[TaskRunState] = StateMachine(
             target=TaskRunState.CANCELLED,
             requires_lease=True,
         ),
+        # The lease reaper. A RUNNING task whose lease has expired is returned to
+        # READY so it can be re-dispatched. The reaper does NOT require a lease:
+        # it forcibly reclaims an expired one on behalf of the scheduler. It is the
+        # only edge that moves a task backwards, and that is intentional — a dead
+        # worker must not pin a task run in RUNNING forever.
+        Transition(
+            name="reap_lease",
+            source=TaskRunState.RUNNING,
+            target=TaskRunState.READY,
+        ),
         Transition(
             name="schedule_retry",
             source=TaskRunState.FAILED,

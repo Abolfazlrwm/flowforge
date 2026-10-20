@@ -10,6 +10,8 @@ from __future__ import annotations
 from core.repositories.transitions import (
     claim_task_run,
     finish_task_run,
+    reap_expired_leases,
+    reclaim_task_run,
     transition_task_run,
     transition_workflow_run,
 )
@@ -17,6 +19,8 @@ from core.repositories.transitions import (
 __all__ = [
     "claim_task_run",
     "finish_task_run",
+    "reap_expired_leases",
+    "reclaim_task_run",
     "transition_task_run",
     "transition_workflow_run",
 ]
