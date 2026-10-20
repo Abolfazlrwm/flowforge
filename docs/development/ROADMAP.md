@@ -48,13 +48,13 @@
 
 ## Phase 4 — Scheduler (v0.5.0)
 
-- [ ] Task eligibility logic
-- [ ] Scheduler loop
-- [ ] Atomic task claiming
-- [ ] Transactional outbox
-- [ ] RabbitMQ publishing
-- [ ] Scheduler recovery
-- [ ] **Decision: keep Celery or replace with custom scheduler** (ADR-007)
+- [x] Task eligibility logic
+- [x] Scheduler loop
+- [x] Atomic task claiming
+- [x] Transactional outbox
+- [x] RabbitMQ publishing
+- [x] Scheduler recovery (lease reaper)
+- [x] **Decision: replace Celery with a custom scheduler** ([ADR-011](../adr/ADR-011-custom-scheduler-and-transactional-outbox.md))
 
 ## Phase 5 — Distributed Workers (v0.6.0)
 

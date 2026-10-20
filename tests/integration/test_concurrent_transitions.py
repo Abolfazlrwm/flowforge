@@ -15,12 +15,16 @@ in ``tests/integration/conftest.py`` and are shared with the publish race tests.
 
 from __future__ import annotations
 
+from datetime import timedelta
+
 import pytest
 from core.domain.states import TaskRunState, WorkflowRunState
 from core.models import TaskRun, WorkflowRun
 from core.repositories.transitions import (
     claim_task_run,
     finish_task_run,
+    reap_expired_leases,
+    reclaim_task_run,
     transition_task_run,
     transition_workflow_run,
 )
@@ -187,3 +191,56 @@ def test_a_stale_token_loses_even_under_concurrency(task_run: TaskRun) -> None:
 
     task_run.refresh_from_db()
     assert task_run.state == TaskRunState.SUCCEEDED.value
+
+
+def test_exactly_one_reaper_reclaims_an_expired_lease(task_run: TaskRun) -> None:
+    """N reapers race for one expired lease; exactly one may return it to READY.
+
+    Two reapers both seeing the row as expired must not both succeed: the second's
+    conditional UPDATE finds the row already reclaimed (no longer RUNNING, lease
+    cleared), so it matches nothing and returns ``False``.
+    """
+    require_postgres()
+    TaskRun.objects.filter(pk=task_run.id).update(
+        state=TaskRunState.RUNNING.value,
+        lease_owner="worker-1",
+        lease_expires_at=NOW - timedelta(seconds=1),
+        fencing_token=1,
+    )
+
+    results = run_concurrently(
+        THREADS,
+        lambda _index: reclaim_task_run(task_run_id=task_run.id, now=NOW),
+    )
+
+    assert len(results) == THREADS
+    assert sum(1 for won in results if won) == 1, (
+        f"expected exactly one reclaim, got {sum(1 for won in results if won)}: {results}"
+    )
+
+    task_run.refresh_from_db()
+    assert task_run.state == TaskRunState.READY.value
+    assert task_run.fencing_token == 2
+    assert task_run.lease_owner is None
+
+
+def test_reap_expired_leases_is_safe_under_concurrency(task_run: TaskRun) -> None:
+    """A conflicting reaper pass must not double-count or double-reclaim."""
+    require_postgres()
+    TaskRun.objects.filter(pk=task_run.id).update(
+        state=TaskRunState.RUNNING.value,
+        lease_owner="worker-1",
+        lease_expires_at=NOW - timedelta(seconds=1),
+        fencing_token=1,
+    )
+
+    counts = run_concurrently(
+        THREADS,
+        lambda _index: reap_expired_leases(now=NOW),
+    )
+
+    # Each pass may reclaim the row at most once; the sum is bounded by 1.
+    assert sum(counts) == 1, f"expected total reclamations of 1, got {sum(counts)}: {counts}"
+
+    task_run.refresh_from_db()
+    assert task_run.state == TaskRunState.READY.value

@@ -2,8 +2,8 @@
 
 ## Current Phase
 
-**Phase 3 — REST API: COMPLETE, CI green on PR #23.** Phases 0, 1 and 2 are
-closed and released.
+**Phase 4 — Scheduler: COMPLETE (v0.5.0).** Phases 0–3 are closed and released.
+Phase 5 — Distributed Workers — is next.
 
 ## Resume point
 
@@ -11,33 +11,36 @@ If this session is resumed cold, read this section first.
 
 | Question | Answer |
 |----------|--------|
-| Where is the work | `feat/phase3-rest-api`, branched from `main` at `f7019a9`. |
-| What is released | `v0.1.0` (Phase 0), `v0.2.0` (Phase 1), `v0.3.0` (Phase 2), and the Django 5.2 LTS stack upgrade. |
+| Where is the work | `feat/phase4-scheduler-impl`, branched from `main` at `f6bba2d` (after ADR-011). |
+| What is released | `v0.1.0` (Phase 0), `v0.2.0` (Phase 1), `v0.3.0` (Phase 2), `v0.4.0` (Phase 3). |
 | Framework | **Django 5.2 LTS** (owner decision, [ADR-010](../adr/ADR-010-django-5-2-lts.md)). Python stays at 3.13. |
-| What is next | Merge PR #23, tag `v0.4.0`, then Phase 4 — Scheduler, starting with the ADR-007 keep-or-replace decision. |
-| What blocks Phase 4 | **Nothing.** |
-| What else is open | Nothing pending an owner decision. |
+| Message broker | **RabbitMQ via pika**, no Celery ([ADR-011](../adr/ADR-011-custom-scheduler-and-transactional-outbox.md)). `RABBITMQ_URL` is the one broker. |
+| What is next | Merge PR #25, tag `v0.5.0`, then Phase 5 — Distributed Workers (the consumer loop). |
+| What blocks Phase 5 | **Nothing.** |
+| What else is open | `RabbitPublisher` needs verification against a live broker on the owner's machine. |
 
 ## Status
 
 | Item | State |
 |------|-------|
-| Branch | `feat/phase3-rest-api` |
+| Branch | `feat/phase4-scheduler-impl` |
 | Phase 0 PR | #1 — **MERGED** as `97c17bf` |
 | Stack upgrade | **MERGED** as `525e919` (Django 5.2 LTS, DRF 3.17, Actions re-pinned) |
 | Phase 1 | **MERGED** as `869720f`, tagged `v0.2.0` |
 | Phase 2 | **MERGED** as `d31abf3`, tagged `v0.3.0` |
-| Phase 3 | **PR #23 — CI green**, tagged `v0.4.0` on merge |
-| CI | Phase 3 run `39455215092` — `lint`, `test`, `schema`, `docs`, `docker` all green |
+| Phase 3 | **MERGED**, tagged `v0.4.0` |
+| Phase 4 | **PR #25 — implementation complete**, tagged `v0.5.0` on merge |
+| CI | Phase 4 — see the run for PR #25; `lint`, `test`, `schema`, `docs`, `docker` expected green |
 | Docker | **Verified in CI** (build + `docker compose up` + health probes). Accepted as sufficient by owner decision, 2026-10-19 — no local check is required |
 | v0.1.0 tag | Created — annotated, points at `97c17bf` |
 | v0.2.0 tag | Created — annotated, points at `869720f` |
 | v0.3.0 tag | Created — annotated, points at `d31abf3` |
-| GitHub Releases | Published for v0.1.0, v0.2.0 and v0.3.0 |
+| v0.4.0 tag | Created — annotated, points at the Phase 3 merge |
+| GitHub Releases | Published for v0.1.0, v0.2.0, v0.3.0 and v0.4.0 |
 | Branch protection | Active on `main`: `lint`, `test`, `docker` required, strict, no force push, 0 approving reviews |
 | Django | **5.2 LTS** (ADR-010) |
 | Python | 3.13 (3.14 deferred — see limitations) |
-| Phase 3 | Complete — 348 unit tests, 8 PostgreSQL tests, 98.30% coverage, `api/` at 100% |
+| Phase 4 | Complete — 373 unit tests, 11 PostgreSQL tests, no Celery |
 
 ## Completed
 
@@ -188,6 +191,38 @@ If this session is resumed cold, read this section first.
     value objects, why cycle detection is iterative, the shape-vs-graph boundary,
     and an honest account of what the publish race does **not** guarantee.
 
+### Phase 4 — Scheduler
+
+52. ADR-011 accepted (owner decision 2026-10-20): Celery removed, replaced by a
+    custom scheduler, a transactional outbox, a publisher, and (Phase 5) a worker.
+    The worker claims, not the scheduler.
+53. `core/repositories/scheduler.py`: `advance_workflow_run` promotes
+    dependency-satisfied tasks, starts the run and writes one outbox row per
+    dispatch generation in one transaction; `enqueue_ready_tasks` is idempotent
+    per generation; `schedule_once` reaps expired leases then advances every
+    active run.
+54. `core/models.OutboxMessage` + migration `core.0004_outbox`: the transactional
+    outbox, with a unique `(task_run, fencing_token_snapshot)` constraint and the
+    partial index `idx_outbox_pending`.
+55. `create_dispatch` pre-checks existence before inserting. Catching the UNIQUE
+    violation alone aborted the open SQLite transaction, and the next query then
+    raised `TransactionManagementError`; the pre-check plus a savepoint fixes it.
+56. `core/repositories/transitions.py`: the lease reaper (`reclaim_task_run`,
+    `reap_expired_leases`), a conditional `UPDATE ... WHERE state='running' AND
+    lease_expires_at < now` that bumps the fencing token. The `reap_lease` edge is
+    reachable only through the reaper, never the generic transition API.
+57. `core/broker.py` + `core/broker_rabbit.py` + `manage.py publisher`: the
+    publisher drains the outbox with `FOR UPDATE SKIP LOCKED`, publishes with
+    publisher confirms, and marks a row delivered only after the broker acks.
+58. `manage.py scheduler` and `manage.py publisher` replace celery beat/worker in
+    compose; the `worker` service is renamed `publisher`.
+59. Celery, kombu, billiard and vine removed; `CELERY_*` settings replaced by
+    `RABBITMQ_URL`; ADR-007 superseded.
+60. Tests: 373 unit and 11 PostgreSQL concurrency tests (5 transition races, 2
+    reaper races, 3 publish races, 1 publisher SKIP LOCKED race).
+61. `docs/architecture/execution-model.md` and `data-model.md` updated for the
+    reaper edge, the outbox table, and the scheduler/publisher processes.
+
 ## Verification
 
 ### In CI (authoritative)
@@ -266,11 +301,12 @@ passed only because of container start ordering.
 
 ### Architectural
 
-1. **Celery is interim** (ADR-007). The custom scheduler, transactional outbox,
-   direct RabbitMQ delivery and lease/fencing mechanism do not exist yet; the
-   keep-or-replace decision belongs to Phase 4.
-2. **No API endpoints yet.** `api/v1/urls.py` is still an empty placeholder. The
-   domain models and their migrations exist as of Phase 1.
+1. **No worker yet.** The scheduler, outbox, publisher and lease reaper exist
+   (Phase 4), but nothing consumes a dispatch message and executes the task: the
+   worker loop is Phase 5. A dispatched task is therefore not yet run.
+2. **The publisher's broker path is unverified against a live broker.** CI has no
+   RabbitMQ, so `RabbitPublisher` is exercised structurally, not end-to-end. The
+   owner should verify it against a real broker before relying on it.
 3. **Readiness checks are shallow.** RabbitMQ is checked with a TCP connect,
    not an authenticated AMQP handshake. Redis is checked with a cache write,
    which would also pass against a different cache backend.
@@ -312,14 +348,11 @@ passed only because of container start ordering.
     dependency verified on 3.14 in CI" has not been demonstrated: that needs a
     3.14 entry in the CI matrix *and* a matching Docker base image. Docker
     Python minor/major bumps are ignored in `dependabot.yml` until then.
-13. **redis-py is pinned below 6 by Celery, not by preference.** Celery 5.4
-    declares `redis<6.0.0` for its redis integration, and this project uses
-    Celery's Redis result backend. redis-py 8.1.0 cannot be adopted until the
-    Phase 4 keep-or-replace decision (ADR-007). Note that Celery 5.6 replaces
-    the direct pin with `kombu[redis]`, so upgrading Celery would unblock it —
-    the two deferrals are linked.
-14. **Celery stays at 5.4.0.** Interim infrastructure (ADR-007). Minor and major
-    upgrades are ignored in `dependabot.yml`; patch releases still flow.
+13. **redis-py stays below 6 for the Redis cache backend.** The Celery-driven pin
+    is gone (ADR-011); the remaining reason is cache-backend compatibility, which
+    is verified separately before a major bump.
+14. **Celery is gone.** Removed in Phase 4 (ADR-011); the Celery Dependabot
+    ignore was removed with it.
 15. **Docker is verified in CI only, and that is now sufficient by owner
     decision.** The daemon is offline on the maintainer's machine, so
     `docker compose up` has never run there. On 2026-10-19 the owner withdrew the
@@ -374,23 +407,20 @@ nine separate merges, so a regression can be attributed to one change.
 
 ## Blockers
 
-None. Phase 4 is unblocked.
+None. Phase 5 is unblocked. Owner-side: verify `RabbitPublisher` against a live
+RabbitMQ before relying on the publisher in production.
 
 ## Next step
 
-Phase 3 is complete. Merge PR #23, tag `v0.4.0`, then proceed to **Phase 4 —
-Scheduler (v0.5.0)**: task eligibility, the scheduler loop, atomic claiming, the
-transactional outbox, RabbitMQ publishing, recovery, and the ADR-007 decision on
-whether Celery stays.
+Phase 4 is complete. Merge PR #25, tag `v0.5.0`, then proceed to **Phase 5 —
+Distributed Workers (v0.6.0)**: consume a dispatch message, claim the task run
+with the `fencing_token` from the payload, execute it, and call
+`finish_task_run`. The claim primitive, lease and fencing machinery already
+exist, so Phase 5 is the consumer loop and the handler registry.
 
-The domain layer Phase 4 needs is already in place — the transition tables,
-`core/repositories/transitions.py` (one conditional `UPDATE ... WHERE state = ?`,
-returning `False` on a lost race), the fencing token and the lease columns — so
-Phase 4 is an eligibility-and-loop concern rather than a state-machine one.
-
-Phase 3 left one thing Phase 4 will feel: **nothing claims a task run.** A
-trigger creates every task run in its initial state (`ready` or `pending`) and
-stops, so a run stays `pending` until a scheduler exists.
+Phase 4 left one thing Phase 5 will feel: **nothing consumes a dispatch
+message.** The publisher delivers it to RabbitMQ, and no process reads it yet, so
+a dispatched task is not executed until the worker exists.
 
 ## Ordering note
 

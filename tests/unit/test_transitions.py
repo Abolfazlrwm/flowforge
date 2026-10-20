@@ -22,6 +22,8 @@ from core.models import TaskRun, WorkflowRun
 from core.repositories.transitions import (
     claim_task_run,
     finish_task_run,
+    reap_expired_leases,
+    reclaim_task_run,
     transition_task_run,
     transition_workflow_run,
 )
@@ -414,3 +416,119 @@ class TestFencing:
                 target=TaskRunState.READY,
                 fencing_token=token,
             )
+
+
+class TestLeaseReaper:
+    """The reaper returns an expired lease to READY and invalidates the dead worker."""
+
+    def test_reap_returns_an_expired_lease_to_ready(self, task_run: TaskRun) -> None:
+        """A RUNNING row past its lease expiry must become re-dispatchable."""
+        token = claim_task_run(
+            task_run_id=task_run.id, worker_id="worker-1", lease_seconds=30, now=NOW
+        )
+        assert token == 1
+        # Move the lease expiry into the past so the row is now stale.
+        TaskRun.objects.filter(pk=task_run.id).update(lease_expires_at=NOW - timedelta(seconds=1))
+
+        assert reclaim_task_run(task_run_id=task_run.id, now=NOW + timedelta(seconds=1))
+
+        task_run.refresh_from_db()
+        assert task_run.state == TaskRunState.READY.value
+        # The lease is gone; the CHECK constraint demands exactly this.
+        assert task_run.lease_owner is None
+        assert task_run.lease_expires_at is None
+        # And the fencing token advanced, so the dead worker's token is stale.
+        assert task_run.fencing_token == 2
+
+    def test_a_live_lease_is_not_reaped(self, task_run: TaskRun) -> None:
+        """A row whose lease has not expired must stay RUNNING."""
+        claim_task_run(task_run_id=task_run.id, worker_id="worker-1", lease_seconds=300, now=NOW)
+
+        assert reclaim_task_run(task_run_id=task_run.id, now=NOW) is False
+
+        task_run.refresh_from_db()
+        assert task_run.state == TaskRunState.RUNNING.value
+        assert task_run.lease_owner == "worker-1"
+
+    def test_reap_is_a_lost_race_not_an_error_for_a_gone_row(self, task_run: TaskRun) -> None:
+        """Reclaiming a row that no longer exists is a miss, not an exception."""
+        assert reclaim_task_run(task_run_id=uuid.uuid4(), now=NOW) is False
+
+    def test_a_resurrected_worker_cannot_write_after_reap(self, task_run: TaskRun) -> None:
+        """The whole point of the reaper. The dead worker's finish must be refused.
+
+        Worker A claims token 1, its lease expires, the reaper reclaims the row
+        (token -> 2, state -> READY). When A wakes up and writes with token 1, the
+        conditional UPDATE matches nothing: the row is no longer RUNNING and its
+        token has moved on. Without the reaper, A would silently overwrite a newer
+        outcome; with it, A's write is a no-op.
+        """
+        stale_token = claim_task_run(
+            task_run_id=task_run.id, worker_id="worker-A", lease_seconds=30, now=NOW
+        )
+        assert stale_token == 1
+        TaskRun.objects.filter(pk=task_run.id).update(lease_expires_at=NOW - timedelta(seconds=1))
+
+        assert reclaim_task_run(task_run_id=task_run.id, now=NOW + timedelta(seconds=1))
+
+        # Worker A wakes up, believing it still owns the row.
+        assert (
+            finish_task_run(
+                task_run_id=task_run.id,
+                target=TaskRunState.SUCCEEDED,
+                fencing_token=stale_token,
+                now=NOW,
+            )
+            is False
+        )
+
+        task_run.refresh_from_db()
+        assert task_run.state == TaskRunState.READY.value
+        assert task_run.fencing_token == 2
+
+    def test_reap_expired_leases_counts_only_expired_rows(self, task_run: TaskRun) -> None:
+        """The bulk scanner reaps exactly the rows whose lease is past, nothing else."""
+        claim_task_run(task_run_id=task_run.id, worker_id="worker-1", lease_seconds=30, now=NOW)
+        # Expire this lease.
+        TaskRun.objects.filter(pk=task_run.id).update(lease_expires_at=NOW - timedelta(seconds=1))
+
+        assert reap_expired_leases(now=NOW + timedelta(seconds=1)) == 1
+
+        task_run.refresh_from_db()
+        assert task_run.state == TaskRunState.READY.value
+
+    def test_reap_expired_leases_reports_zero_when_nothing_is_expired(
+        self, task_run: TaskRun
+    ) -> None:
+        """No expired leases means no reclamations, and no churn."""
+        claim_task_run(task_run_id=task_run.id, worker_id="worker-1", lease_seconds=300, now=NOW)
+        assert reap_expired_leases(now=NOW) == 0
+
+        task_run.refresh_from_db()
+        assert task_run.state == TaskRunState.RUNNING.value
+
+    def test_reaper_edge_is_not_reachable_through_transition_task_run(
+        self, task_run: TaskRun
+    ) -> None:
+        """The reaper transition has side effects only ``reclaim_task_run`` performs.
+
+        Routing it through ``transition_task_run`` would move the state but leave the
+        lease and fencing token untouched, violating the lease invariant. It must be
+        refused with a pointer to the correct function.
+        """
+        token = claim_task_run(
+            task_run_id=task_run.id, worker_id="worker-1", lease_seconds=30, now=NOW
+        )
+        TaskRun.objects.filter(pk=task_run.id).update(lease_expires_at=NOW - timedelta(seconds=1))
+
+        with pytest.raises(IllegalTransitionError):
+            transition_task_run(
+                task_run_id=task_run.id,
+                expected=TaskRunState.RUNNING,
+                target=TaskRunState.READY,
+            )
+
+        # The row is left untouched — only ``reclaim_task_run`` may change it.
+        task_run.refresh_from_db()
+        assert task_run.state == TaskRunState.RUNNING.value
+        assert task_run.fencing_token == token
