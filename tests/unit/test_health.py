@@ -27,7 +27,7 @@ def test_readiness_returns_200_when_all_dependencies_ok():
     with (
         patch("core.views.connections", _fake_connections()),
         patch("core.views.cache") as fake_cache,
-        patch("core.views.socket.create_connection") as fake_socket,
+        patch("core.views.pika.BlockingConnection") as fake_broker,
     ):
         response = Client().get(reverse("readiness"))
 
@@ -37,7 +37,9 @@ def test_readiness_returns_200_when_all_dependencies_ok():
         "checks": {"postgres": "ok", "redis": "ok", "rabbitmq": "ok"},
     }
     fake_cache.set.assert_called_once()
-    fake_socket.assert_called_once()
+    # A real AMQP connection is opened and closed, not just a TCP connect.
+    fake_broker.assert_called_once()
+    fake_broker.return_value.close.assert_called_once()
 
 
 def test_readiness_returns_503_when_postgres_unavailable():
@@ -45,7 +47,7 @@ def test_readiness_returns_503_when_postgres_unavailable():
     with (
         patch("core.views.connections", _fake_connections(postgres_fails=True)),
         patch("core.views.cache"),
-        patch("core.views.socket.create_connection"),
+        patch("core.views.pika.BlockingConnection"),
     ):
         response = Client().get(reverse("readiness"))
 
@@ -62,7 +64,7 @@ def test_readiness_returns_503_when_redis_unavailable():
     with (
         patch("core.views.connections", _fake_connections()),
         patch("core.views.cache") as fake_cache,
-        patch("core.views.socket.create_connection"),
+        patch("core.views.pika.BlockingConnection"),
     ):
         fake_cache.set.side_effect = RuntimeError("redis down")
         response = Client().get(reverse("readiness"))
@@ -80,7 +82,7 @@ def test_readiness_returns_503_when_rabbitmq_unavailable():
     with (
         patch("core.views.connections", _fake_connections()),
         patch("core.views.cache"),
-        patch("core.views.socket.create_connection", side_effect=OSError("refused")),
+        patch("core.views.pika.BlockingConnection", side_effect=OSError("refused")),
     ):
         response = Client().get(reverse("readiness"))
 
