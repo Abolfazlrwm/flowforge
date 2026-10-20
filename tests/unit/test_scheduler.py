@@ -140,6 +140,42 @@ def test_a_reaped_lease_gets_a_new_generation_row() -> None:
     assert snapshots == {0, 2}
 
 
+def test_run_succeeds_when_all_tasks_succeed() -> None:
+    """Once every task is SUCCEEDED, the scheduler completes the run."""
+    *_unused, run, tr_extract, tr_load = _scenario()
+
+    advance_workflow_run(run)  # dispatch extract, start the run
+    _succeed(tr_extract)
+    advance_workflow_run(run)  # promote load, dispatch
+    _succeed(tr_load)
+    advance_workflow_run(run)  # all tasks resolved -> complete the run
+
+    run.refresh_from_db()
+    assert run.state == WorkflowRunState.SUCCEEDED.value
+    assert run.finished_at is not None
+
+
+def test_run_fails_when_a_task_fails() -> None:
+    """A failed task fails the run, even while another task is still pending."""
+    *_unused, run, tr_extract, _tr_load = _scenario()
+    advance_workflow_run(run)
+
+    token = claim_task_run(task_run_id=tr_extract.id, worker_id="w1", lease_seconds=30, now=NOW)
+    assert token is not None
+    assert finish_task_run(
+        task_run_id=tr_extract.id,
+        target=TaskRunState.FAILED,
+        fencing_token=token,
+        now=NOW,
+    )
+
+    advance_workflow_run(run)
+
+    run.refresh_from_db()
+    assert run.state == WorkflowRunState.FAILED.value
+    assert run.finished_at is not None
+
+
 def test_schedule_once_advances_every_active_run() -> None:
     """The loop body advances all active runs, not just one."""
     _scenario(name="a")  # run A, own workflow
