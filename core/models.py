@@ -304,3 +304,72 @@ class IdempotencyKey(models.Model):
     def __str__(self) -> str:
         """Readable label for the admin and logs."""
         return f"idempotency {self.key!r} for user {self.user_id}"
+
+
+class OutboxMessage(models.Model):
+    """A dispatch event awaiting publication to the broker.
+
+    The outbox is the remedy for the dual-write problem: a task run becomes
+    dispatchable (``READY``) and an outbox row is written in *one* transaction, so
+    a crash between the two can never lose the message. The publisher later reads
+    these rows and publishes them to RabbitMQ with publisher confirms; only after a
+    confirmed publish is the row marked delivered.
+
+    Each row is one **dispatch generation**. A task run is dispatched once per
+    generation, identified by ``(task_run, fencing_token_snapshot)``: the scheduler
+    bumps the fencing token on every claim and on every reaper pass, so a re-dispatch
+    after a reaped lease produces a genuinely new generation and a genuinely new row,
+    while two scheduler passes over the same live generation collide on the unique
+    constraint and exactly one wins.
+
+    ``id`` is the dispatch identity the worker uses to de-duplicate redeliveries: if
+    the publisher crashes after sending but before marking the row, the next sweep
+    re-publishes the *same* id, and the consumer recognises it instead of executing
+    twice. The payload therefore carries the id by value.
+    """
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    task_run = models.ForeignKey(TaskRun, on_delete=models.PROTECT, related_name="outbox_messages")
+    workflow_run = models.ForeignKey(
+        WorkflowRun, on_delete=models.PROTECT, related_name="outbox_messages"
+    )
+    # The AMQP exchange and routing key the publisher should use. Constant for now;
+    # Phase 5 may route by ``task_type`` without changing this table.
+    exchange = models.CharField(max_length=200, default="flowforge.direct")
+    routing_key = models.CharField(max_length=200, default="task.dispatch")
+    # The message body. Carries the dispatch id, the task identity and a snapshot of
+    # the task's configuration at dispatch time, so the worker needs no other lookup.
+    payload = models.JSONField(default=dict)
+    # The generation this row represents, frozen at creation. Part of the unique key.
+    fencing_token_snapshot = models.PositiveBigIntegerField(default=0)
+    attempt_snapshot = models.PositiveIntegerField(default=1)
+    # Null until the publisher has confirmed delivery. This column is the whole
+    # recoverability story: a null value means "publish me", a timestamp means "done".
+    published_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        """Table-level rules and the indexes the publisher and scheduler rely on."""
+
+        constraints = [
+            # Exactly one outbox row per dispatch generation. Two schedulers racing
+            # over the same live generation collides here; the loser catches the
+            # IntegrityError and skips, so no duplicate message is ever published.
+            models.UniqueConstraint(
+                fields=["task_run", "fencing_token_snapshot"],
+                name="uniq_outbox_per_taskrun_generation",
+            ),
+        ]
+        indexes = [
+            # The publisher's pending scan: every null ``published_at`` in creation
+            # order. Partial so it tracks only undelivered work, not the whole table.
+            models.Index(
+                fields=["created_at"],
+                name="idx_outbox_pending",
+                condition=Q(published_at__isnull=True),
+            ),
+        ]
+
+    def __str__(self) -> str:
+        """Readable label for the admin and logs."""
+        return f"outbox {self.id} for task run {self.task_run_id}"
