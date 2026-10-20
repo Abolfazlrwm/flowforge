@@ -62,9 +62,9 @@ than implied.
 
 | Property | Target | Status |
 |----------|--------|--------|
-| Delivery semantics | **At-least-once**, never exactly-once | Publisher delivers at-least-once (Phase 4); worker consumption Phase 5 |
+| Delivery semantics | **At-least-once**, never exactly-once | Publisher delivers at-least-once, verified against RabbitMQ in CI (Phase 4); worker consumption Phase 5 |
 | Duplicate suppression | Idempotent handlers + lease fencing tokens + outbox `dispatch_id` | Fencing tokens (Phase 1) and `dispatch_id` (Phase 4); handlers Phase 5 |
-| Publish/commit atomicity | Transactional outbox | Implemented (Phase 4) |
+| Publish/commit atomicity | Transactional outbox | Implemented and verified against a real broker in CI (Phase 4) |
 | Concurrent claiming | Conditional `UPDATE … WHERE state = ?` — the database decides the winner | Implemented (Phase 1) |
 | Stale-writer protection | Monotonic fencing token checked on write | Implemented (Phase 1) |
 | Lease recovery | Expired leases returned to `ready`, token bumped | Implemented (Phase 4) |

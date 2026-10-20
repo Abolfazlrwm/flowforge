@@ -1,8 +1,6 @@
 """Core views for FlowForge."""
 
-import socket
-from urllib.parse import urlparse
-
+import pika
 from django.conf import settings
 from django.core.cache import cache
 from django.db import connections
@@ -43,14 +41,15 @@ class ReadinessView(View):
             checks["redis"] = "error"
             all_ok = False
 
-        # --- RabbitMQ (TCP connect check on broker host/port) ---
+        # --- RabbitMQ (real AMQP handshake, not just a TCP connect) ---
+        # A TCP connect succeeds against anything listening on the port, including
+        # a broker that will reject the handshake or a proxy. Opening and closing a
+        # real connection proves the broker speaks AMQP and accepts our credentials.
         try:
-            broker_url = settings.HEALTH_CHECK_BROKER_URL
-            parsed = urlparse(broker_url)
-            host = parsed.hostname or "localhost"
-            port = parsed.port or 5672
-            sock = socket.create_connection((host, port), timeout=3)
-            sock.close()
+            params = pika.URLParameters(settings.HEALTH_CHECK_BROKER_URL)
+            params.socket_timeout = 3
+            connection = pika.BlockingConnection(params)
+            connection.close()
             checks["rabbitmq"] = "ok"
         except Exception:
             checks["rabbitmq"] = "error"

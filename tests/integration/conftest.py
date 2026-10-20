@@ -23,6 +23,7 @@ import os
 import threading
 from typing import Any
 
+import pika
 import pytest
 from django.db import connection
 
@@ -46,6 +47,30 @@ def require_postgres() -> None:
             f"{connection.vendor!r}. These tests are meaningless without PostgreSQL."
         )
     pytest.skip(f"concurrency semantics require PostgreSQL, not {connection.vendor!r}")
+
+
+def require_rabbitmq() -> str:
+    """Return ``RABBITMQ_URL``, or skip/fail when no broker is available.
+
+    Locally without a broker these tests skip; in CI ``REQUIRE_RABBITMQ=1`` turns a
+    missing or unreachable broker into a failure, so the publisher's delivery
+    guarantees are never silently unexercised. The reachability probe opens and
+    closes a real AMQP connection, so "the port is open" is not mistaken for "the
+    broker works".
+    """
+    url = os.environ.get("RABBITMQ_URL")
+    if not url:
+        if os.environ.get("REQUIRE_RABBITMQ") == "1":
+            pytest.fail("REQUIRE_RABBITMQ=1 but RABBITMQ_URL is not set.")
+        pytest.skip("RABBITMQ_URL is not set; RabbitMQ integration tests need a broker.")
+    try:
+        connection = pika.BlockingConnection(pika.URLParameters(url))
+        connection.close()
+    except Exception as exc:
+        if os.environ.get("REQUIRE_RABBITMQ") == "1":
+            pytest.fail(f"REQUIRE_RABBITMQ=1 but RabbitMQ is unreachable at {url}: {exc}")
+        pytest.skip(f"RabbitMQ unreachable at {url}: {exc}")
+    return url
 
 
 def _run_threads(count: int, work: Any) -> tuple[list[Any], list[BaseException]]:
