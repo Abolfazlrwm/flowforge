@@ -45,6 +45,7 @@ nav:
       - Celery as interim task infrastructure: adr/ADR-007-celery-as-interim-task-infrastructure.md
       - Project name evaluation: adr/ADR-009-project-name-evaluation.md
       - Django 5.2 LTS: adr/ADR-010-django-5-2-lts.md
+      - Custom scheduler and transactional outbox: adr/ADR-011-custom-scheduler-and-transactional-outbox.md
 
 plugins:
   - search
