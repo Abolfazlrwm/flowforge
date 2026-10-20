@@ -9,14 +9,18 @@ from __future__ import annotations
 
 import threading
 from collections.abc import Mapping
+from datetime import timedelta
 from typing import Any
 from unittest.mock import patch
 
 import pytest
 from core.domain.states import TaskRunState
 from core.models import TaskRun
+from core.repositories.transitions import claim_task_run, finish_task_run, reclaim_task_run
 from core.worker.consumer import Worker
 from core.worker.registry import handlers, register, resolve
+
+from tests.conftest import NOW
 
 pytestmark = pytest.mark.django_db
 
@@ -159,6 +163,46 @@ def test_stale_finish_is_acked(task_run: TaskRun) -> None:
 
     assert acks == [True]
     assert nacks == []
+
+
+def test_killed_worker_result_is_rejected_after_a_reap(task_run: TaskRun) -> None:
+    """A worker whose lease was reaped cannot overwrite the new generation's result.
+
+    Worker A claims (token 1), its lease expires, the reaper reclaims it (token 2),
+    worker B claims (token 3) and finishes. A's late write with token 1 matches
+    zero rows, so the new result stands.
+    """
+    token_a = claim_task_run(
+        task_run_id=task_run.id, worker_id="worker-a", lease_seconds=30, now=NOW
+    )
+    assert token_a == 1
+    TaskRun.objects.filter(pk=task_run.id).update(lease_expires_at=NOW - timedelta(seconds=1))
+    assert reclaim_task_run(task_run_id=task_run.id, now=NOW + timedelta(seconds=1))
+
+    token_b = claim_task_run(
+        task_run_id=task_run.id,
+        worker_id="worker-b",
+        lease_seconds=30,
+        now=NOW + timedelta(seconds=2),
+    )
+    assert token_b == 3
+
+    # The killed worker's write is discarded; the live worker's write is recorded.
+    assert (
+        finish_task_run(
+            task_run_id=task_run.id,
+            target=TaskRunState.SUCCEEDED,
+            fencing_token=token_a,
+            now=NOW + timedelta(seconds=3),
+        )
+        is False
+    )
+    assert finish_task_run(
+        task_run_id=task_run.id,
+        target=TaskRunState.SUCCEEDED,
+        fencing_token=token_b,
+        now=NOW + timedelta(seconds=3),
+    )
 
 
 def test_malformed_payload_is_dropped(task_run: TaskRun) -> None:
