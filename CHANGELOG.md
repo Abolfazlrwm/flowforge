@@ -7,12 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-10-20
+
 Phase 3 (REST API) is complete. The domain built in Phases 1 and 2 now has an
 HTTP surface: authenticated, authorised, cursor-paginated, rate-limited, and
 described by an OpenAPI document that is committed and checked for drift.
 
 Verified by
-[CI run 39454512221](https://github.com/Abolfazlrwm/flowforge/actions/runs/39454512221)
+[CI run 39456088066](https://github.com/Abolfazlrwm/flowforge/actions/runs/39456088066)
 — `lint`, `test` (348 unit tests, 98.30% coverage, 8 PostgreSQL concurrency
 tests), `schema`, `docs` and `docker` all pass, and the Codecov upload
 (`Upload queued for processing complete`) was accepted.
