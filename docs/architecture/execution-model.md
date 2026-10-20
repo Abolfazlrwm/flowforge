@@ -275,6 +275,32 @@ persistence layer or framework.
 
 ---
 
+## Delivery guarantees (verified against RabbitMQ)
+
+The publisher's guarantees are broker semantics, so they are tested against a real
+RabbitMQ in CI (`tests/integration/test_rabbit_publisher.py`,
+`REQUIRE_RABBITMQ=1`), not against a fake:
+
+- **Publisher confirms.** A row is marked delivered only after the broker
+  acknowledges the publish. A confirmed message is on a bound queue with the exact
+  payload (`dispatch_id`, `task_run_id`, `task_key`, `fencing_token`).
+- **Mandatory routing.** Publishing uses `mandatory=True`; an unroutable message
+  (no queue bound) is returned and raises, so the outbox row stays pending instead
+  of being marked delivered into the void.
+- **Outage.** If the broker is unreachable, the sweep's transaction rolls back and
+  every row stays pending; once the broker returns, a later sweep drains them,
+  exactly once each.
+- **Crash window.** A row committed before any publish is delivered by a fresh
+  publisher — the outbox, not the publish, is the source of truth.
+- **No duplicate publish.** Two publishers running in parallel divide the pending
+  rows with `FOR UPDATE SKIP LOCKED`; each row is published by exactly one.
+
+What is **not** claimed: exactly-once *delivery*. The broker is at-least-once, so a
+redelivery is possible — for example, a publisher that crashes after the broker ack
+but before `mark_published` commits will publish the same row again. The worker's
+`dispatch_id` de-duplication is what makes that redelivery harmless, and that is
+Phase 5.
+
 ## What is not here yet
 
 Listed so the boundary is explicit rather than inferred:
