@@ -71,8 +71,13 @@ LOGGING = _logging
 # Throttling is real in production (see base.py), but the bulk API tests disable
 # it so they cannot flake on a *cumulative* rate limit across test methods that
 # share a user. The behaviour itself is covered by a dedicated test that
-# tightens the rate via `override_settings`.
+# installs the throttle class and a tight rate with `override_settings`.
+#
+# Removing the *classes* is what disables throttling. Emptying the rates leaves
+# `ScopedRateThrottle` installed, and it then raises `ImproperlyConfigured` for
+# every view that names a `throttle_scope` — a 500 on each request, which is the
+# opposite of disabling the check.
 REST_FRAMEWORK = {
     **REST_FRAMEWORK,
-    "DEFAULT_THROTTLE_RATES": {},
+    "DEFAULT_THROTTLE_CLASSES": [],
 }

@@ -105,7 +105,13 @@ ignore = [
 convention = "google"
 
 [tool.ruff.lint.per-file-ignores]
-"tests/**" = ["S101", "S105", "S106", "PLR2004", "D103"]
+# A pytest fixture parameter is a dependency declaration, not an argument the
+# test must read: `db` enables database access and `published` seeds a row, and
+# the test body legitimately uses neither. ARG cannot express that, and naming
+# the fixture with a leading underscore would stop pytest injecting it.
+"tests/**" = [
+    "S101", "S105", "S106", "PLR2004", "D103", "ARG001", "ARG002",
+]
 "*/migrations/*" = ["ALL"]
 "manage.py" = ["PLC0415"]
 # Django reads Meta attributes as plain class attributes and rejects ClassVar
