@@ -136,5 +136,21 @@ services:
       - .:/app
     command: ["python", "manage.py", "publisher"]
 
+  worker:
+    build:
+      context: .
+      target: production
+    environment: *app-environment
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    volumes:
+      - .:/app
+    command: ["python", "manage.py", "worker"]
+
 volumes:
   postgres_data:
