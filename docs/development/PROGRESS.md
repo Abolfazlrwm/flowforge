@@ -2,8 +2,8 @@
 
 ## Current Phase
 
-**Phase 2 — Workflow Definition Engine: COMPLETE, CI green on PR #21.** Phase 0
-and Phase 1 are closed and released.
+**Phase 3 — REST API: COMPLETE, CI green on PR #23.** Phases 0, 1 and 2 are
+closed and released.
 
 ## Resume point
 
@@ -11,30 +11,33 @@ If this session is resumed cold, read this section first.
 
 | Question | Answer |
 |----------|--------|
-| Where is the work | `feat/phase2-workflow-definition-engine`, branched from `main` at `f85e609`. |
-| What is released | `v0.1.0` (Phase 0), `v0.2.0` (Phase 1), and the Django 5.2 LTS stack upgrade. |
+| Where is the work | `feat/phase3-rest-api`, branched from `main` at `f7019a9`. |
+| What is released | `v0.1.0` (Phase 0), `v0.2.0` (Phase 1), `v0.3.0` (Phase 2), and the Django 5.2 LTS stack upgrade. |
 | Framework | **Django 5.2 LTS** (owner decision, [ADR-010](../adr/ADR-010-django-5-2-lts.md)). Python stays at 3.13. |
-| What is next | Tag `v0.3.0`, then Phase 3 — REST API. |
-| What blocks Phase 2 | **Nothing.** |
+| What is next | Merge PR #23, tag `v0.4.0`, then Phase 4 — Scheduler, starting with the ADR-007 keep-or-replace decision. |
+| What blocks Phase 4 | **Nothing.** |
 | What else is open | Nothing pending an owner decision. |
 
 ## Status
 
 | Item | State |
 |------|-------|
-| Branch | `feat/phase2-workflow-definition-engine` |
+| Branch | `feat/phase3-rest-api` |
 | Phase 0 PR | #1 — **MERGED** as `97c17bf` |
 | Stack upgrade | **MERGED** as `525e919` (Django 5.2 LTS, DRF 3.17, Actions re-pinned) |
 | Phase 1 | **MERGED** as `869720f`, tagged `v0.2.0` |
-| CI | Phase 2 run `39252710339` — `lint`, `test`, `docker` all green |
-| Docker | **Verified in CI** (build + `docker compose up` + health probes). **Not** verified on the owner's machine; the daemon is offline there |
+| Phase 2 | **MERGED** as `d31abf3`, tagged `v0.3.0` |
+| Phase 3 | **PR #23 — CI green**, tagged `v0.4.0` on merge |
+| CI | Phase 3 run `39455215092` — `lint`, `test`, `schema`, `docs`, `docker` all green |
+| Docker | **Verified in CI** (build + `docker compose up` + health probes). Accepted as sufficient by owner decision, 2026-10-19 — no local check is required |
 | v0.1.0 tag | Created — annotated, points at `97c17bf` |
 | v0.2.0 tag | Created — annotated, points at `869720f` |
-| GitHub Releases | Published for v0.1.0 and v0.2.0 |
+| v0.3.0 tag | Created — annotated, points at `d31abf3` |
+| GitHub Releases | Published for v0.1.0, v0.2.0 and v0.3.0 |
 | Branch protection | Active on `main`: `lint`, `test`, `docker` required, strict, no force push, 0 approving reviews |
 | Django | **5.2 LTS** (ADR-010) |
 | Python | 3.13 (3.14 deferred — see limitations) |
-| Phase 2 | Complete — 270 unit tests, 8 PostgreSQL tests (5 transition races, 3 publish races) |
+| Phase 3 | Complete — 348 unit tests, 8 PostgreSQL tests, 98.30% coverage, `api/` at 100% |
 
 ## Completed
 
@@ -317,12 +320,12 @@ passed only because of container start ordering.
     the two deferrals are linked.
 14. **Celery stays at 5.4.0.** Interim infrastructure (ADR-007). Minor and major
     upgrades are ignored in `dependabot.yml`; patch releases still flow.
-15. **Docker is verified in CI but not on the owner's machine.** The daemon is
-    offline locally, so `docker compose up` and the readiness probes have not been
-    run on the owner's hardware. The CI `docker` job (`build + compose up + health
-    probes`) is the only evidence. The owner's earlier rule — "do not tag until
-    Docker is verified on my machine" — therefore still applies to a local,
-    hands-on Docker check, which is separate from the CI verification.
+15. **Docker is verified in CI only, and that is now sufficient by owner
+    decision.** The daemon is offline on the maintainer's machine, so
+    `docker compose up` has never run there. On 2026-10-19 the owner withdrew the
+    earlier "do not tag until Docker is verified on my machine" rule and accepted
+    the CI `docker` job (build + compose up + both health probes) as the evidence.
+    Recorded in [DECISIONS.md](DECISIONS.md).
 16. **The Phase 2 publish-race tests have not run on the developer's machine.**
     A local PostgreSQL is listening on `localhost:5432` but rejects the
     `flowforge` credentials in `.env` (`password authentication failed`), so the
@@ -342,12 +345,15 @@ passed only because of container start ordering.
     and its Mermaid diagram is not rendered in CI.** There is no Markdown link
     checker and no diagram render step in the pipeline; the diagram is verified
     by reading, not by a build.
-19. **The MkDocs site is not built anywhere.** `mkdocs.yml` lists the three
-    architecture documents added in Phases 1 and 2, but `mkdocs` is not in the
-    dependency set and CI has no docs job, so the nav has never been exercised
-    and the Mermaid blocks would not render without `pymdownx.superfences`.
-    Adding that extension and a `mkdocs build --strict` CI step is a real gap,
-    not a cosmetic one.
+19. **The MkDocs site is now built in CI, but a Mermaid syntax error is still
+    invisible.** Owner decision on 2026-10-19 added a `docs` job running
+    `mkdocs build --strict` with `mkdocs-material` and `pymdownx.superfences`, so
+    a broken internal link, a nav entry with no target, or an unparseable page
+    fails the build. Resolving limitation 19 required creating `docs/index.md`
+    (the nav pointed at a file that did not exist) and fixing a link to the
+    `docs/adr/` directory. **What the build still cannot catch:** a diagram whose
+    Mermaid syntax is wrong renders as an error box in the browser and passes CI.
+    Deploying to GitHub Pages is deferred to Phase 10.
 
 ## Dependency decisions
 
@@ -368,18 +374,23 @@ nine separate merges, so a regression can be attributed to one change.
 
 ## Blockers
 
-None. Phase 2 is unblocked.
+None. Phase 4 is unblocked.
 
 ## Next step
 
-Phase 2 is complete. Proceed to **Phase 3 — REST API (v0.4.0)**: workflow
-management endpoints, execution endpoints, authentication, authorization,
-pagination, error handling, OpenAPI documentation.
+Phase 3 is complete. Merge PR #23, tag `v0.4.0`, then proceed to **Phase 4 —
+Scheduler (v0.5.0)**: task eligibility, the scheduler loop, atomic claiming, the
+transactional outbox, RabbitMQ publishing, recovery, and the ADR-007 decision on
+whether Celery stays.
 
-The publish domain layer Phase 3 needs is already in place — `publish_definition`,
-`load_definition`, `definition_exists`, the payload schema and the fingerprint —
-so Phase 3 is an API concern (serializers, views, status codes) rather than a
-domain one.
+The domain layer Phase 4 needs is already in place — the transition tables,
+`core/repositories/transitions.py` (one conditional `UPDATE ... WHERE state = ?`,
+returning `False` on a lost race), the fencing token and the lease columns — so
+Phase 4 is an eligibility-and-loop concern rather than a state-machine one.
+
+Phase 3 left one thing Phase 4 will feel: **nothing claims a task run.** A
+trigger creates every task run in its initial state (`ready` or `pending`) and
+stops, so a run stays `pending` until a scheduler exists.
 
 ## Ordering note
 
