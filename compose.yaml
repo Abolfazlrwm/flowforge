@@ -18,7 +18,10 @@ x-app-environment: &app-environment
   DJANGO_ALLOWED_HOSTS: localhost,127.0.0.1,web
   DATABASE_URL: postgres://flowforge:flowforge@db:5432/flowforge
   REDIS_URL: redis://redis:6379/0
-  RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672//
+  # Default vhost `/` is a single trailing slash; `//` parses as an empty vhost.
+  # A dedicated user, not `guest`, because RabbitMQ restricts guest to loopback
+  # and the app containers connect over the compose network.
+  RABBITMQ_URL: amqp://flowforge:flowforge@rabbitmq:5672/
 
 services:
   db:
@@ -49,6 +52,9 @@ services:
 
   rabbitmq:
     image: rabbitmq:3.13-alpine
+    environment:
+      RABBITMQ_DEFAULT_USER: flowforge
+      RABBITMQ_DEFAULT_PASS: flowforge
     ports:
       - "5672:5672"
       - "15672:15672"

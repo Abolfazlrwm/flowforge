@@ -8,11 +8,13 @@ separately in the integration suite against PostgreSQL.
 
 from __future__ import annotations
 
+import pika
 import pytest
 from core.broker import FakePublisher, build_publisher, publish_once
 from core.domain.states import TaskRunState, WorkflowRunState
 from core.models import OutboxMessage, Task, TaskRun, Workflow, WorkflowRun
 from core.repositories import enqueue_ready_tasks
+from django.conf import settings
 from django.core.management import call_command
 from django.test import override_settings
 
@@ -83,12 +85,22 @@ def test_build_publisher_rejects_unknown_scheme() -> None:
         build_publisher("http://localhost:5672")
 
 
+def test_configured_rabbitmq_url_uses_the_root_vhost() -> None:
+    """Regression: `//` parses as an empty vhost; the configured URL must be `/`.
+
+    A trailing `//` made every AMQP handshake fail with "vhost not found" in CI,
+    which the old TCP-only readiness check had hidden.
+    """
+    params = pika.URLParameters(settings.RABBITMQ_URL)
+    assert params.virtual_host == "/"
+
+
 def test_build_publisher_rabbit_when_pika_available() -> None:
     """``amqp://`` selects the RabbitMQ publisher (only if pika is installed)."""
     pytest.importorskip("pika")
     from core.broker_rabbit import RabbitPublisher  # noqa: PLC0415
 
-    publisher = build_publisher("amqp://guest:guest@localhost:5672//")
+    publisher = build_publisher("amqp://guest:guest@localhost:5672/")
     assert isinstance(publisher, RabbitPublisher)
     publisher.close()
 

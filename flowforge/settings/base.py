@@ -234,7 +234,7 @@ SPECTACULAR_SETTINGS = {
 # This is the one broker FlowForge talks to: the worker (Phase 5) consumes from
 # it. `amqp://`/`amqps://` selects the RabbitMQ publisher; tests and local runs
 # can point at a fake in-process publisher via the `fake://` scheme.
-RABBITMQ_URL: str = env("RABBITMQ_URL", default="amqp://guest:guest@localhost:5672//")
+RABBITMQ_URL: str = env("RABBITMQ_URL", default="amqp://guest:guest@localhost:5672/")
 
 # ---------------------------------------------------------------------------
 # Cache
@@ -249,7 +249,7 @@ CACHES = {
 # ---------------------------------------------------------------------------
 # Health checks
 # ---------------------------------------------------------------------------
-HEALTH_CHECK_BROKER_URL = env("RABBITMQ_URL", default="amqp://guest:guest@localhost:5672//")
+HEALTH_CHECK_BROKER_URL = env("RABBITMQ_URL", default="amqp://guest:guest@localhost:5672/")
 
 # ---------------------------------------------------------------------------
 # Logging / Structlog
