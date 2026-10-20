@@ -11,12 +11,13 @@ parts of distributed execution explicit — leases, fencing tokens, a
 transactional outbox and at-least-once delivery — instead of hiding them
 behind a task decorator.
 
-> **Status: Phase 4 of 11 — the scheduler and publisher exist; the worker does not.**
+> **Status: Phase 5 of 11 — execution works end to end.**
 > A workflow can be described, validated, published, and triggered over HTTP; the
-> scheduler promotes dependency-satisfied tasks and writes dispatch messages to a
-> transactional outbox, and the publisher delivers them to RabbitMQ with publisher
-> confirms. What is still missing is the process that *executes* a dispatched task:
-> the worker loop is Phase 5, so a dispatched task is not yet run.
+> scheduler promotes dependency-satisfied tasks into a transactional outbox, the
+> publisher delivers them to RabbitMQ with publisher confirms, and a worker claims
+> each task run with a fencing token, runs a trusted handler, and writes the
+> durable outcome before acking. The compose CI job drives the whole pipeline to
+> `SUCCEEDED`.
 > The feature table below lists exactly what is implemented and nothing more.
 
 ## Why this exists
@@ -42,17 +43,17 @@ flowchart LR
     sched["Scheduler"] --> db
     pub["Publisher"] --> db
     pub --> mq[("RabbitMQ<br/>task dispatch")]
-    mq --> worker["Workers<br/>(Phase 5)"]
+    mq --> worker["Workers"]
     worker --> db
     worker --> redis[("Redis<br/>cache / results")]
     api --> redis
 ```
 
-The API, the scheduler, the publisher, the datastores and the health probes are
-wired. The worker box is Phase 5: until it lands, the publisher delivers messages
-that nothing consumes yet. The scheduler never publishes directly — it writes a
+All boxes are wired. The scheduler never publishes directly — it writes a
 transactional-outbox row in the same transaction that made the task dispatchable,
-and the publisher is what talks to the broker.
+and the publisher talks to the broker. The worker claims the task run with a
+fencing token, runs a trusted handler, writes the outcome, and only then acks; the
+scheduler completes the workflow run when its tasks resolve.
 
 ## Design guarantees and limits
 
@@ -62,8 +63,8 @@ than implied.
 
 | Property | Target | Status |
 |----------|--------|--------|
-| Delivery semantics | **At-least-once**, never exactly-once | Publisher delivers at-least-once, verified against RabbitMQ in CI (Phase 4); worker consumption Phase 5 |
-| Duplicate suppression | Idempotent handlers + lease fencing tokens + outbox `dispatch_id` | Fencing tokens (Phase 1) and `dispatch_id` (Phase 4); handlers Phase 5 |
+| Delivery semantics | **At-least-once**, never exactly-once | Verified end to end against RabbitMQ in CI (Phase 4–5) |
+| Duplicate suppression | Idempotent handlers + lease fencing tokens + outbox `dispatch_id` | Fencing tokens (Phase 1), `dispatch_id` (Phase 4), claim-based dedup (Phase 5) |
 | Publish/commit atomicity | Transactional outbox | Implemented and verified against a real broker in CI (Phase 4) |
 | Concurrent claiming | Conditional `UPDATE … WHERE state = ?` — the database decides the winner | Implemented (Phase 1) |
 | Stale-writer protection | Monotonic fencing token checked on write | Implemented (Phase 1) |
@@ -129,7 +130,9 @@ uv run python manage.py runserver
 | Transactional outbox: one row per dispatch generation, in the same transaction | Implemented (Phase 4) |
 | Publisher: drains the outbox with `FOR UPDATE SKIP LOCKED` and publisher confirms | Implemented (Phase 4) |
 | Lease reaper: expired leases returned to `ready`, fencing token bumped | Implemented (Phase 4) |
-| Worker loop (task consumption and execution) | **Not implemented** (Phase 5) |
+| Worker: manual ack, prefetch, trusted handlers, lease + fencing, heartbeat | Implemented (Phase 5) |
+| Graceful SIGTERM: finish and ack the in-flight message before exiting | Implemented (Phase 5) |
+| Scheduler completes the run when its tasks resolve | Implemented (Phase 5) |
 | Retries, dead-letter handling | **Not implemented** (Phase 6) |
 | Multi-tenancy, RBAC, audit log | **Not implemented** (Phase 8) |
 | Metrics, tracing, dashboards | **Not implemented** (Phase 9) |

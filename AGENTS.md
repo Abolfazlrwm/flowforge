@@ -6,8 +6,8 @@ section of `docs/development/PROGRESS.md`.
 
 ## Current Phase
 
-**Phase 5 — Distributed Workers: NEXT.** Phase 4 is complete (v0.5.0); Phases 0–3
-are merged, tagged and released.
+**Phase 6 — Reliability: NEXT.** Phase 5 is complete (v0.6.0); Phases 0–4 are
+merged, tagged and released.
 
 ## Completed (Phase 0)
 
@@ -153,15 +153,32 @@ not exercise.
   CI (no RabbitMQ there). It is validated structurally; the delivery-confirmation
   path is the property the worker's `dispatch_id` de-duplication relies on.
 
+## Phase 5 outcome
+
+- `core/worker/consumer.py`: manual ack (`auto_ack=False`), prefetch, a lease
+  heartbeat thread, and a graceful stop. The message is acked only after
+  `finish_task_run` committed the outcome; a failed write nacks for requeue.
+- `core/worker/registry.py` + `builtin.py`: a trusted, in-process handler registry.
+  A dispatch names a `task_type`; nothing in it is imported or executed as code.
+- `core/repositories/transitions.py`: `renew_lease` — the heartbeat's conditional
+  `UPDATE`, matching only while the token still owns the row.
+- `advance_workflow_run` now completes the workflow run when its tasks resolve
+  (`derive_workflow_run_state`); a correct run no longer stays `RUNNING`.
+- `manage.py worker` (SIGTERM stops after the in-flight message) and
+  `manage.py sample_run` (the echo → add → noop e2e the docker job drives).
+- Verified in CI (run `39506027390`): 389 unit, 20 integration (5 RabbitMQ
+  publisher, 4 worker, 11 PostgreSQL), and the docker e2e reached `SUCCEEDED`.
+- Duplicate delivery, stale result rejection, killed worker, lost ack and graceful
+  shutdown each have a test.
+
 ## Current Phase scope
 
-**Phase 4: Scheduler — COMPLETE (v0.5.0).**
+**Phase 5: Distributed Workers — COMPLETE (v0.6.0).**
 
-**Phase 5: Distributed Workers** — next. See `docs/development/ROADMAP.md`. The
-worker consumes a dispatch message, claims the task run (the fencing token is in
-the payload), executes it, and calls `finish_task_run` with that token. The claim
-primitive, lease and fencing machinery already exist; Phase 5 is the consumer
-loop, the handler registry, and result persistence.
+**Phase 6: Reliability** — next. See `docs/development/ROADMAP.md`. Retry policies,
+exponential backoff, dead-letter handling, and persisting handler results. The
+`retrying` state and `schedule_retry` edge already exist; Phase 6 is the policy and
+the DLQ. A failed task currently fails the run without a retry.
 
 ## Decisions
 
