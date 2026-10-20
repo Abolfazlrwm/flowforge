@@ -11,11 +11,12 @@ parts of distributed execution explicit — leases, fencing tokens, a
 transactional outbox and at-least-once delivery — instead of hiding them
 behind a task decorator.
 
-> **Status: Phase 3 of 11 — the REST API is live, execution is not.**
-> A workflow can be described, validated, published, and triggered over HTTP;
-> runs and their per-task states can be listed and read. What is still missing is
-> the part that does the work: there is no scheduler and no worker loop, so a
-> triggered run sits in its initial state until Phase 4 and 5 exist.
+> **Status: Phase 4 of 11 — the scheduler and publisher exist; the worker does not.**
+> A workflow can be described, validated, published, and triggered over HTTP; the
+> scheduler promotes dependency-satisfied tasks and writes dispatch messages to a
+> transactional outbox, and the publisher delivers them to RabbitMQ with publisher
+> confirms. What is still missing is the process that *executes* a dispatched task:
+> the worker loop is Phase 5, so a dispatched task is not yet run.
 > The feature table below lists exactly what is implemented and nothing more.
 
 ## Why this exists
@@ -38,16 +39,20 @@ disagree. The design is written down before it is built — see
 flowchart LR
     client["Client / SDK"] --> api["Django REST API"]
     api --> db[("PostgreSQL<br/>authoritative state")]
-    sched["Scheduler<br/>(Phase 4)"] --> db
-    sched --> mq[("RabbitMQ<br/>task dispatch")]
+    sched["Scheduler"] --> db
+    pub["Publisher"] --> db
+    pub --> mq[("RabbitMQ<br/>task dispatch")]
     mq --> worker["Workers<br/>(Phase 5)"]
     worker --> db
     worker --> redis[("Redis<br/>cache / results")]
     api --> redis
 ```
 
-The API, the datastores and the health probes are wired. The scheduler and
-worker boxes are placeholders served by Celery (ADR-007).
+The API, the scheduler, the publisher, the datastores and the health probes are
+wired. The worker box is Phase 5: until it lands, the publisher delivers messages
+that nothing consumes yet. The scheduler never publishes directly — it writes a
+transactional-outbox row in the same transaction that made the task dispatchable,
+and the publisher is what talks to the broker.
 
 ## Design guarantees and limits
 
@@ -57,11 +62,12 @@ than implied.
 
 | Property | Target | Status |
 |----------|--------|--------|
-| Delivery semantics | **At-least-once**, never exactly-once | Planned (Phase 4–5) |
-| Duplicate suppression | Idempotent handlers + lease fencing tokens | Fencing tokens implemented (Phase 1); handlers Phase 5 |
-| Publish/commit atomicity | Transactional outbox | Planned (Phase 4) |
+| Delivery semantics | **At-least-once**, never exactly-once | Publisher delivers at-least-once (Phase 4); worker consumption Phase 5 |
+| Duplicate suppression | Idempotent handlers + lease fencing tokens + outbox `dispatch_id` | Fencing tokens (Phase 1) and `dispatch_id` (Phase 4); handlers Phase 5 |
+| Publish/commit atomicity | Transactional outbox | Implemented (Phase 4) |
 | Concurrent claiming | Conditional `UPDATE … WHERE state = ?` — the database decides the winner | Implemented (Phase 1) |
 | Stale-writer protection | Monotonic fencing token checked on write | Implemented (Phase 1) |
+| Lease recovery | Expired leases returned to `ready`, token bumped | Implemented (Phase 4) |
 | Failure visibility | Explicit `DEAD` state + manual requeue | Planned (Phase 6) |
 
 **Explicit non-goals:** exactly-once execution, arbitrary user-supplied Python
@@ -105,7 +111,7 @@ uv run python manage.py runserver
 | Liveness probe `GET /health/live/` | Implemented |
 | Readiness probe `GET /health/ready/` (PostgreSQL, Redis, RabbitMQ) | Implemented |
 | Multi-stage Docker image, non-root user, healthcheck | Implemented |
-| Docker Compose stack (db, redis, rabbitmq, one-shot migrate, web, scheduler, worker) | Implemented |
+| Docker Compose stack (db, redis, rabbitmq, one-shot migrate, web, scheduler, publisher) | Implemented |
 | CI: lint, format, mypy, migration check, tests, compose smoke test | Implemented |
 | Dependency lock file (`uv.lock`) used by CI and the image | Implemented |
 | State machines with validated transition tables, enforced at import time | Implemented (Phase 1) |
@@ -119,8 +125,12 @@ uv run python manage.py runserver
 | Token and JWT authentication; staff-only publishing; per-owner run reads | Implemented (Phase 3) |
 | Idempotent triggers via `Idempotency-Key`, backed by a unique index | Implemented (Phase 3) |
 | Committed OpenAPI document, with a CI job that fails on drift | Implemented (Phase 3) |
-| Scheduler, transactional outbox, worker loop | **Not implemented** (Phases 4–5) |
-| Retries, DLQ, reaper | **Not implemented** (Phase 6) |
+| Scheduler: promotes dependency-satisfied tasks and starts the run | Implemented (Phase 4) |
+| Transactional outbox: one row per dispatch generation, in the same transaction | Implemented (Phase 4) |
+| Publisher: drains the outbox with `FOR UPDATE SKIP LOCKED` and publisher confirms | Implemented (Phase 4) |
+| Lease reaper: expired leases returned to `ready`, fencing token bumped | Implemented (Phase 4) |
+| Worker loop (task consumption and execution) | **Not implemented** (Phase 5) |
+| Retries, dead-letter handling | **Not implemented** (Phase 6) |
 | Multi-tenancy, RBAC, audit log | **Not implemented** (Phase 8) |
 | Metrics, tracing, dashboards | **Not implemented** (Phase 9) |
 | SDK, CLI | **Not implemented** (Phase 10) |
