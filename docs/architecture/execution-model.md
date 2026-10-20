@@ -55,13 +55,14 @@ stateDiagram-v2
     running --> succeeded : succeed (requires lease)
     running --> failed : fail (requires lease)
     running --> cancelled : cancel_running (requires lease)
+    running --> ready : reap_lease (lease expired, token + 1)
     failed --> retrying : schedule_retry (attempt + 1)
     retrying --> ready : retry_ready
     succeeded --> [*]
     cancelled --> [*]
 ```
 
-Nine edges, **two** terminal states. `FAILED` is deliberately *not* terminal.
+Ten edges, **two** terminal states. `FAILED` is deliberately *not* terminal.
 
 | Transition | Source | Target | Requires lease |
 | --- | --- | --- | --- |
@@ -72,6 +73,7 @@ Nine edges, **two** terminal states. `FAILED` is deliberately *not* terminal.
 | `succeed` | `running` | `succeeded` | **yes** |
 | `fail` | `running` | `failed` | **yes** |
 | `cancel_running` | `running` | `cancelled` | **yes** |
+| `reap_lease` | `running` | `ready` | no — reachable **only** through the reaper |
 | `schedule_retry` | `failed` | `retrying` | no |
 | `retry_ready` | `retrying` | `ready` | no |
 
@@ -193,10 +195,16 @@ VM, dropped network. It moves the row back to `ready`, and the fencing token
 guarantees that if the original worker ever comes back, its write is harmless.
 This is what turns at-least-once delivery into at-most-once *effects*.
 
-> **Honest scope note:** the reaper itself is Phase 4 work. Phase 1 provides the
-> schema, the constraint, the index and the fencing mechanism; there is no
-> background reaper loop in the codebase yet. The stale-token behaviour is proven
-> in `tests/integration/test_concurrent_transitions.py::TestFencing`.
+> **Scope note:** the reaper is Phase 4 work and now exists.
+> `core/repositories/transitions.py` provides `reclaim_task_run` (the conditional
+> `UPDATE ... WHERE state='running' AND lease_expires_at < now`) and
+> `reap_expired_leases`, and `schedule_once` runs them on every scheduler pass.
+> The `reap_lease` edge is reachable **only** through `reclaim_task_run`; the
+> generic `transition_task_run`/`finish_task_run` refuse it, because applying it
+> there would move a row out of `running` without clearing the lease or bumping
+> the token. The stale-token behaviour is proven in
+> `tests/integration/test_concurrent_transitions.py::TestFencing`, and the reaper
+> races in `TestLeaseReaper`.
 
 ---
 
@@ -254,8 +262,8 @@ fixtures.
 
 - `tests/unit/domain/test_no_framework_imports.py` walks the AST of every module
   in `core/domain/` and fails on any forbidden root (`django`, `rest_framework`,
-  `celery`, and the rest), including imports nested inside functions or
-  `try/except ImportError` blocks.
+  database and broker drivers, and the rest), including imports nested inside
+  functions or `try/except ImportError` blocks.
 - The same test re-imports each module in a subprocess with `django` blocked on
   `sys.meta_path`, so a transitive import cannot slip through the AST check.
 - The scanner is itself tested against deliberately bad source, so it cannot
@@ -267,16 +275,15 @@ persistence layer or framework.
 
 ---
 
-## What Phase 1 does not include
+## What is not here yet
 
 Listed so the boundary is explicit rather than inferred:
 
-- No scheduler loop, no outbox, no message publishing (Phase 4).
-- No lease reaper process (Phase 4) — only the schema, constraint and index.
-- No DAG or dependency resolution (Phase 2) — `dependency_count` is an input,
-  not something the domain computes yet.
-- No REST endpoints for runs (Phase 3).
-- No transaction boundary wrapping a *multi-task* change. Each transition is one
-  atomic statement; a workflow-level operation that must move several rows
-  atomically is Phase 4 work and will need an explicit `transaction.atomic()`
-  block plus a documented ordering rule to avoid deadlocks.
+- **No worker loop (Phase 5).** The scheduler dispatches and the publisher
+  delivers, but nothing consumes a dispatch message yet, so a dispatched task is
+  not executed.
+- **No retry policy, dead-letter handling or backoff (Phase 6).** The `retrying`
+  state and the `schedule_retry` edge exist; the policy that drives them does not.
+- **No multi-task transaction beyond `advance_workflow_run`.** The scheduler wraps
+  one run's promote-and-dispatch work in a single `transaction.atomic()`; every
+  other transition is still one atomic statement.

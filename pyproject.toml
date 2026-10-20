@@ -29,7 +29,6 @@ dependencies = [
     "djangorestframework>=3.17,<3.18",
     "django-filter>=24.2",
     "psycopg[binary]>=3.2,<4",
-    "celery>=5.4,<5.5",
     "redis>=5.0,<6",
     "pydantic>=2.9,<3",
     "structlog>=24.4",
@@ -42,6 +41,7 @@ dependencies = [
     # `rest_framework.authtoken`. JWT and the OpenAPI schema do.
     "djangorestframework-simplejwt>=5.3,<6",
     "drf-spectacular>=0.27,<1",
+    "pika>=1.3,<2",
 ]
 
 [project.optional-dependencies]
@@ -122,6 +122,16 @@ convention = "google"
 # only `request`. Renaming or dropping `view` to satisfy ARG002 would break the
 # DRF contract, which is the opposite of what the rule wants.
 "api/permissions.py" = ["ARG002"]
+# Django's management command contract mandates the `(self, *args, **options)`
+# `handle` signature and a `BaseCommand.add_arguments(self, parser)` parser that
+# is an `argparse.ArgumentParser`. The variadic `*args` is unused by most commands
+# and the framework import can only live inside the method, so the same three rules
+# that `api/permissions.py` and `manage.py` already relax apply here too.
+"core/management/commands/*.py" = ["PLC0415", "S101", "ARG002"]
+# `build_publisher` imports the RabbitMQ publisher lazily so the rest of the code
+# (and the test suite, which uses the fake) never pulls pika into the import graph.
+# The deliberate in-function import is the mechanism, so PLC0415 does not apply here.
+"core/broker.py" = ["PLC0415"]
 # DRF declares `permission_classes` and `ordering` as plain (non-`ClassVar`)
 # attributes on its base classes, and the stubs keep that same shape. Annotating
 # them `ClassVar` in a subclass — which is what RUF012 wants for a mutable

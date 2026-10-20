@@ -9,7 +9,7 @@ A short summary of every decision, including the ones without a full ADR, is in
 
 | ADR | Decision | Status |
 | --- | --- | --- |
-| [ADR-007](ADR-007-celery-as-interim-task-infrastructure.md) | Celery as interim task infrastructure | Accepted 2026-10-19; interim status **ended** by [ADR-011](ADR-011-custom-scheduler-and-transactional-outbox.md) (owner decision 2026-10-20) |
+| [ADR-007](ADR-007-celery-as-interim-task-infrastructure.md) | Celery as interim task infrastructure | **Superseded** by [ADR-011](ADR-011-custom-scheduler-and-transactional-outbox.md) (owner decision 2026-10-20); Celery removed in Phase 4 |
 | [ADR-009](ADR-009-project-name-evaluation.md) | Project name evaluated; "FlowForge" retained | Accepted 2026-10-19 |
 | [ADR-010](ADR-010-django-5-2-lts.md) | Move to Django 5.2 LTS | Accepted 2026-10-19 |
 | [ADR-011](ADR-011-custom-scheduler-and-transactional-outbox.md) | Custom scheduler and transactional outbox; Celery removed in Phase 4 | **Accepted 2026-10-20 — owner decision** |

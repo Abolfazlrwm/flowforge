@@ -7,6 +7,62 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-10-21
+
+Phase 4 (Scheduler) is complete. ADR-011 replaces Celery with three explicit
+processes: a scheduler that decides *which* tasks dispatch, a publisher that
+guarantees messages are never lost, and a worker (Phase 5) that executes. The
+transactional outbox and lease reaper are in place, and a triggered run now
+advances on its own instead of sitting in its initial state.
+
+### Added
+
+- `core/repositories/scheduler.py`: `advance_workflow_run` promotes
+  dependency-satisfied tasks, starts the run and writes one outbox row per
+  dispatch generation in a single transaction; `enqueue_ready_tasks` is
+  idempotent per generation; `schedule_once` reaps expired leases then advances
+  every active run.
+- `core/models.OutboxMessage` + migration `core.0004_outbox`: the transactional
+  outbox. Unique `(task_run, fencing_token_snapshot)` enforces one row per live
+  dispatch generation; the partial index `idx_outbox_pending` serves the
+  publisher scan.
+- `core/broker.py`: the broker-agnostic `Publisher` protocol, an in-memory
+  `FakePublisher`, `publish_once` (drain with `FOR UPDATE SKIP LOCKED`), and the
+  `build_publisher` factory.
+- `core/broker_rabbit.py`: `RabbitPublisher` over pika with publisher confirms.
+- `manage.py scheduler` and `manage.py publisher`: the two long-running Phase 4
+  processes, each with `--interval` and `--once`.
+- The lease reaper (`reclaim_task_run`, `reap_expired_leases`) and the
+  `reap_lease` transition (RUNNING→READY), reachable only through the reaper.
+- `RABBITMQ_URL` setting.
+
+### Changed
+
+- The scheduler never publishes directly: it writes an outbox row in the same
+  transaction that made the task dispatchable, and the publisher is what talks to
+  the broker.
+- `compose.yaml` runs `manage.py scheduler` and `manage.py publisher`; the
+  `worker` service is renamed `publisher`.
+- The readiness probe's broker check reads `RABBITMQ_URL`.
+
+### Removed
+
+- Celery, kombu, billiard and vine, along with `flowforge/celery.py`, the
+  `celery_app` import, the `CELERY_*` settings, and the Celery-based Dependabot
+  ignore. ADR-007 is superseded by ADR-011.
+
+### Tests
+
+- 373 unit tests and 11 PostgreSQL concurrency tests (5 transition races, 2
+  reaper races, 3 publish races, 1 publisher SKIP LOCKED race).
+
+### Known limitation
+
+- `RabbitPublisher` has not been exercised against a live broker in CI (no
+  RabbitMQ in the pipeline). It is validated structurally; the
+  delivery-confirmation path is the property the worker's `dispatch_id`
+  de-duplication relies on.
+
 ## [0.4.0] - 2026-10-20
 
 Phase 3 (REST API) is complete. The domain built in Phases 1 and 2 now has an

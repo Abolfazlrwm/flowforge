@@ -24,6 +24,7 @@ from django.db.models import F, Value
 from django.db.models.functions import Coalesce
 from django.utils import timezone
 
+from core.domain.errors import IllegalTransitionError
 from core.domain.machines import TASK_RUN_MACHINE, WORKFLOW_RUN_MACHINE
 from core.domain.states import TaskRunState, WorkflowRunState
 from core.models import TaskRun, WorkflowRun
@@ -66,6 +67,72 @@ def transition_workflow_run(
     return WorkflowRun.objects.filter(pk=run_id, state=expected.value).update(**updates) == 1
 
 
+def reclaim_task_run(
+    *,
+    task_run_id: UUID,
+    now: datetime | None = None,
+) -> bool:
+    """Return a RUNNING task run whose lease has expired back to ``READY``.
+
+    This is the lease reaper's per-row operation. It is a conditional ``UPDATE``
+    that matches only while the row is still ``RUNNING`` *and* its lease has
+    already expired, so a live lease is never reclaimed and a row another reaper
+    just reclaimed is never reclaimed twice.
+
+    Reclaiming bumps the fencing token. The worker that held the expired lease may
+    still be alive and may try to ``finish_task_run``; its token is now stale (the
+    row is ``READY``, and even a later re-claim increments the token again), so its
+    write matches zero rows. The reaper is what makes a resurrected worker
+    harmless without the broker ever knowing one existed.
+
+    Returns:
+        ``True`` if this call reclaimed the row, ``False`` if the row was gone,
+        no longer running, or its lease had not yet expired.
+    """
+    TASK_RUN_MACHINE.apply(TaskRunState.RUNNING, TaskRunState.READY)
+
+    moment = _resolve_now(now)
+    with transaction.atomic():
+        reclaimed = TaskRun.objects.filter(
+            pk=task_run_id,
+            state=TaskRunState.RUNNING.value,
+            lease_expires_at__lt=moment,
+        ).update(
+            state=TaskRunState.READY.value,
+            lease_owner=None,
+            lease_expires_at=None,
+            # Invalidate any in-flight attempt by the dead worker. A later claim
+            # increments again, so even a second reaper pass keeps the token
+            # strictly ahead of what the dead worker holds.
+            fencing_token=F("fencing_token") + 1,
+            started_at=Coalesce(F("started_at"), Value(moment)),
+        )
+        return reclaimed == 1
+
+
+def reap_expired_leases(*, now: datetime | None = None, limit: int = 1000) -> int:
+    """Reclaim every ``RUNNING`` task run whose lease has expired.
+
+    Uses the partial index ``idx_taskrun_lease_expiry`` (``state = running``), so
+    the scan touches only in-flight work rather than the whole table.
+
+    Returns:
+        The number of task runs reclaimed in this pass.
+    """
+    moment = _resolve_now(now)
+    candidates = list(
+        TaskRun.objects.filter(
+            state=TaskRunState.RUNNING.value,
+            lease_expires_at__lt=moment,
+        ).values_list("id", flat=True)[:limit]
+    )
+    reclaimed = 0
+    for task_run_id in candidates:
+        if reclaim_task_run(task_run_id=task_run_id, now=moment):
+            reclaimed += 1
+    return reclaimed
+
+
 def transition_task_run(
     *,
     task_run_id: UUID,
@@ -88,6 +155,19 @@ def transition_task_run(
         LeaseRequiredError: if the edge requires a held lease.
     """
     TASK_RUN_MACHINE.apply(expected, target)
+
+    # The only non-lease edge out of RUNNING is the reaper (`reap_lease`), which
+    # must clear the lease and bump the fencing token. `transition_task_run` does
+    # neither, so it must never be the path for it — the caller is routed to
+    # `reclaim_task_run` instead. Every other RUNNING edge requires a lease and is
+    # already refused above with `LeaseRequiredError`.
+    if expected is TaskRunState.RUNNING and target is TaskRunState.READY:
+        raise IllegalTransitionError(
+            machine=TASK_RUN_MACHINE.name,
+            source=expected.value,
+            target=target.value,
+            allowed=(),
+        )
 
     moment = _resolve_now(now)
     updates: dict[str, object] = {"state": target.value}
@@ -181,6 +261,23 @@ def finish_task_run(
         LeaseRequiredError: never, given a valid target; the lease is asserted here.
     """
     TASK_RUN_MACHINE.apply(TaskRunState.RUNNING, target, lease_held=True)
+
+    # `finish_task_run` is the fencing-token (lease-requiring) path. The reaper
+    # edge `RUNNING -> READY` does not require a lease and has its own side
+    # effects (clearing the lease, bumping the token), so it must not be reachable
+    # through this function. Rejecting it keeps "finishing" meaning "terminating a
+    # task" and leaves reaping exclusively to `reclaim_task_run`.
+    if not TASK_RUN_MACHINE.edge(TaskRunState.RUNNING, target).requires_lease:
+        raise IllegalTransitionError(
+            machine=TASK_RUN_MACHINE.name,
+            source=TaskRunState.RUNNING.value,
+            target=target.value,
+            allowed=(
+                t.value
+                for t in TASK_RUN_MACHINE.targets(TaskRunState.RUNNING)
+                if TASK_RUN_MACHINE.edge(TaskRunState.RUNNING, t).requires_lease
+            ),
+        )
 
     moment = _resolve_now(now)
     updates: dict[str, object] = {

@@ -21,6 +21,8 @@ erDiagram
     Workflow ||--o{ WorkflowRun : "is executed as"
     WorkflowRun ||--o{ TaskRun : "contains"
     Task ||--o{ TaskRun : "is instantiated as"
+    TaskRun ||--o{ OutboxMessage : "is dispatched as"
+    WorkflowRun ||--o{ OutboxMessage : "dispatches via"
 
     Workflow {
         uuid id PK
@@ -54,6 +56,18 @@ erDiagram
         timestamptz created_at
         timestamptz started_at
         timestamptz finished_at
+    }
+    OutboxMessage {
+        uuid id PK
+        uuid task_run_id FK
+        uuid workflow_run_id FK
+        varchar exchange
+        varchar routing_key
+        jsonb payload
+        bigint fencing_token_snapshot
+        int attempt_snapshot
+        timestamptz published_at
+        timestamptz created_at
     }
 ```
 
@@ -158,6 +172,17 @@ an equivalence, neither half can drift: the reaper's query
 (`state='running' AND lease_expires_at < now`) is guaranteed to see every running
 row.
 
+### `OutboxMessage`
+
+| Name | Kind | Invariant | Failure prevented |
+| --- | --- | --- | --- |
+| `uniq_outbox_per_taskrun_generation` | Unique | `(task_run, fencing_token_snapshot)` is unique | Two schedulers writing two dispatch rows for the same live generation, so the same task would be delivered — and executed — twice. A reaped lease bumps the fencing token, so a re-dispatch is a genuinely new generation and a new row |
+
+The unique constraint, not a lock, is what makes "exactly one dispatch per live
+generation" true: a row that does not exist yet cannot be locked, so two
+first-dispatch attempts both insert and the constraint picks the winner. The
+scheduler catches the conflict and skips, and no duplicate message is published.
+
 ---
 
 ## Indexes
@@ -170,8 +195,8 @@ column would need `NULLS LAST` handling and could not use a plain B-tree scan.
 
 | Name | Columns | Query served | Exists today? |
 | --- | --- | --- | --- |
-| `idx_wfrun_wf_recent` | `(workflow, created_at DESC)` | `SELECT ... WHERE workflow_id = ? ORDER BY created_at DESC LIMIT 50` — "the last N runs of this workflow" | **No.** Phase 3 (REST API run listing) |
-| `idx_wfrun_state_age` | `(state, created_at)` | `SELECT ... WHERE state = 'running' AND created_at < now() - interval '1h'` — stuck-run sweep | **No.** Phase 4 (scheduler recovery) |
+| `idx_wfrun_wf_recent` | `(workflow, created_at DESC)` | `SELECT ... WHERE workflow_id = ? ORDER BY created_at DESC LIMIT 50` — "the last N runs of this workflow" | **Yes.** Phase 3 (REST API run listing) |
+| `idx_wfrun_state_age` | `(state, created_at)` | `SELECT ... WHERE state = 'running' AND created_at < now() - interval '1h'` — stuck-run sweep | **Yes.** Phase 4 (scheduler recovery) |
 
 Column order rationale for `idx_wfrun_wf_recent`: `workflow` is the equality
 predicate and comes first; `created_at DESC` is the ordering and comes second, so
@@ -186,9 +211,9 @@ time window and filter afterwards.
 
 | Name | Columns | Query served | Exists today? |
 | --- | --- | --- | --- |
-| `idx_taskrun_state_age` | `(state, created_at)` | `SELECT ... WHERE state = 'ready' ORDER BY created_at LIMIT 1` — the scheduler's "oldest READY task first" claim | **No.** Phase 4 |
-| `idx_taskrun_run_state` | `(workflow_run, state)` | `SELECT state, count(*) ... WHERE workflow_run_id = ? GROUP BY state` — run progress and terminal-state derivation | **No.** Phase 3/4 |
-| `idx_taskrun_lease_expiry` | `(lease_expires_at)` **partial**, `WHERE state = 'running'` | `SELECT ... WHERE lease_expires_at < now()` — the lease reaper | **No.** Phase 4 |
+| `idx_taskrun_state_age` | `(state, created_at)` | `SELECT ... WHERE state = 'ready' ORDER BY created_at LIMIT 1` — the scheduler's "oldest READY task first" claim | **Yes.** Phase 4 |
+| `idx_taskrun_run_state` | `(workflow_run, state)` | `SELECT state, count(*) ... WHERE workflow_run_id = ? GROUP BY state` — run progress and terminal-state derivation | **Yes.** Phase 3/4 |
+| `idx_taskrun_lease_expiry` | `(lease_expires_at)` **partial**, `WHERE state = 'running'` | `SELECT ... WHERE lease_expires_at < now()` — the lease reaper | **Yes.** Phase 4 |
 
 `idx_taskrun_state_age` is the index the whole scheduler design depends on. The
 claim loop is "find the oldest eligible task and take it", and this index makes
@@ -206,6 +231,17 @@ self-vacuuming in practice: rows leave the index the moment they leave `running`
 
 PostgreSQL supports partial indexes directly; SQLite does too, which is why the
 local test suite exercises this index rather than silently ignoring it.
+
+### `OutboxMessage`
+
+| Name | Columns | Query served | Exists today? |
+| --- | --- | --- | --- |
+| `idx_outbox_pending` | `(created_at)` **partial**, `WHERE published_at IS NULL` | `SELECT ... WHERE published_at IS NULL ORDER BY created_at LIMIT n FOR UPDATE SKIP LOCKED` — the publisher drain | **Yes.** Phase 4 |
+
+Like the lease index, this one is **partial on `published_at IS NULL`**. Delivered
+rows accumulate forever, so a full index would grow without bound for a query that
+only ever looks at the undelivered tail. The partial index stays proportional to
+the backlog, not to the history.
 
 ### Implicit indexes and a known redundancy
 
@@ -234,9 +270,12 @@ zero scans across a full workload is the evidence needed to drop it.
 
 ## How writes reach these tables
 
-No table in this document is written by a `save()`. Every state change goes
-through `core/repositories/transitions.py`, which issues a single conditional
-`UPDATE`:
+State changes to `WorkflowRun` and `TaskRun` go through
+`core/repositories/transitions.py`, which issues a single conditional `UPDATE`.
+The outbox is written by `core/repositories/outbox.py`: `create_dispatch` inserts
+one row per generation in the same transaction as the eligibility work, and
+`mark_published` stamps `published_at` only after the broker confirms. No state
+change is written by a `save()`.
 
 ```sql
 UPDATE core_taskrun

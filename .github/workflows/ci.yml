@@ -120,7 +120,6 @@ jobs:
       DJANGO_SETTINGS_MODULE: flowforge.settings.test
       DATABASE_URL: postgres://flowforge:flowforge@localhost:5432/flowforge
       REDIS_URL: redis://localhost:6379/0
-      CELERY_BROKER_URL: amqp://guest:guest@localhost:5672//
       # Optional. Codecov rejects tokenless uploads, so without this secret the
       # upload step is skipped rather than failing silently behind a green job.
       CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
@@ -184,7 +183,7 @@ jobs:
       - name: Start the full stack
         run: docker compose up -d --build
 
-      # The migrate service is a one-shot gate that web/worker/scheduler wait
+      # The migrate service is a one-shot gate that web/publisher/scheduler wait
       # on. Assert it exited 0, so a broken migration fails loudly here rather
       # than surfacing as a readiness timeout.
       - name: Migration gate exited cleanly
@@ -194,6 +193,17 @@ jobs:
           test -n "$cid"
           docker inspect -f 'migrate status={{.State.Status}} exit={{.State.ExitCode}}' "$cid"
           test "$(docker inspect -f '{{.State.ExitCode}}' "$cid")" = "0"
+
+      - name: Scheduler and publisher are running
+        run: |
+          set -euo pipefail
+          for svc in scheduler publisher; do
+            cid="$(docker compose ps -aq "$svc")"
+            test -n "$cid"
+            status="$(docker inspect -f '{{.State.Status}}' "$cid")"
+            echo "$svc status=$status"
+            test "$status" = "running"
+          done
 
       - name: Wait for readiness
         run: |
