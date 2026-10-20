@@ -45,10 +45,6 @@ CACHES = {
     },
 }
 
-# Run Celery tasks inline.
-CELERY_TASK_ALWAYS_EAGER = True
-CELERY_TASK_EAGER_PROPAGATES = True
-
 # Capture emails instead of sending them.
 EMAIL_BACKEND = "django.core.mail.backends.locmem.EmailBackend"
 
