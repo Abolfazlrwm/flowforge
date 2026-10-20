@@ -122,6 +122,12 @@ convention = "google"
 # only `request`. Renaming or dropping `view` to satisfy ARG002 would break the
 # DRF contract, which is the opposite of what the rule wants.
 "api/permissions.py" = ["ARG002"]
+# Django's management command contract mandates the `(self, *args, **options)`
+# `handle` signature and a `BaseCommand.add_arguments(self, parser)` parser that
+# is an `argparse.ArgumentParser`. The variadic `*args` is unused by most commands
+# and the framework import can only live inside the method, so the same three rules
+# that `api/permissions.py` and `manage.py` already relax apply here too.
+"core/management/commands/*.py" = ["PLC0415", "S101", "ARG002"]
 # DRF declares `permission_classes` and `ordering` as plain (non-`ClassVar`)
 # attributes on its base classes, and the stubs keep that same shape. Annotating
 # them `ClassVar` in a subclass — which is what RUF012 wants for a mutable
