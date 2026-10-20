@@ -212,10 +212,10 @@ jobs:
           docker inspect -f 'migrate status={{.State.Status}} exit={{.State.ExitCode}}' "$cid"
           test "$(docker inspect -f '{{.State.ExitCode}}' "$cid")" = "0"
 
-      - name: Scheduler and publisher are running
+      - name: Scheduler, publisher and worker are running
         run: |
           set -euo pipefail
-          for svc in scheduler publisher; do
+          for svc in scheduler publisher worker; do
             cid="$(docker compose ps -aq "$svc")"
             test -n "$cid"
             status="$(docker inspect -f '{{.State.Status}}' "$cid")"
@@ -255,6 +255,12 @@ jobs:
           grep -Eq '"postgres": *"ok"' /tmp/ready-ok.json
           grep -Eq '"redis": *"ok"' /tmp/ready-ok.json
           grep -Eq '"rabbitmq": *"ok"' /tmp/ready-ok.json
+
+      # The whole pipeline, not just the probes: trigger -> scheduler -> outbox ->
+      # publisher -> RabbitMQ -> worker -> DB. `sample_run` exits non-zero unless the
+      # run reaches SUCCEEDED, so a broken process fails this step.
+      - name: End-to-end sample workflow
+        run: docker compose exec -T web python manage.py sample_run --timeout 120
 
       - name: Container logs
         if: always()

@@ -7,6 +7,50 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-10-21
+
+Phase 5 (Distributed Workers) is complete. A dispatch is now executed end to end:
+the worker consumes it, claims the task run with a fencing token, runs a trusted
+handler, writes the durable outcome, and only then acks. The scheduler also
+completes the workflow run when its tasks resolve, so a correct run no longer
+stays `RUNNING` forever.
+
+### Added
+
+- `core/worker/registry.py`: a trusted, in-process handler registry. A message
+  names a `task_type`; nothing in it is imported or executed as code. An unknown
+  type fails the task.
+- `core/worker/builtin.py`: `noop`, `echo`, `add` — the only handlers a message can
+  run.
+- `core/worker/consumer.py`: the worker — manual ack (`auto_ack=False`), prefetch,
+  a lease heartbeat thread, a graceful stop, and a `process` method separated from
+  pika for unit testing.
+- `core/repositories/transitions.py`: `renew_lease`, the heartbeat's conditional
+  `UPDATE` (matches only while the token still owns the row).
+- `manage.py worker`: consumes dispatches, with SIGTERM/SIGINT stopping after the
+  in-flight message.
+- `manage.py sample_run` and a `worker` compose service: the end-to-end sample
+  (echo → add → noop) the docker CI job runs.
+- Scheduler run completion: `advance_workflow_run` derives the run state from its
+  task runs and completes `RUNNING → SUCCEEDED/FAILED`.
+
+### Reliability
+
+- Ack only after the durable outcome; a failed write nacks for requeue.
+- Duplicate delivery executes once (the claim only matches a READY row).
+- A stale result from a reaped worker matches zero rows and is discarded.
+- A killed worker's lease is reclaimed; the new generation owns the task.
+- A lost ack redelivers the message (broker at-least-once).
+
+### Tests
+
+- Unit: success, handler failure, unknown type, duplicate delivery, finish failure,
+  stale finish, malformed payload, heartbeat, killed-worker stale rejection,
+  registry rules, run completion.
+- Integration (PostgreSQL + RabbitMQ): end-to-end consume, duplicate delivery, lost
+  ack redelivery, graceful shutdown.
+- Docker job: `sample_run` must reach `SUCCEEDED`.
+
 ## [0.5.1] - 2026-10-21
 
 Closes the Phase 4 gap: the publisher's guarantees are broker semantics, so they

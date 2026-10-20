@@ -298,18 +298,54 @@ RabbitMQ in CI (`tests/integration/test_rabbit_publisher.py`,
 What is **not** claimed: exactly-once *delivery*. The broker is at-least-once, so a
 redelivery is possible — for example, a publisher that crashes after the broker ack
 but before `mark_published` commits will publish the same row again. The worker's
-`dispatch_id` de-duplication is what makes that redelivery harmless, and that is
-Phase 5.
+claim-based de-duplication is what makes that redelivery harmless.
+
+## The worker
+
+The worker is the process that *executes*. It consumes a dispatch, claims the task
+run (READY→RUNNING, bumping the fencing token), runs a trusted handler, writes the
+durable outcome, and only then acks.
+
+**Manual ack, prefetch 1.** The channel uses `auto_ack=False` and
+`basic_qos(prefetch_count=1)`, so a worker holds at most one unacked message. A
+crash loses at most that one, and the broker redelivers it.
+
+**Ack after the durable outcome.** `finish_task_run` is a committed `UPDATE`; the
+ack follows it. If the write fails, the message is nacked for requeue — never
+acked — so a redelivery re-attempts it.
+
+**Trusted handlers only.** The message carries a `task_type`; the worker looks it
+up in an in-process registry (`core/worker/registry.py`). Nothing in the message is
+imported or executed as code. An unknown type fails the task rather than loading
+anything.
+
+**Fencing.** The claim returns the new token; `finish_task_run` requires it. A
+worker whose lease was reaped writes zero rows, so a resurrected worker cannot
+overwrite a newer attempt. A duplicate delivery is acked without re-executing,
+because the claim only matches a READY row.
+
+**Heartbeat.** While the handler runs, a background thread calls `renew_lease`
+every `lease_seconds / 3`. If the lease was already lost (the token moved), the
+renewal stops and the eventual finish is correctly rejected as stale.
+
+**Graceful shutdown.** SIGTERM/SIGINT stop consumption after the in-flight message
+is finished and acked; unacked messages are redelivered. With `prefetch=1` the
+in-flight set is one message.
+
+**What is not claimed.** The worker is at-least-once: a crash between the DB commit
+and the ack can redeliver the message. The claim and the fencing token make the
+redelivery harmless, not impossible. Handler return values are not persisted yet
+(Phase 6).
 
 ## What is not here yet
 
 Listed so the boundary is explicit rather than inferred:
 
-- **No worker loop (Phase 5).** The scheduler dispatches and the publisher
-  delivers, but nothing consumes a dispatch message yet, so a dispatched task is
-  not executed.
 - **No retry policy, dead-letter handling or backoff (Phase 6).** The `retrying`
   state and the `schedule_retry` edge exist; the policy that drives them does not.
+  A failed task fails the run without a retry.
+- **No handler result storage (Phase 6).** The task outcome is persisted; a
+  handler's return value is discarded.
 - **No multi-task transaction beyond `advance_workflow_run`.** The scheduler wraps
   one run's promote-and-dispatch work in a single `transaction.atomic()`; every
   other transition is still one atomic statement.
