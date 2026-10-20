@@ -296,6 +296,39 @@ def finish_task_run(
     )
 
 
+def renew_lease(
+    *,
+    task_run_id: UUID,
+    fencing_token: int,
+    lease_seconds: int,
+    now: datetime | None = None,
+) -> bool:
+    """Extend a running task run's lease, proving ownership with its token.
+
+    The worker's heartbeat calls this while a handler runs, so a long task is not
+    reaped mid-flight. It matches only while the row is still ``RUNNING`` and still
+    owned by ``fencing_token``: once the reaper has bumped the token, the dead
+    worker cannot extend a lease it no longer holds.
+
+    Returns:
+        ``True`` if the lease was extended, ``False`` if the row moved on.
+
+    Raises:
+        ValueError: if ``lease_seconds`` is not positive.
+    """
+    if lease_seconds <= 0:
+        raise ValueError(f"lease_seconds must be positive, got {lease_seconds}")
+    moment = _resolve_now(now)
+    return (
+        TaskRun.objects.filter(
+            pk=task_run_id,
+            state=TaskRunState.RUNNING.value,
+            fencing_token=fencing_token,
+        ).update(lease_expires_at=moment + timedelta(seconds=lease_seconds))
+        == 1
+    )
+
+
 def utc_now() -> datetime:
     """Timezone-aware current time, for tests that want a fixed reference."""
     return datetime.now(tz=UTC)

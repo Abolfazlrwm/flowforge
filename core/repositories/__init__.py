@@ -23,6 +23,7 @@ from core.repositories.transitions import (
     finish_task_run,
     reap_expired_leases,
     reclaim_task_run,
+    renew_lease,
     transition_task_run,
     transition_workflow_run,
 )
@@ -38,6 +39,7 @@ __all__ = [
     "mark_published",
     "reap_expired_leases",
     "reclaim_task_run",
+    "renew_lease",
     "schedule_once",
     "transition_task_run",
     "transition_workflow_run",

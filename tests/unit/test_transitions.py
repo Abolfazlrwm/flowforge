@@ -24,6 +24,7 @@ from core.repositories.transitions import (
     finish_task_run,
     reap_expired_leases,
     reclaim_task_run,
+    renew_lease,
     transition_task_run,
     transition_workflow_run,
 )
@@ -532,3 +533,45 @@ class TestLeaseReaper:
         task_run.refresh_from_db()
         assert task_run.state == TaskRunState.RUNNING.value
         assert task_run.fencing_token == token
+
+
+class TestLeaseHeartbeat:
+    """``renew_lease`` extends a held lease and refuses a stale one."""
+
+    def test_renew_lease_extends_a_held_lease(self, task_run: TaskRun) -> None:
+        """The heartbeat can push the expiry out while the worker still owns the row."""
+        token = claim_task_run(
+            task_run_id=task_run.id, worker_id="worker-1", lease_seconds=30, now=NOW
+        )
+        assert token == 1
+
+        assert renew_lease(task_run_id=task_run.id, fencing_token=token, lease_seconds=90, now=NOW)
+
+        task_run.refresh_from_db()
+        assert task_run.lease_expires_at == NOW + timedelta(seconds=90)
+        assert task_run.state == TaskRunState.RUNNING.value
+
+    def test_renew_lease_refuses_a_stale_token(self, task_run: TaskRun) -> None:
+        """A worker whose lease was reaped cannot extend the new generation's lease."""
+        token = claim_task_run(
+            task_run_id=task_run.id, worker_id="worker-1", lease_seconds=30, now=NOW
+        )
+        assert token == 1
+        TaskRun.objects.filter(pk=task_run.id).update(lease_expires_at=NOW - timedelta(seconds=1))
+        assert reclaim_task_run(task_run_id=task_run.id, now=NOW + timedelta(seconds=1))
+
+        # The reaper bumped the token, so the dead worker's token no longer matches.
+        assert (
+            renew_lease(
+                task_run_id=task_run.id,
+                fencing_token=token,
+                lease_seconds=90,
+                now=NOW + timedelta(seconds=2),
+            )
+            is False
+        )
+
+    def test_renew_lease_rejects_a_non_positive_lease(self, task_run: TaskRun) -> None:
+        """A zero lease would be instantly expired; reject it rather than write it."""
+        with pytest.raises(ValueError):
+            renew_lease(task_run_id=task_run.id, fencing_token=1, lease_seconds=0)
