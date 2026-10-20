@@ -2,7 +2,7 @@
 
 ## Current Phase
 
-**Phase 4 — Scheduler: COMPLETE (v0.5.0).** Phases 0–3 are closed and released.
+**Phase 4 — Scheduler: COMPLETE (v0.5.1).** Phases 0–3 are closed and released.
 Phase 5 — Distributed Workers — is next.
 
 ## Resume point
@@ -17,7 +17,7 @@ If this session is resumed cold, read this section first.
 | Message broker | **RabbitMQ via pika**, no Celery ([ADR-011](../adr/ADR-011-custom-scheduler-and-transactional-outbox.md)). `RABBITMQ_URL` is the one broker. |
 | What is next | Merge PR #25, tag `v0.5.0`, then Phase 5 — Distributed Workers (the consumer loop). |
 | What blocks Phase 5 | **Nothing.** |
-| What else is open | `RabbitPublisher` needs verification against a live broker on the owner's machine. |
+| What else is open | Nothing pending an owner decision. `RabbitPublisher` is verified against a real broker in CI (v0.5.1). |
 
 ## Status
 
@@ -40,7 +40,7 @@ If this session is resumed cold, read this section first.
 | Branch protection | Active on `main`: `lint`, `test`, `docker` required, strict, no force push, 0 approving reviews |
 | Django | **5.2 LTS** (ADR-010) |
 | Python | 3.13 (3.14 deferred — see limitations) |
-| Phase 4 | Complete — 373 unit tests, 11 PostgreSQL tests, no Celery |
+| Phase 4 | Complete — 373 unit, 11 PostgreSQL, 5 RabbitMQ integration tests; no Celery. Publisher verified against a real broker (v0.5.1). |
 
 ## Completed
 
@@ -53,7 +53,7 @@ If this session is resumed cold, read this section first.
 6. `core` app with `/health/live/` and `/health/ready/`.
 7. Readiness probes PostgreSQL (`SELECT 1`), Redis (cache round-trip) and
    RabbitMQ (broker TCP connect), returning 503 with a per-dependency payload.
-8. Celery wired as interim infrastructure (ADR-007).
+8. Scheduler and publisher management commands (ADR-011); Celery removed in Phase 4.
 9. `api/v1/` URL placeholder.
 10. Ruff (lint + format), mypy strict, pytest, pytest-cov, pre-commit.
 11. `uv.lock` committed; the Docker image and CI both install from it.
@@ -222,6 +222,13 @@ If this session is resumed cold, read this section first.
     reaper races, 3 publish races, 1 publisher SKIP LOCKED race).
 61. `docs/architecture/execution-model.md` and `data-model.md` updated for the
     reaper edge, the outbox table, and the scheduler/publisher processes.
+62. **v0.5.1 — publisher verified against a real broker.** CI runs a
+    `rabbitmq:3.13-alpine` service and the integration suite against it with
+    `REQUIRE_RABBITMQ=1`: confirms + arrival, unroutable leaves the row pending,
+    outage then recovery, crash-window redelivery, and two publishers never
+    duplicating a row. The readiness probe now opens a real AMQP connection
+    instead of a TCP connect, and `mandatory=True` keeps an unroutable dispatch
+    pending instead of dropping it.
 
 ## Verification
 
@@ -304,9 +311,11 @@ passed only because of container start ordering.
 1. **No worker yet.** The scheduler, outbox, publisher and lease reaper exist
    (Phase 4), but nothing consumes a dispatch message and executes the task: the
    worker loop is Phase 5. A dispatched task is therefore not yet run.
-2. **The publisher's broker path is unverified against a live broker.** CI has no
-   RabbitMQ, so `RabbitPublisher` is exercised structurally, not end-to-end. The
-   owner should verify it against a real broker before relying on it.
+2. **The publisher's broker path is verified against a real broker in CI** (v0.5.1).
+   `tests/integration/test_rabbit_publisher.py` runs against a RabbitMQ service
+   container with `REQUIRE_RABBITMQ=1`: confirms + arrival, mandatory routing,
+   outage then recovery, crash-window redelivery, and two publishers without
+   duplicates. No remaining owner-side verification is required.
 3. **Readiness checks are shallow.** RabbitMQ is checked with a TCP connect,
    not an authenticated AMQP handshake. Redis is checked with a cache write,
    which would also pass against a different cache backend.
@@ -407,8 +416,8 @@ nine separate merges, so a regression can be attributed to one change.
 
 ## Blockers
 
-None. Phase 5 is unblocked. Owner-side: verify `RabbitPublisher` against a live
-RabbitMQ before relying on the publisher in production.
+None. Phase 5 is unblocked. `RabbitPublisher` is verified against a real broker in
+CI (v0.5.1), so no owner-side verification remains.
 
 ## Next step
 

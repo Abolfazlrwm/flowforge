@@ -7,6 +7,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.1] - 2026-10-21
+
+Closes the Phase 4 gap: the publisher's guarantees are broker semantics, so they
+are now verified against a real RabbitMQ in CI rather than against a fake.
+
+### Added
+
+- `tests/integration/test_rabbit_publisher.py`: five scenarios against a live
+  broker — publisher confirms and arrival (consume and assert the payload), an
+  unroutable publish leaves the row pending, a broker outage (dead port) leaves
+  rows pending and recovery drains them exactly once, a row committed before any
+  publish is delivered by a fresh publisher, and two publishers never publish the
+  same row twice. No sleeps: the consumer polls `basic_get` with a deadline.
+- The CI `test` job runs a `rabbitmq:3.13-alpine` service with a healthcheck and
+  `REQUIRE_RABBITMQ=1`, so a missing broker fails instead of skipping.
+
+### Changed
+
+- `RabbitPublisher` publishes with `mandatory=True`: an unroutable message is
+  returned (`UnroutableError` → `PublisherError`) instead of silently dropped, so
+  the outbox row stays pending until a worker queue is bound.
+- The readiness probe opens a real AMQP connection instead of a TCP connect.
+- `manage.py publisher` logs and retries a failed sweep, so a broker outage leaves
+  rows pending and a later sweep drains them instead of killing the process.
+
+### Verified
+
+- `RabbitPublisher` against a live broker in CI (previously structural only). The
+  owner-side verification note is removed.
+
 ## [0.5.0] - 2026-10-21
 
 Phase 4 (Scheduler) is complete. ADR-011 replaces Celery with three explicit
