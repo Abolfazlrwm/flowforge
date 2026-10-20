@@ -108,9 +108,15 @@ def test_publishing_identical_content_concurrently_yields_one_workflow() -> None
 
     # Callers that succeeded must have been shown the same row. Two different
     # rows would mean the idempotency check let a duplicate through.
-    assert len({workflow.pk for workflow in definitions}) == 1, (
+    assert len({workflow.pk for workflow, _created in definitions}) == 1, (
         "successful publishers disagree about which row holds the definition"
     )
+
+    # Exactly one caller may report having *created* the row. Everyone else was
+    # either shown the existing row or lost the unique constraint. Two creators
+    # would mean a duplicate insert that the constraint somehow allowed.
+    creators = [workflow for workflow, created in definitions if created]
+    assert len(creators) == 1, f"expected exactly one creator, got {len(creators)}"
 
     # Exactly one workflow, and both of its tasks. Not two workflows, not a
     # workflow with one task because a second caller's write was half-applied.
@@ -151,7 +157,8 @@ def test_publishing_different_content_concurrently_holds_one_definition() -> Non
     # different definition than the one the caller believes it owns.
     assert len(publishers) <= 1, f"more than one caller believed it published: {publishers}"
     if publishers:
-        winner = publishers[0]
+        winner, created = publishers[0]
+        assert created is True, "the only caller shown a result must be the one that created it"
         assert load_definition(winner).task_keys == tuple(stored_keys), (
             "the caller that was shown a successful publish does not own the stored rows"
         )
