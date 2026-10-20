@@ -41,7 +41,7 @@ class TestPublish:
 
     def test_publish_creates_the_workflow_and_its_tasks(self) -> None:
         """One workflow row plus one row per task, all keyed by the declared key."""
-        workflow = publish_definition(_definition())
+        workflow, _ = publish_definition(_definition())
         assert workflow.name == "etl"
         assert workflow.version == 1
         assert set(Task.objects.filter(workflow=workflow).values_list("key", flat=True)) == {
@@ -51,9 +51,11 @@ class TestPublish:
 
     def test_publish_returns_the_same_row_for_the_same_content(self) -> None:
         """Idempotent, so a retry after a timeout is not an error."""
-        first = publish_definition(_definition())
-        second = publish_definition(_definition())
+        first, created_first = publish_definition(_definition())
+        second, created_second = publish_definition(_definition())
         assert first.id == second.id
+        assert created_first is True
+        assert created_second is False, "a republish must not claim to have created the row"
         assert _workflow_row_count() == 1
 
     def test_publish_refuses_different_content_under_the_same_version(self) -> None:
@@ -79,7 +81,7 @@ class TestPublish:
 
     def test_publish_stores_every_field_of_every_task(self) -> None:
         """A lossy write here would silently change what a run was based on."""
-        workflow = publish_definition(_definition())
+        workflow, _ = publish_definition(_definition())
         load = Task.objects.get(workflow=workflow, key="load")
         assert load.task_type == "sql"
         assert load.depends_on == ["extract"]
@@ -125,13 +127,13 @@ class TestLoad:
 
     def test_round_trip(self) -> None:
         """Value-object equality, so a load is indistinguishable from the original."""
-        workflow = publish_definition(_definition())
+        workflow, _ = publish_definition(_definition())
         reloaded = load_definition(workflow)
         assert reloaded == _definition()
 
     def test_the_fingerprint_survives_a_round_trip(self) -> None:
         """This is what makes republishing idempotent."""
-        workflow = publish_definition(_definition())
+        workflow, _ = publish_definition(_definition())
         assert load_definition(workflow).fingerprint() == _definition().fingerprint()
 
     def test_task_order_is_not_required_to_match(self) -> None:
@@ -140,18 +142,18 @@ class TestLoad:
         Stored order is an artefact of how the rows were written, so a load that
         depended on it would be a definition that changes when the storage does.
         """
-        workflow = publish_definition(_definition())
+        workflow, _ = publish_definition(_definition())
         reloaded = load_definition(workflow)
         assert reloaded.graph.topological_order() == ("extract", "load")
 
     def test_an_empty_definition_round_trips(self) -> None:
         """A schema-valid but useless workflow: it must still load, not crash."""
-        workflow = publish_definition(WorkflowDefinition(name="empty", version=1))
+        workflow, _ = publish_definition(WorkflowDefinition(name="empty", version=1))
         assert load_definition(workflow).task_keys == ()
 
     def test_load_rebuilds_the_graph(self) -> None:
         """The graph is rebuilt from stored edges, not read back as a blob."""
-        workflow = publish_definition(_definition())
+        workflow, _ = publish_definition(_definition())
         assert load_definition(workflow).graph.dependencies_of("load") == {"extract"}
 
     def test_a_row_manually_broken_is_refused_on_load(self) -> None:
@@ -160,21 +162,21 @@ class TestLoad:
         ``load`` now depends on a task that no longer exists. Reconstructing it
         silently would let the scheduler spin on a task that can never start.
         """
-        workflow = publish_definition(_definition())
+        workflow, _ = publish_definition(_definition())
         Task.objects.filter(workflow=workflow, key="load").update(depends_on=["ghost"])
         with pytest.raises(UnknownDependencyError, match="unknown task 'ghost'"):
             load_definition(Workflow.objects.get(id=workflow.id))
 
     def test_a_row_with_no_task_type_is_refused_on_load(self) -> None:
         """Only possible in a database that predates migration ``core.0002``."""
-        workflow = publish_definition(_definition())
+        workflow, _ = publish_definition(_definition())
         Task.objects.filter(workflow=workflow, key="extract").update(task_type="")
         with pytest.raises(DefinitionError, match=r"core\.0002"):
             load_definition(Workflow.objects.get(id=workflow.id))
 
     def test_loading_a_definition_does_not_mutate_the_rows(self) -> None:
         """Loading is read-only: a second load must not duplicate or rewrite tasks."""
-        workflow = publish_definition(_definition())
+        workflow, _ = publish_definition(_definition())
         load_definition(workflow)
         load_definition(workflow)
         assert Task.objects.filter(workflow=workflow).count() == 2
