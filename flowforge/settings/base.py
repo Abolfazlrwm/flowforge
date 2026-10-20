@@ -228,17 +228,6 @@ SPECTACULAR_SETTINGS = {
 }
 
 # ---------------------------------------------------------------------------
-# Celery (interim — see ADR-007)
-# ---------------------------------------------------------------------------
-CELERY_BROKER_URL: str = env("CELERY_BROKER_URL", default="amqp://guest:guest@localhost:5672//")
-CELERY_RESULT_BACKEND: str = env("CELERY_RESULT_BACKEND", default="redis://localhost:6379/1")
-CELERY_ACCEPT_CONTENT = ["json"]
-CELERY_TASK_SERIALIZER = "json"
-CELERY_RESULT_SERIALIZER = "json"
-CELERY_TASK_TRACK_STARTED = True
-CELERY_TASK_TIME_LIMIT = 30 * 60
-
-# ---------------------------------------------------------------------------
 # Message broker for the publisher (ADR-011)
 # ---------------------------------------------------------------------------
 # The publisher process reads transactional-outbox rows and delivers them here.
@@ -260,7 +249,7 @@ CACHES = {
 # ---------------------------------------------------------------------------
 # Health checks
 # ---------------------------------------------------------------------------
-HEALTH_CHECK_BROKER_URL = env("CELERY_BROKER_URL", default="amqp://guest:guest@localhost:5672//")
+HEALTH_CHECK_BROKER_URL = env("RABBITMQ_URL", default="amqp://guest:guest@localhost:5672//")
 
 # ---------------------------------------------------------------------------
 # Logging / Structlog
