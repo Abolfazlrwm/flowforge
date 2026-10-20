@@ -1,10 +1,17 @@
 # ADR-011: Custom Scheduler and Transactional Outbox; Celery Removed in Phase 4
 
 **Date:** 2026-10-20
-**Status:** Proposed — pending owner approval
+**Status:** Accepted — Owner decision, 2026-10-20
 **Supersedes:** [ADR-007](ADR-007-celery-as-interim-task-infrastructure.md) (interim
 status ends; the decision ADR-007 deferred to Phase 4 is made here)
 **Related:** Phase 4 — Scheduler (v0.5.0)
+
+> **Owner decision, 2026-10-20.** This ADR was written as *Proposed* and the
+> owner approved it as written, on the first option presented. The consequences
+> section is therefore binding: five dependencies go, the `scheduler` and
+> `worker` compose services are rewired in the same PR as the removal, and
+> nothing executes a task end to end until Phase 5 ships the worker. Recorded so
+> no later reader has to infer whether that gap was deliberate.
 
 ## Context
 
