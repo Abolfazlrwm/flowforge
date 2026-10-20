@@ -6,8 +6,8 @@ section of `docs/development/PROGRESS.md`.
 
 ## Current Phase
 
-**Phase 4 — Scheduler: NEXT.** Phase 3 is complete (PR #23, CI run
-`39454512221`); Phases 0–2 are merged, tagged and released.
+**Phase 5 — Distributed Workers: NEXT.** Phase 4 is complete (v0.5.0); Phases 0–3
+are merged, tagged and released.
 
 ## Completed (Phase 0)
 
@@ -16,7 +16,7 @@ section of `docs/development/PROGRESS.md`.
 - PostgreSQL, Redis, RabbitMQ integration configured.
 - Settings split into `flowforge/settings/{base,dev,test,prod}.py`.
 - `SECRET_KEY` required whenever `DEBUG` is off.
-- Celery task queue wired (interim — see ADR-007).
+- Scheduler and publisher management commands (ADR-011); Celery removed in Phase 4.
 - Liveness (`/health/live/`) and readiness (`/health/ready/`) endpoints with
   PostgreSQL, Redis, and RabbitMQ checks.
 - Ruff, mypy (strict), pytest, pytest-cov, pre-commit.
@@ -29,7 +29,8 @@ section of `docs/development/PROGRESS.md`.
 - Dependabot (`uv`, GitHub Actions, Docker); secret scanning and push
   protection; branch protection on `main`; issue and PR templates; 36 labels;
   11 phase milestones.
-- ADR-007 (Celery interim), ADR-009 (name evaluation), Apache-2.0, MkDocs.
+- ADR-007 (Celery interim; superseded by ADR-011), ADR-009 (name evaluation),
+  ADR-010 (Django 5.2), Apache-2.0, MkDocs.
 
 ## Phase 0 outcome
 
@@ -115,29 +116,52 @@ not exercise.
   per-process unless the cache is shared; the schema is checked for drift, not
   for semantics) and `docs/development/PROGRESS.md`.
 
+## Phase 4 outcome
+
+- ADR-011 accepted (owner decision 2026-10-20): Celery removed; three explicit
+  processes — scheduler (which tasks dispatch), publisher (messages never lost),
+  worker (who executes, Phase 5). The worker claims, not the scheduler.
+- `core/repositories/scheduler.py`: `advance_workflow_run` promotes
+  dependency-satisfied tasks, starts the run and writes one outbox row per
+  dispatch generation in one transaction; `schedule_once` reaps expired leases
+  then advances every active run.
+- `core/models.OutboxMessage` + `core/repositories/outbox.py`: the transactional
+  outbox. Unique `(task_run, fencing_token_snapshot)` is the "exactly one
+  dispatch per live generation" guarantee. `create_dispatch` pre-checks existence
+  so the common duplicate never attempts the INSERT (catching the UNIQUE
+  violation alone would poison an open SQLite transaction), and wraps the create
+  in a savepoint for the rare cross-process race.
+- `core/repositories/transitions.py`: the lease reaper (`reclaim_task_run`,
+  `reap_expired_leases`) — conditional `UPDATE ... WHERE state='running' AND
+  lease_expires_at < now`, bumping the fencing token so a resurrected worker's
+  write matches zero rows. The `reap_lease` edge (RUNNING→READY) is reachable only
+  through the reaper, never the generic transition API.
+- `core/broker.py` + `core/broker_rabbit.py` + `manage.py publisher`: the
+  publisher drains the outbox with `FOR UPDATE SKIP LOCKED`, publishes with
+  publisher confirms, and marks a row delivered only after the broker acks.
+- Celery, kombu, billiard and vine removed; `manage.py scheduler` and
+  `manage.py publisher` replace celery beat/worker in compose; `RABBITMQ_URL`
+  replaces `CELERY_BROKER_URL`/`CELERY_RESULT_BACKEND`.
+- Tests: **373 unit tests** and **11 PostgreSQL concurrency tests** (5 transition
+  races, 2 reaper races, 3 publish races, 1 publisher SKIP LOCKED race). The
+  concurrency tests skip on SQLite and run in CI with `REQUIRE_POSTGRES=1`.
+- One real defect was found while wiring the scheduler: `create_dispatch` caught
+  the UNIQUE violation but the SQLite transaction was already aborted, so the
+  next query raised `TransactionManagementError`. Fixed with an existence
+  pre-check plus a savepoint, regression-guarded by the idempotency test.
+- Honest limit: `RabbitPublisher` has not been exercised against a live broker in
+  CI (no RabbitMQ there). It is validated structurally; the delivery-confirmation
+  path is the property the worker's `dispatch_id` de-duplication relies on.
+
 ## Current Phase scope
 
-**Phase 3: REST API — COMPLETE.**
+**Phase 4: Scheduler — COMPLETE (v0.5.0).**
 
-Delivered in Phase 3:
-- `api/views.py`: five views. Each picks a queryset, declares permissions and
-  throttles, calls one service, serialises the result. No business logic.
-- `api/serializers.py`: output rendered from the database, not from the
-  in-memory definition. Definition input is still validated only by
-  `core.domain.schema`; `WorkflowDefinitionDoc` is a documentation mirror kept in
-  step by `test_doc_serializer_matches_the_schema`.
-- `api/errors.py`: one envelope for every failure, with domain-to-HTTP mapping in
-  one place and unknown exceptions deliberately not swallowed.
-- `api/permissions.py`, `api/pagination.py`, `api/filters.py`: the declared
-  rules for who may write, how a list is paged, and which query parameters exist.
-- Auth: DRF token and JWT, both checked against `is_active`.
-- Idempotent triggers backed by a unique index on `(user, key)`.
-- `docs/api/openapi.yaml` committed; `schema` CI job fails on drift.
-
-**Phase 4: Scheduler** — next. See `docs/development/ROADMAP.md`. The state
-machines, transitions repository and fencing tokens already exist; Phase 4 is
-the eligibility rule, the claim loop, and the outbox — plus the ADR-007 decision
-on whether Celery stays.
+**Phase 5: Distributed Workers** — next. See `docs/development/ROADMAP.md`. The
+worker consumes a dispatch message, claims the task run (the fencing token is in
+the payload), executes it, and calls `finish_task_run` with that token. The claim
+primitive, lease and fencing machinery already exist; Phase 5 is the consumer
+loop, the handler registry, and result persistence.
 
 ## Decisions
 
@@ -147,13 +171,12 @@ on whether Celery stays.
   framework version unilaterally.
 - **Python 3.13.** 3.14 is deferred until it is verified in CI; the Docker
   ecosystem ignores Python minor/major bumps for that reason.
-- **redis-py stays below 6 and Celery stays at 5.4.0** until the Phase 4
-  keep-or-replace decision. Celery 5.4 declares `redis<6.0.0`.
+- **Celery removed in Phase 4** (ADR-011). The scheduler and publisher are Django
+  management commands; the worker is Phase 5. redis-py stays below 6 for the Redis
+  cache backend, and that pin is now a cache decision, not a Celery one.
 - Modular monolith with independent runtime processes.
 - `django-environ` for 12-factor configuration.
 - `uv` for dependency resolution; `uv.lock` is the source of truth for CI.
-- Celery retained as interim infrastructure (ADR-007); keep-or-replace belongs
-  to Phase 4.
 - Project name remains **FlowForge** by owner decision on 2026-10-19.
 
 ## Constraints

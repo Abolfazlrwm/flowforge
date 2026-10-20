@@ -1,6 +1,6 @@
 """The pure-Python domain layer.
 
-Nothing in this package may import Django, DRF, Celery or a driver. A test in
+Nothing in this package may import Django, DRF or a database/broker driver. A test in
 ``tests/unit/domain/test_no_framework_imports.py`` enforces that by parsing the
 AST of every module here, and a second test proves it at runtime by importing
 the package with ``django`` made unimportable.
