@@ -49,8 +49,14 @@ class DefinitionConflictError(Exception):
         )
 
 
-def publish_definition(definition: WorkflowDefinition) -> Workflow:
+def publish_definition(definition: WorkflowDefinition) -> tuple[Workflow, bool]:
     """Create the rows for `definition`, returning the `Workflow` row.
+
+    Returns:
+        The workflow, and whether this call created it. `False` means an
+        identical definition was already published and this call was a no-op —
+        the caller needs to know, because "created" is a 201 and "already there"
+        is a 200, and guessing from a pre-check would be a race.
 
     Idempotent: an existing `(name, version)` with the same fingerprint returns
     the existing row without creating anything.
@@ -78,7 +84,7 @@ def publish_definition(definition: WorkflowDefinition) -> Workflow:
         if existing is not None:
             if _fingerprint_of(existing) != definition.fingerprint():
                 raise DefinitionConflictError(existing, definition)
-            return existing
+            return existing, False
 
         workflow = Workflow.objects.create(
             name=definition.name,
@@ -97,7 +103,7 @@ def publish_definition(definition: WorkflowDefinition) -> Workflow:
                 for task in definition.tasks
             ]
         )
-        return workflow
+        return workflow, True
 
 
 def load_definition(workflow: Workflow) -> WorkflowDefinition:
