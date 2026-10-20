@@ -67,11 +67,18 @@ docker-compose.override.yml
 
 # Documentation
 docs/_build/
+# MkDocs output. `mkdocs build --strict` runs in CI; the artefact is never
+# committed, and Pages deployment is deferred to Phase 10.
+site/
 
 # Misc
 *.pid
 *.seed
 *.pid.lock
+
+# SQLite test database. `flowforge.settings.test` puts it at the repository root
+# when no DATABASE_URL is supplied; it is a local artefact and never committed.
+test.sqlite3
 
 # Local agent tooling / scratch state
 .workbuddy-ai/

@@ -11,10 +11,11 @@ parts of distributed execution explicit — leases, fencing tokens, a
 transactional outbox and at-least-once delivery — instead of hiding them
 behind a task decorator.
 
-> **Status: Phase 2 of 11 — definitions and state machines, no execution yet.**
-> A workflow can be described, validated and published, and the rules that will
-> drive execution exist as pure Python with database constraints behind them.
-> Nothing runs a workflow yet: there is no API, no scheduler and no worker loop.
+> **Status: Phase 3 of 11 — the REST API is live, execution is not.**
+> A workflow can be described, validated, published, and triggered over HTTP;
+> runs and their per-task states can be listed and read. What is still missing is
+> the part that does the work: there is no scheduler and no worker loop, so a
+> triggered run sits in its initial state until Phase 4 and 5 exist.
 > The feature table below lists exactly what is implemented and nothing more.
 
 ## Why this exists
@@ -45,14 +46,14 @@ flowchart LR
     api --> redis
 ```
 
-Today only the API shell, the datastores and the health probes are wired.
-The scheduler and worker boxes are placeholders served by Celery (ADR-007).
+The API, the datastores and the health probes are wired. The scheduler and
+worker boxes are placeholders served by Celery (ADR-007).
 
 ## Design guarantees and limits
 
-These are the properties the design targets. **None of them are implemented
-yet** — they are listed so the gap between the goal and the code is explicit,
-not implied.
+These are the properties the design targets. The status column says which are
+implemented today, so the gap between the goal and the code is explicit rather
+than implied.
 
 | Property | Target | Status |
 |----------|--------|--------|
@@ -114,7 +115,10 @@ uv run python manage.py runserver
 | Workflow definitions as validated value objects, with a dependency graph | Implemented (Phase 2) |
 | Duplicate-key, unknown-dependency and cycle rejection (iterative detection) | Implemented (Phase 2) |
 | JSON Schema validation with JSONPath errors; versioned, lossless publishing | Implemented (Phase 2) |
-| REST API, auth, pagination | **Not implemented** (Phase 3) |
+| REST API with cursor pagination, filtering and a single error envelope | Implemented (Phase 3) |
+| Token and JWT authentication; staff-only publishing; per-owner run reads | Implemented (Phase 3) |
+| Idempotent triggers via `Idempotency-Key`, backed by a unique index | Implemented (Phase 3) |
+| Committed OpenAPI document, with a CI job that fails on drift | Implemented (Phase 3) |
 | Scheduler, transactional outbox, worker loop | **Not implemented** (Phases 4–5) |
 | Retries, DLQ, reaper | **Not implemented** (Phase 6) |
 | Multi-tenancy, RBAC, audit log | **Not implemented** (Phase 8) |

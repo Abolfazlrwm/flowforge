@@ -38,6 +38,10 @@ dependencies = [
     "whitenoise>=6.7",
     "django-environ>=0.11",
     "jsonschema>=4.23",
+    # Phase 3 (REST API). Token auth needs no extra package — it is
+    # `rest_framework.authtoken`. JWT and the OpenAPI schema do.
+    "djangorestframework-simplejwt>=5.3,<6",
+    "drf-spectacular>=0.27,<1",
 ]
 
 [project.optional-dependencies]
@@ -62,6 +66,13 @@ dev = [
     "pre-commit>=4.0",
     "coverage>=7.6",
     "httpx>=0.27",
+    # Documentation site. `mkdocs build --strict` runs in CI on every pull
+    # request, so a broken internal link or a nav entry with no target fails the
+    # build. `pymdown-extensions` supplies `pymdownx.superfences`, which is what
+    # renders the Mermaid blocks in the architecture documents.
+    "mkdocs-material>=9.5,<10",
+    "pymdown-extensions>=10.11",
+    "django-filter-stubs>=0.1.0",
 ]
 
 # NOTE: the `flowforge` console script is intentionally absent until the CLI
@@ -94,13 +105,30 @@ ignore = [
 convention = "google"
 
 [tool.ruff.lint.per-file-ignores]
-"tests/**" = ["S101", "S105", "S106", "PLR2004", "D103"]
+# A pytest fixture parameter is a dependency declaration, not an argument the
+# test must read: `db` enables database access and `published` seeds a row, and
+# the test body legitimately uses neither. ARG cannot express that, and naming
+# the fixture with a leading underscore would stop pytest injecting it.
+"tests/**" = [
+    "S101", "S105", "S106", "PLR2004", "D103", "ARG001", "ARG002",
+]
 "*/migrations/*" = ["ALL"]
 "manage.py" = ["PLC0415"]
 # Django reads Meta attributes as plain class attributes and rejects ClassVar
 # annotations on them, so RUF012 cannot be satisfied here without breaking the
 # model. The lists are never mutated at runtime.
 "core/models.py" = ["RUF012"]
+# `BasePermission` mandates the `request, view` signature, and these classes read
+# only `request`. Renaming or dropping `view` to satisfy ARG002 would break the
+# DRF contract, which is the opposite of what the rule wants.
+"api/permissions.py" = ["ARG002"]
+# DRF declares `permission_classes` and `ordering` as plain (non-`ClassVar`)
+# attributes on its base classes, and the stubs keep that same shape. Annotating
+# them `ClassVar` in a subclass — which is what RUF012 wants for a mutable
+# class attribute — makes mypy reject the override. Leaving them plain matches
+# the framework it is configuring, which matters more than the lint rule here;
+# they are never rebound per instance.
+"api/views.py" = ["RUF012"]
 
 [tool.ruff.format]
 quote-style = "double"
