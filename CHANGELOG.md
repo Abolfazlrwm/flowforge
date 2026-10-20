@@ -7,6 +7,72 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+Phase 3 (REST API) is complete. The domain built in Phases 1 and 2 now has an
+HTTP surface: authenticated, authorised, cursor-paginated, rate-limited, and
+described by an OpenAPI document that is committed and checked for drift.
+
+Verified by
+[CI run 39454512221](https://github.com/Abolfazlrwm/flowforge/actions/runs/39454512221)
+— `lint`, `test` (348 unit tests, 98.30% coverage, 8 PostgreSQL concurrency
+tests), `schema`, `docs` and `docker` all pass, and the Codecov upload
+(`Upload queued for processing complete`) was accepted.
+
+### Added
+
+- `api/views.py`: five views, each of which picks a queryset, declares
+  permissions and throttles, calls one service and serialises the result. No
+  business logic, so the rules stay testable without HTTP.
+- `api/serializers.py`: output is rendered from the database rather than from
+  the in-memory definition, so a client sees what was stored. Definition input
+  is **not** validated here — the JSON Schema in `core.domain.schema` remains the
+  single shape validator, and `WorkflowDefinitionDoc` is a documentation-only
+  mirror that a test keeps in step with the real schema.
+- `api/errors.py`: one envelope for every failure,
+  `{"error": {"code", "message", "details"}}`, with domain-to-HTTP mapping in one
+  place. A stable `code` distinguishes failures that share a status. Anything
+  unrecognised returns `None` so Django's own 500 path runs instead of hiding a
+  defect behind a tidy response.
+- `api/permissions.py`: `IsAuthenticatedAndActive` checks `is_active` as well as
+  authentication, because a deactivated account still holds a valid token.
+  `IsStaffOrReadOnly` gates publishing; `IsOwnerOrStaff` is the object-level run
+  rule, and it answers 403 rather than 404 because the row demonstrably exists.
+- `api/pagination.py`: cursor pagination ordered by `(-created_at, -id)`.
+  `created_at` alone is not unique, and a cursor landing inside a group of equal
+  values duplicates a row. `page_size` is capped at 100.
+- `api/filters.py`: the allowed query parameters as a declared set —
+  `name`/`name__startswith`/`version` for definitions, and
+  `state`/`workflow`/`created_after`/`created_before` for runs.
+- Authentication: DRF token (revocable by deleting a row) and JWT (stateless,
+  short-lived), plus `/auth/me/`. Both fail differently, so both are supported.
+- Idempotent triggers: an `Idempotency-Key` replays the original run with
+  `Idempotent-Replay: true`. The guarantee comes from a unique index on
+  `(user, key)`, not a lock, because a row that does not exist cannot be locked.
+- `docs/api/openapi.yaml`, committed, plus a `schema` CI job that regenerates it
+  and fails on any diff. Generation was verified deterministic by generating
+  twice and diffing.
+- 78 API tests across auth, definitions, runs, permissions, the error envelope,
+  the schema mirror and throttling.
+
+### Changed
+
+- `publish_definition` returns `(workflow, created)`. "201 vs 200" is now decided
+  by the row that was actually written rather than by a pre-existence check that
+  would race another publisher.
+- `flowforge.settings.test` disables throttling by removing
+  `DEFAULT_THROTTLE_CLASSES` rather than by emptying the rates.
+
+### Fixed
+
+- **The test settings turned every scoped request into a 500.** Emptying
+  `DEFAULT_THROTTLE_RATES` left `ScopedRateThrottle` installed, and it raised
+  `ImproperlyConfigured` for every view naming a `throttle_scope`. A regression
+  test now asserts that every declared scope has a rate, and was confirmed to
+  fail against the old settings.
+- **`IdempotencyMismatchError` was raised but never mapped**, so the 422 the
+  views document was a 500. It is now mapped, and 422 was added to the status
+  table so a DRF 422 cannot be reported as `server_error`. Both the unit and the
+  end-to-end test were reverted against the fix to prove they fail without it.
+
 ## [0.3.0] - 2026-10-19
 
 Phase 2 (Workflow Definition Engine) is complete. A definition is now a
