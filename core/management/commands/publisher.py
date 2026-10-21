@@ -13,7 +13,8 @@ a single sweep so a test can exercise it without a never-returning process.
 
 from __future__ import annotations
 
-import time
+import signal
+import threading
 from argparse import ArgumentParser
 from typing import Any, cast
 
@@ -21,6 +22,7 @@ from django.conf import settings
 from django.core.management.base import BaseCommand
 
 from core.broker import build_publisher, publish_once
+from core.domain.retry import CONNECTION_BACKOFF, calculate_backoff
 
 
 class Command(BaseCommand):
@@ -53,21 +55,36 @@ class Command(BaseCommand):
                 self.stdout.write(f"Published one sweep: {published} message(s) delivered.")
                 return
 
+            stop = threading.Event()
+            signal.signal(signal.SIGTERM, lambda *_: stop.set())
+            signal.signal(signal.SIGINT, lambda *_: stop.set())
+
             self.stdout.write("Publisher started.")
-            try:
-                while True:
-                    try:
-                        published = publish_once(publisher)
-                    except Exception as exc:  # stay alive through a broker outage
-                        # The sweep's transaction rolled back, so every row is still
-                        # pending. Log and retry; after recovery the next sweep drains
-                        # them. Crashing here would leave the process dead forever.
-                        self.stderr.write(f"Publisher sweep failed, retrying: {exc}")
-                    else:
-                        if published:
-                            self.stdout.write(f"Delivered {published} message(s).")
-                    time.sleep(interval)
-            except KeyboardInterrupt:
-                self.stdout.write("Publisher stopped.")
+            failures = 0
+            while not stop.is_set():
+                try:
+                    published = publish_once(publisher)
+                except Exception as exc:  # stay alive through a broker outage
+                    # The sweep's transaction rolled back, so every row is still
+                    # pending. Back off exponentially (with jitter) and retry; after
+                    # recovery the next sweep drains them. Crashing here would leave
+                    # the process dead forever, which is exactly the manual restart
+                    # this loop exists to remove.
+                    failures += 1
+                    delay = calculate_backoff(attempt=failures, policy=CONNECTION_BACKOFF)
+                    self.stderr.write(
+                        f"Publisher sweep failed ({exc}); retrying in {delay:.2f}s "
+                        f"(attempt {failures})"
+                    )
+                    stop.wait(delay)
+                    continue
+
+                if failures:
+                    self.stdout.write(f"Publisher recovered after {failures} failed sweep(s).")
+                    failures = 0
+                if published:
+                    self.stdout.write(f"Delivered {published} message(s).")
+                stop.wait(interval)
+            self.stdout.write("Publisher stopped.")
         finally:
             publisher.close()

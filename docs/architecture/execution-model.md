@@ -300,6 +300,42 @@ redelivery is possible — for example, a publisher that crashes after the broke
 but before `mark_published` commits will publish the same row again. The worker's
 claim-based de-duplication is what makes that redelivery harmless.
 
+### The dispatch queue is a quorum queue
+
+The queue is declared with `x-queue-type: quorum`
+(`core.broker_rabbit.DISPATCH_QUEUE_ARGUMENTS`), not as a classic durable queue.
+
+The difference is what a *confirm* means. A classic durable queue can acknowledge a
+message it has not yet flushed to disk, so an abrupt broker death (power loss,
+`SIGKILL`, OOM kill) can lose a message the publisher was told was safe. A quorum
+queue writes through a Raft log and fsyncs **before** confirming, so a confirmed
+publish is durable by construction.
+
+**Single-node caveat.** With one broker, a quorum queue gives crash-safe
+durability, not high availability: there is no replica to fail over to, and the
+queue is unavailable while the node is down. Replication needs a three-node cluster
+and is out of scope for this phase.
+
+**Migration: a queue's type cannot be changed in place.** Declaring an existing
+classic queue with `x-queue-type: quorum` fails with `PRECONDITION_FAILED` (406),
+and `declare_dispatch_queue` raises `QueueTypeMismatchError` carrying the
+procedure rather than retrying forever. To migrate a running deployment:
+
+1. Stop the worker and the publisher. The scheduler may keep running — it only
+   writes outbox rows, which are the durable record.
+2. Wait for the queue to drain, or accept the loss of unacked dispatches: the
+   outbox still holds every row that was not confirmed, and it republishes them.
+   Rows already confirmed but unacked are the only ones at risk, and their tasks
+   are recovered by the lease reaper after it expires.
+3. Delete the queue: `rabbitmqctl delete_queue flowforge.tasks`, or the management
+   UI (`http://localhost:15672`, user `flowforge`).
+4. Start the worker. It redeclares the queue as a quorum queue and binds it.
+5. Start the publisher. Any row that was pending is delivered normally.
+
+Doing this while the queue is non-empty is safe for *unconfirmed* rows (they are
+still in the outbox) and lossy for *unacked* ones, which is why step 2 is a
+decision rather than a formality.
+
 ## The worker
 
 The worker is the process that *executes*. It consumes a dispatch, claims the task
@@ -330,22 +366,42 @@ renewal stops and the eventual finish is correctly rejected as stale.
 
 **Graceful shutdown.** SIGTERM/SIGINT stop consumption after the in-flight message
 is finished and acked; unacked messages are redelivered. With `prefetch=1` the
-in-flight set is one message.
+in-flight set is one message. The same signal also interrupts a reconnect wait, so
+a shutdown during an outage does not block for the backoff.
+
+**Reconnection.** `Worker.run()` is a loop, not a single `start_consuming()` call.
+When the connection drops — broker restart, network partition, idle timeout — the
+loop backs off exponentially (with jitter) and re-establishes the connection,
+channel, queue declaration and consumer. No process restart is required, and the
+backoff is capped at 30s.
+
+The subtle part is the in-flight message. If the connection dies after the handler
+ran but before the ack, the worker does **not** treat the message as done: the ack
+raises, the connection is torn down, and the broker requeues the message. The task
+row is already terminal, so the redelivery is claimed by nobody and acked without
+re-executing. If the handler died mid-write instead, the lease expires and the
+reaper retries it. Either way the outcome is at-least-once with no double
+execution.
+
+A queue-type mismatch is the one error this loop does **not** retry: it raises
+`QueueTypeMismatchError` immediately, because no amount of reconnecting will turn a
+classic queue into a quorum queue.
 
 **What is not claimed.** The worker is at-least-once: a crash between the DB commit
 and the ack can redeliver the message. The claim and the fencing token make the
-redelivery harmless, not impossible. Handler return values are not persisted yet
-(Phase 6).
+redelivery harmless, not impossible. Handler return values are persisted
+(`TaskRun.result`) but only on success; a handler whose side effect is not
+idempotent can replay it, which is why `idempotency_key` exists and why the
+registry is trusted-only.
 
 ## What is not here yet
 
 Listed so the boundary is explicit rather than inferred:
 
-- **No retry policy, dead-letter handling or backoff (Phase 6).** The `retrying`
-  state and the `schedule_retry` edge exist; the policy that drives them does not.
-  A failed task fails the run without a retry.
-- **No handler result storage (Phase 6).** The task outcome is persisted; a
-  handler's return value is discarded.
 - **No multi-task transaction beyond `advance_workflow_run`.** The scheduler wraps
   one run's promote-and-dispatch work in a single `transaction.atomic()`; every
   other transition is still one atomic statement.
+- **No HA for the queue.** A quorum queue on one node is crash-safe, not
+  failover-capable; see the caveat above.
+- **No per-attempt history.** A retry reuses the row; only the current attempt and
+  its outcome are stored.

@@ -7,6 +7,51 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.1] - 2026-10-21
+
+Closes the two gaps Phase 6 left open: the broker connection was single-shot, and
+the dispatch queue was a classic queue.
+
+### Added
+
+- **Automatic reconnection.** `Worker.run()` is a loop: a connection-level failure
+  is backed off exponentially with jitter (capped at 30s) and retried, and the
+  connection, channel, queue declaration and consumer are all re-established. No
+  process restart. `stop()` interrupts the wait, so SIGTERM during an outage exits
+  promptly.
+- **Publisher sweep retry.** The publisher backs off on the same curve and retries
+  the sweep; rows stay pending until the broker confirms them.
+- **Quorum dispatch queue.** The queue is declared with `x-queue-type: quorum`, so
+  a publisher confirm means the message is fsynced through Raft, not merely
+  buffered. `core.broker_rabbit.declare_dispatch_queue` is the single declaration
+  every component uses.
+- **`QueueTypeMismatchError`.** Declaring an existing classic queue as quorum
+  raises it with the delete-and-redeclare procedure, instead of letting a raw
+  `PRECONDITION_FAILED` channel closure look like a transient fault.
+
+### Changed
+
+- **An ack failure is no longer swallowed.** If the channel dies between the
+  durable write and the ack, the exception propagates so the broker requeues the
+  message. Swallowing it would report a lost ack as a success.
+- The `docker` CI job no longer restarts the consumers after a broker outage. It
+  triggers a workflow **while the broker is down**, compares container IDs before
+  and after (a manual restart would change them), and requires the run to reach
+  `SUCCEEDED` on its own.
+- `docs/architecture/failure-model.md`: mode 14 (broker reconnection) moves to
+  **verified**, and mode 17 (broker loses a confirmed message) moves to **verified
+  for abrupt termination on a single node** — both only because a named test now
+  proves them.
+- `docs/architecture/execution-model.md` documents the quorum queue, the
+  single-node caveat, and the migration procedure.
+
+### Known limitations
+
+- Quorum queues on one node give crash-safe durability, not high availability;
+  there is no replica to fail over to.
+- Reconnection is per process: a worker that was *killed* still needs its
+  supervisor to restart it.
+
 ## [0.7.0] - 2026-10-21
 
 Phase 6 — Reliability. `FAILED` stops being a dead end and `DEAD` becomes the

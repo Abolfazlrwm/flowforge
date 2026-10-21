@@ -27,7 +27,7 @@ from typing import Any
 
 import pika
 import pytest
-from core.broker_rabbit import DEFAULT_EXCHANGE, RabbitPublisher
+from core.broker_rabbit import DEFAULT_EXCHANGE, RabbitPublisher, declare_dispatch_queue
 from core.worker.consumer import DEFAULT_ROUTING_KEY
 from django.conf import settings
 from django.db import connection
@@ -75,7 +75,7 @@ def bind_queue(url: str, queue: str) -> pika.BlockingConnection:
     conn = pika.BlockingConnection(pika.URLParameters(url))
     channel = conn.channel()
     channel.exchange_declare(exchange=DEFAULT_EXCHANGE, exchange_type="direct", durable=True)
-    channel.queue_declare(queue=queue, durable=True)
+    declare_dispatch_queue(channel, queue)
     channel.queue_bind(queue=queue, exchange=DEFAULT_EXCHANGE, routing_key=DEFAULT_ROUTING_KEY)
     return conn
 
