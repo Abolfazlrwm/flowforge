@@ -15,8 +15,13 @@ from unittest.mock import patch
 
 import pytest
 from core.domain.states import TaskRunState
-from core.models import TaskRun
-from core.repositories.transitions import claim_task_run, finish_task_run, reclaim_task_run
+from core.models import TaskRun, WorkflowRun
+from core.repositories.transitions import (
+    claim_task_run,
+    finish_task_run,
+    promote_due_retries,
+    reclaim_task_run,
+)
 from core.worker.consumer import Worker
 from core.worker.registry import handlers, register, resolve
 
@@ -168,9 +173,10 @@ def test_stale_finish_is_acked(task_run: TaskRun) -> None:
 def test_killed_worker_result_is_rejected_after_a_reap(task_run: TaskRun) -> None:
     """A worker whose lease was reaped cannot overwrite the new generation's result.
 
-    Worker A claims (token 1), its lease expires, the reaper reclaims it (token 2),
-    worker B claims (token 3) and finishes. A's late write with token 1 matches
-    zero rows, so the new result stands.
+    Worker A claims (token 1), its lease expires, the reaper reclaims it (token 2)
+    and routes it into ``RETRYING``. Once the backoff elapses the scheduler promotes
+    it to ``READY`` and worker B claims (token 3) and finishes. A's late write with
+    token 1 matches zero rows, so the new result stands.
     """
     token_a = claim_task_run(
         task_run_id=task_run.id, worker_id="worker-a", lease_seconds=30, now=NOW
@@ -179,11 +185,14 @@ def test_killed_worker_result_is_rejected_after_a_reap(task_run: TaskRun) -> Non
     TaskRun.objects.filter(pk=task_run.id).update(lease_expires_at=NOW - timedelta(seconds=1))
     assert reclaim_task_run(task_run_id=task_run.id, now=NOW + timedelta(seconds=1))
 
+    # The reaper consumed A's attempt and scheduled a retry; the scheduler makes
+    # it dispatchable again once the backoff has elapsed.
+    assert promote_due_retries(now=NOW + timedelta(seconds=10)) == 1
     token_b = claim_task_run(
         task_run_id=task_run.id,
         worker_id="worker-b",
         lease_seconds=30,
-        now=NOW + timedelta(seconds=2),
+        now=NOW + timedelta(seconds=11),
     )
     assert token_b == 3
 
@@ -261,3 +270,87 @@ def test_registry_resolves_only_registered() -> None:
     assert resolve("test.record") is _record
     assert resolve("does.not.exist") is None
     assert "test.record" in handlers()
+
+
+def _returns(config: Mapping[str, Any]) -> dict[str, Any]:
+    """A handler with a durable return value, so result persistence is observable."""
+    return {"echo": config.get("tag"), "ok": True}
+
+
+register("test.returns", _returns)
+
+
+def test_a_successful_handler_result_is_persisted(task_run: TaskRun) -> None:
+    """The handler's return value is the task's output; dropping it loses the work."""
+    _worker().process(
+        _payload(task_run, task_type="test.returns", config={"tag": "x"}),
+        ack=lambda: None,
+        nack=lambda _requeue: None,
+    )
+
+    task_run.refresh_from_db()
+    assert task_run.state == TaskRunState.SUCCEEDED.value
+    assert task_run.result == {"echo": "x", "ok": True}
+
+
+def test_a_failed_handler_persists_no_result(task_run: TaskRun) -> None:
+    """A failed attempt has no output; the next attempt must start clean."""
+    _worker().process(
+        _payload(task_run, task_type="test.boom"),
+        ack=lambda: None,
+        nack=lambda _requeue: None,
+    )
+
+    task_run.refresh_from_db()
+    assert task_run.state == TaskRunState.FAILED.value
+    assert task_run.result is None
+
+
+def test_an_idempotent_dispatch_reuses_a_prior_result(
+    task_run: TaskRun, workflow_run: WorkflowRun
+) -> None:
+    """A second task run with the same key must not execute the handler again.
+
+    This is what makes a redelivered or re-dispatched idempotent task safe: the
+    side effect happened once, and the second execution returns the first one's
+    recorded output instead of repeating it.
+    """
+    prior = TaskRun.objects.create(
+        workflow_run=WorkflowRun.objects.create(workflow=workflow_run.workflow),
+        task=task_run.task,
+        state=TaskRunState.SUCCEEDED.value,
+        idempotency_key="shared-key",
+        result={"echo": "first"},
+    )
+    TaskRun.objects.filter(pk=task_run.pk).update(idempotency_key="shared-key")
+    task_run.refresh_from_db()
+
+    payload = _payload(task_run, task_type="test.returns", config={"tag": "x"})
+    payload["idempotency_key"] = "shared-key"
+
+    _worker().process(payload, ack=lambda: None, nack=lambda _requeue: None)
+
+    task_run.refresh_from_db()
+    assert _CALLS == []  # the handler did not run a second time
+    assert task_run.state == TaskRunState.SUCCEEDED.value
+    assert task_run.result == prior.result
+
+
+def test_a_dispatch_without_an_idempotency_key_always_executes(task_run: TaskRun) -> None:
+    """A non-idempotent task must run even when a look-alike result exists."""
+    TaskRun.objects.create(
+        workflow_run=WorkflowRun.objects.create(workflow=task_run.workflow_run.workflow),
+        task=task_run.task,
+        state=TaskRunState.SUCCEEDED.value,
+        idempotency_key="shared-key",
+        result={"echo": "first"},
+    )
+
+    _worker().process(
+        _payload(task_run, task_type="test.returns", config={"tag": "x"}),
+        ack=lambda: None,
+        nack=lambda _requeue: None,
+    )
+
+    task_run.refresh_from_db()
+    assert task_run.result == {"echo": "x", "ok": True}

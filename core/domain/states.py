@@ -36,4 +36,5 @@ class TaskRunState(StrEnum):
     SUCCEEDED = "succeeded"
     FAILED = "failed"
     RETRYING = "retrying"
+    DEAD = "dead"
     CANCELLED = "cancelled"
