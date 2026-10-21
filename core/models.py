@@ -409,3 +409,44 @@ class OutboxMessage(models.Model):
     def __str__(self) -> str:
         """Readable label for the admin and logs."""
         return f"outbox {self.id} for task run {self.task_run_id}"
+
+
+class ScheduledTrigger(models.Model):
+    """A cron-based trigger that starts a workflow run on a schedule.
+
+    The scheduler polls ``next_run_at``; when it is due, the trigger is claimed
+    atomically with ``SELECT FOR UPDATE SKIP LOCKED`` so N scheduler instances
+    cannot fire the same trigger twice. The ``next_run_at`` is advanced *before*
+    the workflow is triggered, so a crash during trigger does not cause a
+    double-fire on recovery — the trigger already says "I fired at this time".
+
+    If the trigger's workflow is not published, the tick is a no-op and the
+    trigger advances anyway (the operator must fix the workflow, not the clock).
+    """
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    workflow = models.ForeignKey(
+        Workflow, on_delete=models.CASCADE, related_name="scheduled_triggers"
+    )
+    #: Cron expression in the standard 5-field format: ``min hour dom month dow``.
+    cron_expression = models.CharField(max_length=100)
+    enabled = models.BooleanField(default=True)
+    #: The next time this trigger is eligible to fire. Advanced by the scheduler.
+    next_run_at = models.DateTimeField(db_index=True)
+    #: The last time the trigger successfully fired. Null until the first tick.
+    last_run_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        """Index the poll query: enabled and due, ordered by soonest first."""
+
+        indexes = [
+            models.Index(
+                fields=["enabled", "next_run_at"],
+                name="idx_trigger_due",
+            ),
+        ]
+
+    def __str__(self) -> str:
+        """Readable label for the admin and logs."""
+        return f"trigger {self.id} for {self.workflow.name} ({self.cron_expression})"
