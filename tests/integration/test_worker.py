@@ -49,8 +49,8 @@ def _slow(_config: Mapping[str, Any]) -> None:
     _SLOW_RELEASE.wait(timeout=10)
 
 
-register("test.count", _count)
-register("test.slow", _slow)
+register("test.integration.count", _count)
+register("test.integration.slow", _slow)
 
 
 @pytest.fixture(autouse=True)
@@ -148,7 +148,7 @@ def test_worker_consumes_a_dispatch_end_to_end(task_run: TaskRun) -> None:
     conn = _bind_queue(url, queue)
     worker, thread = _start_worker(url, queue)
     try:
-        _publish(url, _payload(task_run, "test.count", key="e2e"))
+        _publish(url, _payload(task_run, "test.integration.count", key="e2e"))
         assert _wait_until(lambda: _state(task_run) == TaskRunState.SUCCEEDED.value)
         assert _COUNTS.get("e2e") == 1
     finally:
@@ -163,7 +163,7 @@ def test_duplicate_delivery_runs_the_handler_once(task_run: TaskRun) -> None:
     conn = _bind_queue(url, queue)
     worker, thread = _start_worker(url, queue)
     try:
-        payload = _payload(task_run, "test.count", key="dup")
+        payload = _payload(task_run, "test.integration.count", key="dup")
         _publish(url, payload)
         _publish(url, payload)
         assert _wait_until(lambda: _state(task_run) == TaskRunState.SUCCEEDED.value)
@@ -181,7 +181,7 @@ def test_lost_ack_redelivers_the_message(task_run: TaskRun) -> None:
     queue = f"flowforge.test.{uuid.uuid4().hex}"
     conn = _bind_queue(url, queue)
     try:
-        _publish(url, _payload(task_run, "test.count", key="lost"))
+        _publish(url, _payload(task_run, "test.integration.count", key="lost"))
         # Consume without ack, then drop the connection: the broker requeues it.
         method, _properties, _body = conn.channel().basic_get(queue=queue, auto_ack=False)
         assert method is not None
@@ -216,7 +216,7 @@ def test_graceful_shutdown_finishes_the_in_flight_message(task_run: TaskRun) -> 
     conn = _bind_queue(url, queue)
     worker, thread = _start_worker(url, queue)
     try:
-        _publish(url, _payload(task_run, "test.slow", key="slow"))
+        _publish(url, _payload(task_run, "test.integration.slow", key="slow"))
         assert _SLOW_STARTED.wait(timeout=15)
 
         worker.stop()  # asked to stop while the handler is still running

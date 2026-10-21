@@ -17,7 +17,9 @@ from core.models import TaskRun, WorkflowRun
 from core.repositories.definitions import load_definition
 from core.repositories.outbox import create_dispatch
 from core.repositories.transitions import (
+    promote_due_retries,
     reap_expired_leases,
+    schedule_retries,
     transition_task_run,
     transition_workflow_run,
 )
@@ -153,16 +155,29 @@ def advance_workflow_run(run: WorkflowRun) -> tuple[int, int]:
 
 
 def schedule_once() -> tuple[int, int]:
-    """One scheduler pass: reclaim expired leases, then advance every active run.
+    """One scheduler pass: reclaim, retry, promote, then advance every active run.
+
+    The order matters. Reaping an expired lease turns a ``RUNNING`` task into
+    ``RETRYING`` or ``DEAD``. ``schedule_retries`` then turns every ``FAILED`` task
+    into ``RETRYING`` (if attempts remain) or ``DEAD`` (if exhausted). ``promote_due_retries``
+    flips ``RETRYING`` rows whose backoff has elapsed back to ``READY`` — rows created
+    in *this* pass carry a future ``scheduled_at`` and are left for a later pass, so
+    the backoff is genuinely honoured. Only then are active runs advanced and their
+    ``READY`` tasks dispatched.
 
     Returns ``(reaped, enqueued)``. A long-running scheduler command calls this in a
     loop; tests call it directly for a single, deterministic pass.
     """
     reaped = reap_expired_leases()
+    schedule_retries()
+    promoted = promote_due_retries()
     enqueued = 0
     for run in WorkflowRun.objects.filter(
         state__in=[WorkflowRunState.PENDING.value, WorkflowRunState.RUNNING.value]
     ):
         _, run_enqueued = advance_workflow_run(run)
         enqueued += run_enqueued
+    # `promoted` is reported for observability alongside `reaped`; it does not
+    # change dispatch counts (the promoted rows are counted as `enqueued` above).
+    del promoted
     return (reaped, enqueued)

@@ -117,6 +117,10 @@ def _materialise(workflow: Workflow, *, requested_by_id: int | None) -> Workflow
                 workflow_run=run,
                 task=tasks_by_key[task.key],
                 state=initial_task_run_state(dependency_count=len(task.depends_on)).value,
+                # The handler idempotency key, if the task declares one. Two task
+                # runs with the same key execute the handler once; the second reuses
+                # the first's persisted result. Null means "not idempotent".
+                idempotency_key=task.config.get("idempotency_key"),
             )
             for task in definition.tasks
         ]
