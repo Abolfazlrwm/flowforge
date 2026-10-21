@@ -38,8 +38,10 @@ from typing import Any
 from uuid import UUID, uuid4
 
 import pika
+from django.db import DatabaseError
 
 from core.broker_rabbit import DEFAULT_EXCHANGE, declare_dispatch_queue
+from core.db import reset_connections
 from core.domain.retry import CONNECTION_BACKOFF, calculate_backoff
 from core.domain.states import TaskRunState
 from core.models import TaskRun
@@ -204,11 +206,20 @@ class Worker:
             # Unparseable: it can never succeed, so drop it rather than loop.
             channel.basic_nack(delivery_tag=delivery_tag, requeue=False)
             return
-        self.process(
-            payload,
-            ack=lambda: channel.basic_ack(delivery_tag=delivery_tag),
-            nack=lambda requeue: channel.basic_nack(delivery_tag=delivery_tag, requeue=requeue),
-        )
+        try:
+            self.process(
+                payload,
+                ack=lambda: channel.basic_ack(delivery_tag=delivery_tag),
+                nack=lambda requeue: channel.basic_nack(delivery_tag=delivery_tag, requeue=requeue),
+            )
+        except DatabaseError:
+            # A database restart kills this process's long-lived connection, and
+            # every later message would fail on the same dead socket. Discard it
+            # so the next attempt opens a fresh one, then let the error propagate:
+            # the message stays unacked, the broker requeues it, and the reconnect
+            # loop applies the backoff. The lease covers the half-written attempt.
+            reset_connections()
+            raise
 
     def process(
         self,

@@ -45,6 +45,21 @@ the dispatch queue was a classic queue.
 - `docs/architecture/execution-model.md` documents the quorum queue, the
   single-node caveat, and the migration procedure.
 
+### Fixed
+
+- **The scheduler exited on a database restart.** It held one connection for its
+  whole life, so `restart db` produced `OperationalError: terminating connection
+  due to administrator command` and killed the process — every run then stayed
+  `pending`. The scheduler and publisher now discard the connection
+  (`core.db.reset_connections`) and back off; the worker does the same per message
+  and re-raises so the broker requeues it. Found by the docker job, which asserts
+  the pipeline still does real work after the restart rather than only that the
+  probe is green.
+- **A closed connection was treated as a clean stop.** pika's
+  `start_consuming()` returns normally when the connection closes under it, so the
+  first reconnect implementation still exited the process on a broker restart. The
+  loop now treats "returned without a stop request" as a lost connection.
+
 ### Known limitations
 
 - Quorum queues on one node give crash-safe durability, not high availability;
