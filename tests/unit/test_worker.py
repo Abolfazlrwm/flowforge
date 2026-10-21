@@ -502,3 +502,36 @@ def test_a_database_error_resets_the_connection_and_propagates(task_run: TaskRun
 
     reset.assert_called_once()
     assert acks == []
+
+
+def test_a_database_error_during_consumption_is_retried() -> None:
+    """A database outage must not end the worker process.
+
+    ``DatabaseError`` is not an ``AMQPError``, so before this it escaped ``run()``
+    and killed the process — the run then stayed ``running`` forever because no
+    consumer was left to finish it.
+    """
+    channel = MagicMock()
+    worker = _worker()
+    attempts: list[int] = []
+
+    def connect() -> MagicMock:
+        attempts.append(1)
+        return channel
+
+    def consume() -> None:
+        if len(attempts) == 1:
+            raise DatabaseError("terminating connection due to administrator command")
+        worker.stop()
+
+    channel.start_consuming.side_effect = consume
+
+    with (
+        patch.object(worker, "_connect", side_effect=connect),
+        patch("core.worker.consumer.calculate_backoff", return_value=0.0),
+        patch("core.worker.consumer.reset_connections") as reset,
+    ):
+        worker.run()
+
+    assert len(attempts) == 2, "the worker must reconnect after a database error"
+    reset.assert_called()
