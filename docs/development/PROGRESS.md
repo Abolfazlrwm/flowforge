@@ -2,8 +2,9 @@
 
 ## Current Phase
 
-**Phase 5 — Distributed Workers: COMPLETE (v0.6.0).** Phases 0–4 are closed and
-released. Phase 6 — Reliability — is next.
+**Phase 5 — Distributed Workers: COMPLETE (v0.6.0).** Verification gaps are being
+closed in this PR (`fix/phase5-verification-gaps`), which will be tagged **v0.6.1**
+on merge. Phase 6 — Reliability — is next.
 
 ## Resume point
 
@@ -11,11 +12,11 @@ If this session is resumed cold, read this section first.
 
 | Question | Answer |
 |----------|--------|
-| Where is the work | `feat/phase5-worker`, branched from `main` at `a8a5337`. |
-| What is released | `v0.1.0` (Phase 0), `v0.2.0` (Phase 1), `v0.3.0` (Phase 2), `v0.4.0` (Phase 3), `v0.5.0` (Phase 4), `v0.5.1` (Phase 4 gap). |
+| Where is the work | `fix/phase5-verification-gaps`; on merge it becomes `v0.6.1`. `main` is the integration branch. |
+| What is released | `v0.1.0` … `v0.6.0`, plus `v0.5.1` (Phase 4 gap). `v0.6.1` (Phase 5 gaps) is the target of this PR. |
 | Framework | **Django 5.2 LTS** (owner decision, [ADR-010](../adr/ADR-010-django-5-2-lts.md)). Python stays at 3.13. |
 | Message broker | **RabbitMQ via pika**, no Celery ([ADR-011](../adr/ADR-011-custom-scheduler-and-transactional-outbox.md)). `RABBITMQ_URL` is the one broker. |
-| What is next | Merge PR #28, tag `v0.6.0`, then Phase 6 — Reliability (retries, dead-letter, backoff). |
+| What is next | Merge the v0.6.1 PR, tag `v0.6.1`, then Phase 6 — Reliability (retries, dead-letter, backoff). |
 | What blocks Phase 6 | **Nothing.** |
 | What else is open | Nothing pending an owner decision. |
 
@@ -23,25 +24,23 @@ If this session is resumed cold, read this section first.
 
 | Item | State |
 |------|-------|
-| Branch | `feat/phase4-scheduler-impl` |
+| Branch | `fix/phase5-verification-gaps` → will be tagged `v0.6.1` on merge |
 | Phase 0 PR | #1 — **MERGED** as `97c17bf` |
 | Stack upgrade | **MERGED** as `525e919` (Django 5.2 LTS, DRF 3.17, Actions re-pinned) |
 | Phase 1 | **MERGED** as `869720f`, tagged `v0.2.0` |
 | Phase 2 | **MERGED** as `d31abf3`, tagged `v0.3.0` |
-| Phase 3 | **MERGED**, tagged `v0.4.0` |
-| Phase 4 | **PR #25 — implementation complete**, tagged `v0.5.0` on merge |
-| CI | Phase 4 — see the run for PR #25; `lint`, `test`, `schema`, `docs`, `docker` expected green |
-| Docker | **Verified in CI** (build + `docker compose up` + health probes). Accepted as sufficient by owner decision, 2026-10-19 — no local check is required |
-| v0.1.0 tag | Created — annotated, points at `97c17bf` |
-| v0.2.0 tag | Created — annotated, points at `869720f` |
-| v0.3.0 tag | Created — annotated, points at `d31abf3` |
-| v0.4.0 tag | Created — annotated, points at the Phase 3 merge |
-| GitHub Releases | Published for v0.1.0, v0.2.0, v0.3.0 and v0.4.0 |
-| Branch protection | Active on `main`: `lint`, `test`, `docker` required, strict, no force push, 0 approving reviews |
+| Phase 3 | **MERGED** as `405cb3d`, tagged `v0.4.0` |
+| Phase 4 | **MERGED** as `a68ac2a` (PR #25), tagged `v0.5.0`; gap closed by PR #27 (`v0.5.1`) |
+| Phase 5 | **MERGED** as `6b0564f` (PR #28), tagged `v0.6.0`; verification gaps close in this PR (target `v0.6.1`) |
+| CI | Green on `main`: `lint`, `test`, `schema`, `docs`, `docker` (Phase 5 run `39506564517`) |
+| Docker | **Verified in CI** (build + compose up + health probes + e2e). Accepted by owner decision 2026-10-19 — no local check is required |
+| Tags | `v0.1.0` … `v0.6.0` annotated; `v0.5.1` is a follow-up release. `v0.6.1` will be tagged on merge of this PR. |
+| GitHub Releases | Published for `v0.1.0` … `v0.6.0` and `v0.5.1`. `v0.6.1` pending this PR's merge. |
+| Branch protection | Active on `main`: `lint`, `test`, `docker` required, strict, no force push, 0 approving reviews, **admins cannot bypass** (`enforce_admins`) |
 | Django | **5.2 LTS** (ADR-010) |
 | Python | 3.13 (3.14 deferred — see limitations) |
-| Phase 4 | Complete — scheduler, outbox, publisher, lease reaper; no Celery. Publisher verified against a real broker (v0.5.1). |
-| Phase 5 | Complete — worker with manual ack, prefetch, trusted handlers, lease+fencing, heartbeat, graceful shutdown. End-to-end sample reaches `SUCCEEDED` in the compose CI job. |
+| Phase 4 | Complete — scheduler, outbox, publisher, lease reaper; no Celery. Publisher verified against a real broker. |
+| Phase 5 | Complete — worker with manual ack, prefetch, trusted handlers, lease+fencing, heartbeat, graceful shutdown. The e2e sample reaches `SUCCEEDED` in the compose CI job, in-process and via the REST API. |
 
 ## Completed
 
@@ -53,14 +52,17 @@ If this session is resumed cold, read this section first.
    placeholders and requires non-empty `ALLOWED_HOSTS`.
 6. `core` app with `/health/live/` and `/health/ready/`.
 7. Readiness probes PostgreSQL (`SELECT 1`), Redis (cache round-trip) and
-   RabbitMQ (broker TCP connect), returning 503 with a per-dependency payload.
+   RabbitMQ (a real AMQP connection open/close, not a TCP connect), returning 503
+   with a per-dependency payload.
 8. Scheduler and publisher management commands (ADR-011); Celery removed in Phase 4.
-9. `api/v1/` URL placeholder.
+9. `api/v1/` REST API (Phase 3): workflows, runs, token/JWT auth, cursor pagination.
 10. Ruff (lint + format), mypy strict, pytest, pytest-cov, pre-commit.
 11. `uv.lock` committed; the Docker image and CI both install from it.
 12. CI: lock check, lint, format, mypy, migration check, unit tests against
-    PostgreSQL + Redis, and a compose smoke test that brings up all six
-    services and probes both health endpoints.
+    PostgreSQL + Redis, integration tests against PostgreSQL + RabbitMQ, and a
+    compose smoke test that brings up all eight services, probes both health
+    endpoints, and drives the sample workflow to `SUCCEEDED` in-process and via
+    the REST API.
 13. All GitHub Actions pinned to commit SHAs; Dependabot covers `uv`,
     `github-actions` and `docker`.
 14. Docker Compose stack with healthchecks and `service_healthy` dependencies.
@@ -258,6 +260,9 @@ If this session is resumed cold, read this section first.
 
 ### In CI (authoritative)
 
+Phase 5 run: https://github.com/Abolfazlrwm/flowforge/actions/runs/39506564517
+(v0.6.0 — worker; 389 unit + 20 integration green; docker e2e reached `SUCCEEDED`)
+
 Phase 2 run: https://github.com/Abolfazlrwm/flowforge/actions/runs/39252710339
 
 | Job | Result |
@@ -340,20 +345,25 @@ passed only because of container start ordering.
    container with `REQUIRE_RABBITMQ=1`: confirms + arrival, mandatory routing,
    outage then recovery, crash-window redelivery, and two publishers without
    duplicates. No remaining owner-side verification is required.
-3. **Readiness checks are shallow.** RabbitMQ is checked with a TCP connect,
-   not an authenticated AMQP handshake. Redis is checked with a cache write,
-   which would also pass against a different cache backend.
-4. **`make demo` does not run a workflow yet.** It brings up the stack and
-   probes both health endpoints. A real end-to-end workflow demo becomes
-   possible once Phase 5 (workers) lands.
+3. **Readiness checks are mostly real but not exhaustive.** RabbitMQ is checked
+   with a real AMQP connection open/close (not a TCP connect), Redis with a cache
+   write (which would also pass against a different cache backend), and PostgreSQL
+   with `SELECT 1`. None asserts the broker's vhost/permissions beyond a successful
+   handshake.
+4. **`make demo` does not run a workflow yet.** It brings up the stack and probes
+   both health endpoints. A real end-to-end run is exercised by `manage.py
+   sample_run` (in-process) and by the REST API in the compose CI job, not by
+   `make demo`.
 
 ### Tooling
 
 5. **Base image pinned by tag, not digest.** `python:3.13-slim` can drift.
-6. **No end-to-end suite.** `tests/integration/` now covers concurrent state
-   transitions on real PostgreSQL, but there is no test that drives a workflow
-   from API request to worker completion; that becomes possible in Phase 5.
-   `tests/e2e/` is still empty.
+6. **No dedicated `tests/e2e/` directory.** End-to-end coverage lives in the
+   compose CI job: `manage.py sample_run` drives a workflow in-process to
+   `SUCCEEDED`, and a separate step drives the same flow through the REST API
+   (auth → publish → trigger → poll). The SIGTERM subprocess test
+   (`tests/integration/test_worker_sigterm.py`) covers graceful shutdown against
+   real PostgreSQL + RabbitMQ. These run only in CI (no local Docker/PostgreSQL).
 7. **Coverage is 100% of a very small codebase.** The number is not yet
    meaningful as a quality signal.
 8. **Pre-commit hooks use `language: system`**, so they depend on the local
@@ -444,14 +454,16 @@ None. Phase 6 is unblocked.
 
 ## Next step
 
-Phase 5 is complete. Merge PR #28, tag `v0.6.0`, then proceed to **Phase 6 —
-Reliability (v0.7.0)**: retry policies, exponential backoff, dead-letter handling,
-and persisting handler results. The `retrying` state and `schedule_retry` edge
-already exist; Phase 6 is the policy that drives them and the DLQ.
+Phase 5 is complete (`v0.6.0`) and its verification gaps close in this PR (target
+`v0.6.1`). Proceed to **Phase 6 — Reliability (v0.7.0)**: retry policies,
+exponential backoff with jitter, dead-letter handling, and persisting handler
+results. The `retrying` state and `schedule_retry` edge already exist; Phase 6 is
+the policy that drives them and the DLQ.
 
-Phase 5 left one thing Phase 6 will feel: **a failed task does not retry.** The
+Phase 5 left two things Phase 6 will feel: **a failed task does not retry** (the
 worker marks it FAILED and the run FAILED; nothing schedules a retry or a
-dead-letter route yet.
+dead-letter route yet), and **handler return values are not persisted** (only the
+task outcome).
 
 ## Ordering note
 

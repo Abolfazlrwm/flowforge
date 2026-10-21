@@ -7,6 +7,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.1] - 2026-10-21
+
+Closes the Phase 5 verification gaps the owner flagged before Phase 6.
+
+### Added
+
+- A real SIGTERM test (`tests/integration/test_worker_sigterm.py`): `manage.py
+  worker` is started as a subprocess against PostgreSQL + RabbitMQ, a task whose
+  `wait_for_file` handler blocks on a file is dispatched, SIGTERM is sent, and the
+  test asserts the in-flight task finishes and is acked, the process exits 0, and no
+  task is left `RUNNING` with a live lease. Waits poll with a deadline.
+- `core/worker/builtin.py`: `wait_for_file`, a demo/test handler that blocks until a
+  file appears (no timer race).
+- `core/management/commands/e2e_token.py`: creates an e2e staff user and writes its
+  DRF token for the REST API end-to-end step.
+- `core/management/commands/healthcheck.py`: a real DB + broker health check for the
+  non-web processes (scheduler, publisher, worker), which run no HTTP server.
+
+### Changed
+
+- The compose `scheduler`, `publisher` and `worker` healthchecks now use
+  `manage.py healthcheck` (database + broker) instead of a port-8000 probe that
+  always failed for them. The docker CI job asserts `healthy`, not only
+  `State.Status`.
+- The compose CI job now drives the flow through the REST API (auth → publish →
+  trigger → poll to `succeeded`) in addition to the in-process `sample_run`.
+- `docs/development/PROGRESS.md` refreshed: real AMQP readiness probe, accurate
+  service count, and limitations (the e2e suite and the AMQP probe are no longer
+  "not done").
+- `docs/development/DECISIONS.md`: records the earlier direct push of `a8a5337` to
+  `main` as a process lapse; branch protection now sets `enforce_admins` so an
+  administrator cannot bypass the required checks.
+
 ## [0.6.0] - 2026-10-21
 
 Phase 5 (Distributed Workers) is complete. A dispatch is now executed end to end:
