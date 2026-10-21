@@ -11,9 +11,11 @@ import threading
 from collections.abc import Mapping
 from datetime import timedelta
 from typing import Any
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
+import pika
 import pytest
+from core.broker_rabbit import QueueTypeMismatchError
 from core.domain.states import TaskRunState
 from core.models import TaskRun, WorkflowRun
 from core.repositories.transitions import (
@@ -354,3 +356,91 @@ def test_a_dispatch_without_an_idempotency_key_always_executes(task_run: TaskRun
 
     task_run.refresh_from_db()
     assert task_run.result == {"echo": "x", "ok": True}
+
+
+class TestReconnection:
+    """``run()`` survives a lost broker without a process restart."""
+
+    def test_a_lost_connection_is_retried_then_consumption_resumes(self) -> None:
+        """One failure must not end the process: reconnect and consume again."""
+        channel = MagicMock()
+        worker = _worker()
+        attempts: list[int] = []
+
+        def connect() -> MagicMock:
+            attempts.append(1)
+            if len(attempts) == 1:
+                raise pika.exceptions.AMQPConnectionError("broker went away")
+            return channel
+
+        with (
+            patch.object(worker, "_connect", side_effect=connect),
+            patch("core.worker.consumer.calculate_backoff", return_value=0.0),
+        ):
+            worker.run()
+
+        assert len(attempts) == 2
+        channel.basic_consume.assert_called_once()
+        channel.start_consuming.assert_called_once()
+
+    def test_stop_interrupts_a_reconnect_wait(self) -> None:
+        """SIGTERM during an outage must exit promptly, not after the backoff."""
+        worker = _worker()
+        started = threading.Event()
+
+        def connect() -> MagicMock:
+            started.set()
+            raise pika.exceptions.AMQPConnectionError("still down")
+
+        with (
+            patch.object(worker, "_connect", side_effect=connect),
+            # A long delay: if `stop()` did not interrupt the wait, the join below
+            # would time out instead of returning.
+            patch("core.worker.consumer.calculate_backoff", return_value=30.0),
+        ):
+            thread = threading.Thread(target=worker.run, daemon=True)
+            thread.start()
+            assert started.wait(timeout=5)
+            worker.stop()
+            thread.join(timeout=5)
+
+        assert not thread.is_alive(), "stop() must interrupt the reconnect wait"
+
+    def test_a_queue_type_mismatch_is_not_retried(self) -> None:
+        """An operator action is not a transient fault; retrying would hide it."""
+        worker = _worker()
+        attempts: list[int] = []
+
+        def connect() -> MagicMock:
+            attempts.append(1)
+            raise QueueTypeMismatchError("classic queue, quorum expected")
+
+        with (
+            patch.object(worker, "_connect", side_effect=connect),
+            pytest.raises(QueueTypeMismatchError),
+        ):
+            worker.run()
+
+        assert len(attempts) == 1
+
+    def test_an_ack_failure_is_not_treated_as_success(self, task_run: TaskRun) -> None:
+        """A message whose ack fails must be requeued by the broker, not assumed done.
+
+        The durable write has already happened, so the redelivery is a no-op — but
+        swallowing the ack failure would tell the broker the message is finished
+        when it is not, which is how a task is lost.
+        """
+        worker = _worker()
+
+        def failing_ack() -> None:
+            raise pika.exceptions.ChannelWrongStateError("channel closed")
+
+        with pytest.raises(pika.exceptions.ChannelWrongStateError):
+            worker.process(
+                _payload(task_run, task_type="test.record", config={"tag": "x"}),
+                ack=failing_ack,
+                nack=lambda _requeue: None,
+            )
+
+        task_run.refresh_from_db()
+        assert task_run.state == TaskRunState.SUCCEEDED.value
