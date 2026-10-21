@@ -8,16 +8,25 @@ eligibility work and the outbox write commit together — the dual-write remedy.
 
 from __future__ import annotations
 
+import logging
+from datetime import datetime
+from typing import Any
+
+import structlog
+from croniter import croniter
 from django.db import transaction
+
+logger = structlog.get_logger(__name__)
 
 from core.domain.definition import TaskDefinition, WorkflowDefinition
 from core.domain.expressions import evaluate_condition
 from core.domain.services import derive_workflow_run_state
 from core.domain.states import TaskRunState, WorkflowRunState
-from core.models import TaskRun, WorkflowRun
+from core.models import ScheduledTrigger, TaskRun, WorkflowRun
 from core.repositories.definitions import load_definition
 from core.repositories.outbox import create_dispatch
 from core.repositories.transitions import (
+    _resolve_now,
     promote_due_retries,
     reap_expired_leases,
     schedule_retries,
@@ -244,3 +253,62 @@ def schedule_once() -> tuple[int, int]:
     # change dispatch counts (the promoted rows are counted as `enqueued` above).
     del promoted
     return (reaped, enqueued)
+
+
+def tick_scheduled_triggers(
+    *, now: datetime | None = None, user: Any | None = None
+) -> int:
+    """Fire every due trigger exactly once, atomically claimed per instance.
+
+    Each trigger is claimed with ``SELECT FOR UPDATE SKIP LOCKED`` so N
+    scheduler instances polling the same table race safely: the first instance
+    locks the row, advances ``next_run_at``, and triggers the workflow; the
+    others skip locked rows and move on. No distributed lock, no coordination
+    protocol — the database is the mutex.
+
+    ``next_run_at`` is advanced *before* the workflow is triggered. If the
+    trigger crashes mid-flight, the trigger already says "I fired at this time";
+    the operator must inspect the run, not the clock.
+
+    Returns the number of workflows triggered in this tick.
+    """
+    from core.services.runs import trigger
+
+    moment = _resolve_now(now)
+    triggered = 0
+
+    # The ordering matters: oldest first, so a backlog is drained in sequence
+    # rather than jumping around. SKIP LOCKED is the no-double-fire mechanism.
+    due = (
+        ScheduledTrigger.objects.filter(enabled=True, next_run_at__lte=moment)
+        .select_for_update(skip_locked=True)
+        .order_by("next_run_at")
+    )
+
+    for scheduled in due:
+        # Advance the clock before triggering, so a crash during trigger does
+        # not produce a double-fire on recovery.
+        itr = croniter(scheduled.cron_expression, moment)
+        scheduled.next_run_at = itr.get_next(datetime)
+        scheduled.last_run_at = moment
+        scheduled.save(update_fields=["next_run_at", "last_run_at"])
+
+        try:
+            trigger(
+                workflow=scheduled.workflow,
+                requested_by=user,
+            )
+        except Exception:
+            # The trigger advanced, so this failure is a missing run, not a
+            # double-fire. Log and continue so one broken trigger does not
+            # stall every other scheduled workflow.
+            logger.exception(
+                "scheduled_trigger_failed",
+                trigger_id=str(scheduled.id),
+                workflow_id=str(scheduled.workflow_id),
+            )
+            continue
+
+        triggered += 1
+
+    return triggered
