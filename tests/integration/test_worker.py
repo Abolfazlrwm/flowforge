@@ -265,9 +265,10 @@ def test_a_dropped_connection_redelivers_and_completes_exactly_once(
         )
 
         # The worker reconnected by itself — no restart, no test-side nudge.
-        assert _wait_until(lambda: worker._connection is not first_connection, timeout=20), (
-            "the worker did not reconnect"
-        )
+        assert _wait_until(
+            lambda: worker._connection is not None and worker._connection is not first_connection,
+            timeout=20,
+        ), "the worker did not reconnect"
         assert thread.is_alive(), "the worker process must survive a lost connection"
 
         # The redelivery must not re-execute the handler: the row was already done.

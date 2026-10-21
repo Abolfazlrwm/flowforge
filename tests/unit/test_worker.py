@@ -373,6 +373,12 @@ class TestReconnection:
                 raise pika.exceptions.AMQPConnectionError("broker went away")
             return channel
 
+        def consume() -> None:
+            # A clean stop: we asked for it, so `run()` must return.
+            worker.stop()
+
+        channel.start_consuming.side_effect = consume
+
         with (
             patch.object(worker, "_connect", side_effect=connect),
             patch("core.worker.consumer.calculate_backoff", return_value=0.0),
@@ -382,6 +388,31 @@ class TestReconnection:
         assert len(attempts) == 2
         channel.basic_consume.assert_called_once()
         channel.start_consuming.assert_called_once()
+
+    def test_a_consumer_that_returns_unasked_is_reconnected(self) -> None:
+        """A consumer that returns unasked must be reconnected.
+
+        pika returns from ``start_consuming`` when the connection closes under it.
+        Treating that normal return as a clean stop is what made a broker restart
+        kill the process, so it must be retried like any other connection loss.
+        """
+        channel = MagicMock()
+        worker = _worker()
+        attempts: list[int] = []
+
+        def connect() -> MagicMock:
+            attempts.append(1)
+            if len(attempts) == 2:
+                worker.stop()  # the second connection is a real clean stop
+            return channel
+
+        with (
+            patch.object(worker, "_connect", side_effect=connect),
+            patch("core.worker.consumer.calculate_backoff", return_value=0.0),
+        ):
+            worker.run()
+
+        assert len(attempts) == 2, "an unasked-for return must trigger a reconnect"
 
     def test_stop_interrupts_a_reconnect_wait(self) -> None:
         """SIGTERM during an outage must exit promptly, not after the backoff."""
