@@ -344,7 +344,9 @@ jobs:
       - name: Database restart is survived
         run: |
           set -euo pipefail
-          docker compose restart postgres
+          # The compose service is named `db`, not `postgres`. Getting this wrong
+          # fails the step with "no such service", which is how this was caught.
+          docker compose restart db
 
           code=""
           for attempt in $(seq 1 90); do

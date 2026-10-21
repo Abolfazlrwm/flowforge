@@ -285,37 +285,48 @@ def test_a_lost_publisher_confirm_keeps_the_outbox_row_pending(
     require_postgres()
     url = require_rabbitmq()
 
-    message = create_dispatch(
-        task_run=task_run,
-        workflow_run=task_run.workflow_run,
-        fencing_token_snapshot=task_run.fencing_token,
-        attempt_snapshot=task_run.attempt,
-    )
-    assert message is not None
-
-    broken = _LostAckPublisher(RabbitPublisher(url))
+    # Publishing is `mandatory=True`, so an unroutable message raises. Bind a
+    # throwaway queue first: the point of this test is a *lost confirm*, not an
+    # unroutable publish (which `test_unroutable_publish_leaves_the_row_pending`
+    # already covers).
+    queue = f"flowforge.test.{uuid.uuid4().hex}"
+    conn = bind_queue(url, queue)
     try:
-        with pytest.raises(ConnectionError):
-            publish_once(broken)
+        message = create_dispatch(
+            task_run=task_run,
+            workflow_run=task_run.workflow_run,
+            fencing_token_snapshot=task_run.fencing_token,
+            attempt_snapshot=task_run.attempt,
+        )
+        assert message is not None
+
+        broken = _LostAckPublisher(RabbitPublisher(url))
+        try:
+            with pytest.raises(ConnectionError):
+                publish_once(broken)
+        finally:
+            broken.close()
+
+        message.refresh_from_db()
+        assert message.published_at is None, "a lost confirm must not mark the row delivered"
+
+        # The broker is healthy again: the same row is delivered and then stamped.
+        publisher = RabbitPublisher(url)
+        try:
+            assert publish_once(publisher) == 1
+        finally:
+            publisher.close()
+
+        message.refresh_from_db()
+        assert message.published_at is not None
+
+        # And it is not delivered a third time.
+        publisher = RabbitPublisher(url)
+        try:
+            assert publish_once(publisher) == 0
+        finally:
+            publisher.close()
     finally:
-        broken.close()
-
-    message.refresh_from_db()
-    assert message.published_at is None, "a lost confirm must not mark the row delivered"
-
-    # The broker is healthy again: the same row is delivered and then stamped.
-    publisher = RabbitPublisher(url)
-    try:
-        assert publish_once(publisher) == 1
-    finally:
-        publisher.close()
-
-    message.refresh_from_db()
-    assert message.published_at is not None
-
-    # And it is not delivered a third time.
-    publisher = RabbitPublisher(url)
-    try:
-        assert publish_once(publisher) == 0
-    finally:
-        publisher.close()
+        with contextlib.suppress(Exception):
+            conn.channel().queue_delete(queue=queue)
+        conn.close()
