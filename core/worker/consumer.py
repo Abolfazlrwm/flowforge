@@ -56,6 +56,13 @@ DEFAULT_QUEUE = "flowforge.tasks"
 #: The routing key the scheduler's outbox rows are published under.
 DEFAULT_ROUTING_KEY = "task.dispatch"
 
+#: Failures that mean "the broker is not reachable right now" and are worth
+#: retrying. Deliberately broader than pika's own hierarchy: a stopped container
+#: surfaces as ``socket.gaierror`` (DNS, an ``OSError``) or
+#: ``ConnectionRefusedError``, neither of which is an ``AMQPError``. A
+#: ``DatabaseError`` arrives here too, via ``_on_message``.
+RECONNECTABLE_ERRORS = (pika.exceptions.AMQPError, OSError, DatabaseError)
+
 
 class Worker:
     """A single-threaded consumer with manual ack and a lease heartbeat."""
@@ -145,7 +152,7 @@ class Worker:
                         auto_ack=False,
                     )
                     channel.start_consuming()
-                except (pika.exceptions.AMQPError, DatabaseError) as exc:
+                except RECONNECTABLE_ERRORS as exc:
                     # A database outage reaches here through `_on_message`, which
                     # resets the connection and re-raises. It is the same kind of
                     # interruption as a lost broker: back off, retry, and let the
