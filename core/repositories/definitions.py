@@ -99,6 +99,8 @@ def publish_definition(definition: WorkflowDefinition) -> tuple[Workflow, bool]:
                     task_type=task.task_type,
                     depends_on=sorted(task.depends_on),
                     config=dict(task.config),
+                    when=task.when,
+                    join=task.join,
                 )
                 for task in definition.tasks
             ]
@@ -138,6 +140,8 @@ def load_definition(workflow: Workflow) -> WorkflowDefinition:
                 task_type=task.task_type,
                 depends_on=tuple(sorted(task.depends_on)),
                 config=task.config or {},
+                when=task.when or None,
+                join=task.join,
             )
         )
     definition = WorkflowDefinition(

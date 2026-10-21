@@ -10,7 +10,8 @@ from __future__ import annotations
 
 from django.db import transaction
 
-from core.domain.definition import WorkflowDefinition
+from core.domain.definition import TaskDefinition, WorkflowDefinition
+from core.domain.expressions import evaluate_condition
 from core.domain.services import derive_workflow_run_state
 from core.domain.states import TaskRunState, WorkflowRunState
 from core.models import TaskRun, WorkflowRun
@@ -23,6 +24,51 @@ from core.repositories.transitions import (
     transition_task_run,
     transition_workflow_run,
 )
+
+
+def _is_eligible(spec: TaskDefinition, succeeded: set[str]) -> bool:
+    """Whether ``spec``'s dependencies are satisfied, honouring ``join``.
+
+    ``all`` is the default and the classic fan-in: every dependency must have
+    succeeded. ``any`` is for alternative branches — the task runs once *one*
+    upstream path completed, which is what a fan-in over "either A or B" means.
+    """
+    if spec.join == "any":
+        return any(dependency in succeeded for dependency in spec.depends_on)
+    return all(dependency in succeeded for dependency in spec.depends_on)
+
+
+def _should_skip(
+    spec: TaskDefinition,
+    *,
+    succeeded: set[str],
+    skipped: set[str],
+    context: dict[str, object],
+) -> bool:
+    """Whether ``spec`` must be skipped rather than run.
+
+    Two distinct reasons, checked in this order:
+
+    1. **The condition is false.** ``when`` is evaluated against the run's task
+       results; a false condition means "this branch is not taken".
+    2. **A dependency was skipped.** A branch that was not taken cannot feed the
+       tasks below it, so the skip propagates instead of leaving them ``PENDING``
+       forever — which would stall the run rather than finish it.
+
+    For ``join="any"`` the propagation is weaker: the task is skipped only when
+    *every* dependency was skipped, because one surviving path is enough.
+
+    Raises:
+        ExpressionError: if the condition names something the context lacks. A
+            broken condition is a definition bug, not a silent skip.
+    """
+    if spec.when is not None and not evaluate_condition(spec.when, context):
+        return True
+    if spec.join == "any":
+        if any(dependency in succeeded for dependency in spec.depends_on):
+            return False
+        return all(dependency in skipped for dependency in spec.depends_on)
+    return any(dependency in skipped for dependency in spec.depends_on)
 
 
 def enqueue_ready_tasks(run: WorkflowRun) -> int:
@@ -77,31 +123,48 @@ def advance_workflow_run(run: WorkflowRun) -> tuple[int, int]:
             return (0, 0)
 
         definition: WorkflowDefinition = load_definition(run.workflow)
-        graph = definition.graph
-        succeeded = {
-            tr.task.key
-            for tr in TaskRun.objects.filter(workflow_run=run)
-            if tr.state == TaskRunState.SUCCEEDED.value
+        # Force the graph now: a definition that slipped through publish-time
+        # validation must fail here, attributed to this run, not to a query later.
+        definition.graph  # noqa: B018 - forcing the cached property is the point
+
+        task_runs = list(TaskRun.objects.filter(workflow_run=run).select_related("task"))
+        succeeded = {tr.task.key for tr in task_runs if tr.state == TaskRunState.SUCCEEDED.value}
+        skipped = {tr.task.key for tr in task_runs if tr.state == TaskRunState.SKIPPED.value}
+        # The condition context is the run's *results*, keyed by task. Only tasks
+        # that produced one appear, so `tasks.extract.amount` is a meaningful
+        # lookup and a missing key is a loud error rather than a silent false.
+        context: dict[str, object] = {
+            "tasks": {tr.task.key: tr.result for tr in task_runs if tr.result is not None}
         }
+        specs = {spec.key: spec for spec in definition.tasks}
 
         promoted = 0
-        for task_run in TaskRun.objects.filter(workflow_run=run, state=TaskRunState.PENDING.value):
-            # `is_ready` ignores task state and trusts only completed keys, so a key
-            # already listed as done is skipped rather than re-dispatched. The
-            # transition only fires when the dependency is satisfied (short-circuit),
-            # so promoting and counting stay in lock-step.
-            if graph.is_ready(task_run.task.key, succeeded) and transition_task_run(
+        for task_run in (tr for tr in task_runs if tr.state == TaskRunState.PENDING.value):
+            spec = specs[task_run.task.key]
+            if _should_skip(spec, succeeded=succeeded, skipped=skipped, context=context):
+                transition_task_run(
+                    task_run_id=task_run.id,
+                    expected=TaskRunState.PENDING,
+                    target=TaskRunState.SKIPPED,
+                )
+                skipped.add(spec.key)
+                continue
+            if _is_eligible(spec, succeeded) and transition_task_run(
                 task_run_id=task_run.id,
                 expected=TaskRunState.PENDING,
                 target=TaskRunState.READY,
             ):
                 promoted += 1
 
-        # Start the run as soon as it has any live work to do.
+        # Start the run as soon as it has any live work to do. A run whose every
+        # task is skipped has no live work, but it still has to *start* before it
+        # can complete — the machine has no PENDING->SUCCEEDED edge, and inventing
+        # one would be a second way to finish a run that never ran.
         if (
             run.state == WorkflowRunState.PENDING.value
             and (
                 promoted > 0
+                or skipped
                 or TaskRun.objects.filter(
                     workflow_run=run,
                     state__in=[TaskRunState.READY.value, TaskRunState.RUNNING.value],

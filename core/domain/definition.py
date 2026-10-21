@@ -32,6 +32,7 @@ from core.domain.errors import (
     DuplicateTaskKeyError,
     UnknownDependencyError,
 )
+from core.domain.expressions import ExpressionError, compile_expression
 
 _EMPTY_CONFIG: Mapping[str, Any] = MappingProxyType({})
 
@@ -69,12 +70,20 @@ class TaskDefinition:
             caller-supplied order does not change the schedule.
         config: Handler-specific parameters, as parsed JSON. Stored immutably
             so a definition cannot be mutated after validation.
+        when: Optional condition over the run's task results. When it evaluates
+            to false the task is ``SKIPPED`` rather than run. Parsed at
+            construction, so a malformed condition cannot reach the scheduler.
+        join: ``"all"`` (default) requires every dependency to succeed;
+            ``"any"`` makes the task eligible once *one* dependency succeeds,
+            which is what a fan-in over alternative branches needs.
     """
 
     key: str
     task_type: str
     depends_on: tuple[str, ...] = ()
     config: Mapping[str, Any] = field(default=_EMPTY_CONFIG)
+    when: str | None = None
+    join: str = "all"
 
     def __post_init__(self) -> None:
         """Validate the identity fields and freeze the configuration in place."""
@@ -82,6 +91,22 @@ class TaskDefinition:
             raise DefinitionError("task key must not be blank")
         if not self.task_type.strip():
             raise DefinitionError(f"task {self.key!r} has no task_type")
+        if self.join not in ("all", "any"):
+            raise DefinitionError(
+                f"task {self.key!r} has join={self.join!r}; expected 'all' or 'any'"
+            )
+        if self.join == "any" and not self.depends_on:
+            raise DefinitionError(
+                f"task {self.key!r} uses join='any' but declares no dependencies; "
+                "there is nothing to join"
+            )
+        if self.when is not None:
+            try:
+                compile_expression(self.when)
+            except ExpressionError as exc:
+                # Re-raised as a definition error so the API reports it as a
+                # validation failure against the task, not as an internal error.
+                raise DefinitionError(f"task {self.key!r} has an invalid when: {exc}") from None
         seen: set[str] = set()
         for dependency in self.depends_on:
             if not dependency.strip():
@@ -102,7 +127,7 @@ class TaskDefinition:
 
     def __hash__(self) -> int:
         """Hash on identity, which includes the frozen configuration."""
-        return hash((self.key, self.task_type, _freeze(self.config)))
+        return hash((self.key, self.task_type, _freeze(self.config), self.when, self.join))
 
 
 @dataclass(frozen=True, eq=True)
@@ -169,6 +194,7 @@ class WorkflowDefinition:
                 self.description,
                 *(
                     f"{t.key}:{t.task_type}:{sorted(t.depends_on)}:{_freeze(t.config)!r}"
+                    f":{t.when!r}:{t.join}"
                     for t in self.tasks
                 ),
             )

@@ -19,10 +19,16 @@ from core.domain.states import TaskRunState, WorkflowRunState
 FINISHED_TASK_STATES = frozenset(
     {
         TaskRunState.SUCCEEDED,
+        TaskRunState.SKIPPED,
         TaskRunState.DEAD,
         TaskRunState.CANCELLED,
     }
 )
+
+#: States that mean "this task is resolved without failing". A skipped task did
+#: not run, but it is not an obstacle to the run succeeding — a conditional branch
+#: that was not taken is the normal case, not an error.
+RESOLVED_TASK_STATES = frozenset({TaskRunState.SUCCEEDED, TaskRunState.SKIPPED})
 
 
 def initial_task_run_state(*, dependency_count: int) -> TaskRunState:
@@ -51,7 +57,8 @@ def derive_workflow_run_state(states: Iterable[TaskRunState]) -> WorkflowRunStat
        still running. A ``DEAD`` task (retry policy exhausted) is a permanent
        failure, so it is treated the same as a ``FAILED`` one. Reporting
        ``RUNNING`` here would hide a failure behind work that is merely slow.
-    3. All succeeded means succeeded.
+    3. All tasks succeeded or were skipped means succeeded. A skipped task is
+       *resolved*: a conditional branch that was not taken is not a failure.
     4. Otherwise the run is still in flight: ``RUNNING`` once anything has
        started (a task in ``RETRYING`` is still in flight, not pending),
        ``PENDING`` while nothing has.
@@ -73,7 +80,7 @@ def derive_workflow_run_state(states: Iterable[TaskRunState]) -> WorkflowRunStat
         return WorkflowRunState.CANCELLED
     if any(state is TaskRunState.FAILED or state is TaskRunState.DEAD for state in resolved):
         return WorkflowRunState.FAILED
-    if all(state is TaskRunState.SUCCEEDED for state in resolved):
+    if all(state in RESOLVED_TASK_STATES for state in resolved):
         return WorkflowRunState.SUCCEEDED
     if any(state is not TaskRunState.PENDING for state in resolved):
         return WorkflowRunState.RUNNING
