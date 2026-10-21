@@ -292,15 +292,29 @@ the process exits **0**), `test_graceful_shutdown_finishes_the_in_flight_message
 **What could go wrong.** Every pooled connection is dead; the first request after
 the restart fails, or the stack never recovers.
 
-**What covers it.** Django opens a connection per request and reconnects on the
-next query. Pending outbox rows survive because they are database rows, not broker
-state, so a restarted publisher drains them.
+**What covers it.** Three different shapes of process need three different
+answers, and v0.7.1 found that only the first one worked:
+
+- **The web process** opens a connection per request, so it recovers with no code
+  at all.
+- **The scheduler and publisher** hold one connection for their whole life. A
+  restart kills that socket, and every later query raises
+  `OperationalError: terminating connection due to administrator command`. Both
+  loops now catch `DatabaseError`, discard the connection
+  (`core.db.reset_connections`) and back off, instead of dying. Before this fix the
+  scheduler **exited**, and every run stayed `pending` — the docker job caught it
+  as a 120s timeout.
+- **The worker** catches `DatabaseError` per message, discards the connection and
+  re-raises, so the message stays unacked, the broker requeues it, and the
+  reconnect loop applies the backoff. The lease covers a half-written attempt.
 
 **Tests.** The `docker` CI job restarts the `db` container and asserts
 `/health/ready/` returns to 200 with `"postgres": "ok"`, then runs the end-to-end
 sample workflow again to prove the pipeline still does real work. Without that
 second assertion, "the probe is green" would be the only claim — and a green probe
-over a broken worker is exactly the failure this project has been bitten by before.
+over a dead scheduler is exactly what this run produced.
+`test_a_database_error_resets_the_connection_and_propagates` covers the worker's
+half at unit level.
 
 ## 14. Broker reconnection — verified in v0.7.1
 
