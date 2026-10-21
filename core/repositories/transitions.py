@@ -242,6 +242,51 @@ def promote_due_retries(*, now: datetime | None = None, limit: int = 1000) -> in
     return promoted
 
 
+#: States a cancellation may act on. A terminal row is already resolved, so
+#: cancelling it would either be a no-op or would overwrite a real outcome.
+CANCELLABLE_TASK_STATES = (
+    TaskRunState.PENDING.value,
+    TaskRunState.READY.value,
+    TaskRunState.RUNNING.value,
+    TaskRunState.RETRYING.value,
+)
+
+
+def cancel_task_run(*, task_run_id: UUID, now: datetime | None = None) -> bool:
+    """Cancel a task run, whoever holds its lease.
+
+    Cancellation is an *operator* action, not a lease-holder action, so it cannot
+    go through :func:`finish_task_run` — the caller has no fencing token to prove
+    ownership with. It also cannot go through :func:`transition_task_run`, whose
+    contract deliberately refuses lease edges.
+
+    This is the same shape as the reaper: one conditional ``UPDATE`` that matches
+    only while the row is still cancellable, clearing the lease and bumping the
+    fencing token. Bumping the token is what makes cancellation *cooperative*: a
+    handler that is still running will try to finish, and its write matches zero
+    rows, so its result is discarded rather than resurrecting a cancelled task.
+
+    ``RETRYING`` is cancellable too — a retry waiting out its backoff must not be
+    promoted after the run was cancelled.
+
+    Returns:
+        ``True`` if this call cancelled the row, ``False`` if it was gone or
+        already terminal.
+    """
+    moment = _resolve_now(now)
+    return (
+        TaskRun.objects.filter(pk=task_run_id, state__in=CANCELLABLE_TASK_STATES).update(
+            state=TaskRunState.CANCELLED.value,
+            finished_at=moment,
+            lease_owner=None,
+            lease_expires_at=None,
+            scheduled_at=None,
+            fencing_token=F("fencing_token") + 1,
+        )
+        == 1
+    )
+
+
 def requeue_dead_task_run(*, task_run_id: UUID, now: datetime | None = None) -> bool:
     """Manually requeue a ``DEAD`` task run for another attempt (dead-letter recovery).
 

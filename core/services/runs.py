@@ -15,16 +15,25 @@ from __future__ import annotations
 
 import hashlib
 import json
+from datetime import datetime
 from typing import Any
+from uuid import UUID
 
 from django.db import IntegrityError, transaction
 from django.db.models import QuerySet
+from django.utils import timezone
 
 from core.domain.definition import WorkflowDefinition
 from core.domain.services import initial_task_run_state
+from core.domain.states import WorkflowRunState
 from core.models import IdempotencyKey, Task, TaskRun, Workflow, WorkflowRun
 from core.repositories import idempotency
 from core.repositories.definitions import load_definition
+from core.repositories.transitions import (
+    CANCELLABLE_TASK_STATES,
+    cancel_task_run,
+    transition_workflow_run,
+)
 
 
 def request_fingerprint(payload: Any) -> str:
@@ -140,8 +149,50 @@ def runs_visible_to(user: Any) -> QuerySet[WorkflowRun]:
     return queryset.filter(requested_by_id=user.pk)
 
 
+def request_cancellation(run_id: UUID, *, now: datetime | None = None) -> int:
+    """Cancel a run and every task of it that has not resolved yet.
+
+    The run is locked first, so two concurrent cancellations cannot both count
+    the same tasks. Each task is cancelled with its own conditional ``UPDATE``
+    (see :func:`cancel_task_run`), which is what makes this safe against a worker
+    finishing at the same instant: whichever statement runs first wins, and the
+    loser matches zero rows.
+
+    A run that is already terminal is left alone — cancelling a ``SUCCEEDED`` run
+    would rewrite history, and there is nothing left to stop.
+
+    Returns:
+        The number of task runs cancelled. Zero means the run was already
+        terminal (or every task had already resolved).
+
+    Raises:
+        WorkflowRun.DoesNotExist: if no run has that id.
+    """
+    moment = now if now is not None else timezone.now()
+    with transaction.atomic():
+        run = WorkflowRun.objects.select_for_update().get(pk=run_id)
+        if run.state not in (WorkflowRunState.PENDING.value, WorkflowRunState.RUNNING.value):
+            return 0
+
+        cancelled = sum(
+            1
+            for task_run in TaskRun.objects.filter(
+                workflow_run=run, state__in=CANCELLABLE_TASK_STATES
+            )
+            if cancel_task_run(task_run_id=task_run.id, now=moment)
+        )
+        transition_workflow_run(
+            run_id=run.id,
+            expected=WorkflowRunState(run.state),
+            target=WorkflowRunState.CANCELLED,
+            now=moment,
+        )
+        return cancelled
+
+
 __all__ = [
     "IdempotencyKey",
+    "request_cancellation",
     "request_fingerprint",
     "runs_visible_to",
     "trigger",

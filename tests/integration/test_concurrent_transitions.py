@@ -21,6 +21,7 @@ import pytest
 from core.domain.states import TaskRunState, WorkflowRunState
 from core.models import TaskRun, WorkflowRun
 from core.repositories.transitions import (
+    cancel_task_run,
     claim_task_run,
     finish_task_run,
     reap_expired_leases,
@@ -30,7 +31,12 @@ from core.repositories.transitions import (
 )
 
 from tests.conftest import NOW
-from tests.integration.conftest import THREADS, require_postgres, run_concurrently
+from tests.integration.conftest import (
+    THREADS,
+    require_postgres,
+    run_concurrently,
+    run_concurrently_with_losers,
+)
 
 pytestmark = [
     pytest.mark.integration,
@@ -250,3 +256,41 @@ def test_reap_expired_leases_is_safe_under_concurrency(task_run: TaskRun) -> Non
     task_run.refresh_from_db()
     assert task_run.state == TaskRunState.RETRYING.value
     assert task_run.attempt == 2
+
+
+def test_cancellation_and_completion_cannot_both_win(task_run: TaskRun) -> None:
+    """A worker finishing while an operator cancels: exactly one outcome lands.
+
+    Both are conditional `UPDATE`s, so PostgreSQL decides. The loser matches zero
+    rows, which is the whole guarantee — there is no window in which a cancelled
+    task also carries a result, or a completed task is retroactively cancelled.
+    """
+    require_postgres()
+    token = claim_task_run(task_run_id=task_run.id, worker_id="worker-1", lease_seconds=30, now=NOW)
+    assert token is not None
+
+    results = run_concurrently_with_losers(
+        THREADS,
+        lambda index: (
+            finish_task_run(
+                task_run_id=task_run.id,
+                target=TaskRunState.SUCCEEDED,
+                fencing_token=token,
+                result={"by": "worker"},
+                now=NOW,
+            )
+            if index % 2 == 0
+            else cancel_task_run(task_run_id=task_run.id, now=NOW)
+        ),
+    )
+
+    winners = [value for value in results if value is True]
+    assert len(winners) == 1, f"expected exactly one winner, got {winners}"
+
+    task_run.refresh_from_db()
+    if task_run.state == TaskRunState.SUCCEEDED.value:
+        assert task_run.result == {"by": "worker"}
+    else:
+        assert task_run.state == TaskRunState.CANCELLED.value
+        assert task_run.result is None
+    assert task_run.lease_expires_at is None
