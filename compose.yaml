@@ -23,6 +23,16 @@ x-app-environment: &app-environment
   # and the app containers connect over the compose network.
   RABBITMQ_URL: amqp://flowforge:flowforge@rabbitmq:5672/
 
+# Shared healthcheck for the processes that run no HTTP server. The Dockerfile's
+# port-8000 check would always fail for them; `manage.py healthcheck` verifies the
+# database and broker they actually depend on.
+x-app-healthcheck: &app-healthcheck
+  test: ["CMD", "python", "manage.py", "healthcheck"]
+  interval: 10s
+  timeout: 5s
+  retries: 5
+  start_period: 10s
+
 services:
   db:
     image: postgres:16-alpine
@@ -119,6 +129,7 @@ services:
     volumes:
       - .:/app
     command: ["python", "manage.py", "scheduler"]
+    healthcheck: *app-healthcheck
 
   publisher:
     build:
@@ -135,6 +146,7 @@ services:
     volumes:
       - .:/app
     command: ["python", "manage.py", "publisher"]
+    healthcheck: *app-healthcheck
 
   worker:
     build:
@@ -151,6 +163,7 @@ services:
     volumes:
       - .:/app
     command: ["python", "manage.py", "worker"]
+    healthcheck: *app-healthcheck
 
 volumes:
   postgres_data:

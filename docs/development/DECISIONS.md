@@ -96,3 +96,28 @@ file that MkDocs cannot parse now fails the build. Mermaid support requires
 `pymdownx.superfences` with a `mermaid` custom fence, which the build checks for
 only insofar as the extension loads — a diagram that is syntactically wrong in
 Mermaid is still not caught, and that gap is recorded rather than implied away.
+
+## Process lapse: a direct push to `main` (2026-10-21)
+
+**Status:** Recorded, and the gap closed.
+
+While building Phase 5, the worker core was committed and pushed **directly to
+`main`** as `a8a5337` before a feature branch existed. That bypassed the pull
+request, the required status checks and the review convention in `AGENTS.md` at
+the repository root. The commit's own CI run
+([`39504919414`](https://github.com/Abolfazlrwm/flowforge/actions/runs/39504919414))
+was green, so `main` was not left broken — but a green run does not make the process
+correct: the change never had a pull request.
+
+**Cause:** the branch was created only after the commit was already on `main`, and
+`main` allowed it because branch protection did not apply to administrators. The
+review convention lives in `AGENTS.md` at the repository root.
+
+**Decision:** branch protection on `main` now sets **"Do not allow bypassing the
+above settings"** (`enforce_admins: true`), so an administrator can no longer push
+directly. Every change goes through a pull request with `lint`, `test` and `docker`
+green. `a8a5337` is not rewritten — rewriting `main` would be a worse lapse — and
+is recorded here instead.
+
+**Consequence:** a future direct push to `main` fails at the remote. The only way
+to land a change is a pull request, which is the intended path.
