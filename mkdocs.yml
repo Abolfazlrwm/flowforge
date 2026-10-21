@@ -29,6 +29,7 @@ nav:
       - Data Model: architecture/data-model.md
       - Execution Model: architecture/execution-model.md
       - Workflow Definitions: architecture/definitions.md
+      - Failure Model: architecture/failure-model.md
   - API:
       - Overview: api/overview.md
   - Development:

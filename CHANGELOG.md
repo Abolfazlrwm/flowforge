@@ -7,6 +7,78 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-10-21
+
+Phase 6 — Reliability. `FAILED` stops being a dead end and `DEAD` becomes the
+terminal state a human must resolve.
+
+### Added
+
+- **Retry policy** (`core/domain/retry.py`, pure domain, no Django import):
+  `RetryPolicy` (validated at construction), `get_retry_policy(config)` reading the
+  per-task `config["retry"]` block, and `calculate_backoff` — exponential growth
+  with a hard cap and optional full jitter.
+- **`TaskRunState.DEAD`** and a dead-letter lifecycle. The task machine now has 12
+  edges: `reap_retry` (RUNNING→RETRYING), `reap_dead` (RUNNING→DEAD) and `bury`
+  (FAILED→DEAD) replace the old `reap_lease` (RUNNING→READY). A dead worker is a
+  *consumed attempt*, so a crash loop cannot run forever uncounted.
+- **Scheduler retry lifecycle** (`core/repositories/transitions.py`):
+  `schedule_retries` moves FAILED into RETRYING (or DEAD when exhausted),
+  `promote_due_retries` promotes RETRYING back to READY only once the backoff has
+  elapsed, and `requeue_dead_task_run` is the manual recovery path.
+  `schedule_once` runs reap → schedule_retries → promote_due_retries → advance.
+- **`manage.py requeue_dead <task_run_id>`**: the operator's way out of `DEAD`. It
+  exits non-zero for a missing row, a malformed id, or a task that is not DEAD.
+- **Persisted handler results**: the worker writes a handler's return value into
+  `TaskRun.result` on success, and leaves it untouched on failure so the next
+  attempt starts clean.
+- **Idempotency keys**: a task may declare `config["idempotency_key"]`. A dispatch
+  whose key already has a `SUCCEEDED` result reuses it instead of executing again.
+  Best-effort by design — it is not a lock (see the failure model).
+- **Failure-injection tests** (`tests/integration/test_failure_injection.py`) on
+  real PostgreSQL + RabbitMQ: SIGKILL a worker mid-task and prove the reaper
+  retries it to `SUCCEEDED`; SIGKILL the scheduler and prove a fresh pass cannot
+  double-dispatch; lose a publisher confirm and prove the outbox row stays pending
+  and is delivered exactly once.
+- **`docs/architecture/failure-model.md`**: every failure mode mapped to a named
+  test, with the untested ones marked UNVERIFIED (clock skew, broker durability,
+  in-flight sibling cancellation).
+
+### Changed
+
+- `core/models.TaskRun` gained `scheduled_at`, `result` and `idempotency_key`, plus
+  the `taskrun_scheduled_iff_retrying` CHECK constraint (migration `0005`).
+- `derive_workflow_run_state` treats `DEAD` as a permanent failure and
+  `FINISHED_TASK_STATES` now means "terminal", not "done or failed".
+- The `docker` CI job injects infrastructure faults: it stops RabbitMQ and asserts
+  readiness returns 503 naming `rabbitmq`, starts it and asserts 200; restarts
+  PostgreSQL and asserts recovery; then runs the end-to-end sample again, so a
+  green probe is never the only claim.
+- The publisher's confirms and the worker's acks are unchanged; what changed is
+  what happens *after* a failure.
+
+### Fixed
+
+- `transition_task_run` cleared `scheduled_at` only for terminal targets, so
+  `RETRYING → READY` left the column set and violated the new CHECK constraint.
+  The column now defaults to NULL on every transition; only the RETRYING branch
+  sets it. Found by the retry-lifecycle tests, not by reading the code.
+- `tests/unit/test_worker.py` and `tests/integration/test_worker.py` both
+  registered a handler named `test.slow`, so a bare `pytest` (the configured
+  `testpaths = ["tests"]`) aborted during collection. CI never saw it because it
+  runs the two trees in separate processes. The integration handlers are now
+  namespaced `test.integration.*`.
+
+### Known limitations
+
+- The worker and publisher do not reconnect to RabbitMQ; a broker restart requires
+  restarting the processes. Nothing is lost (the outbox row stays pending and the
+  lease is reaped), and the docker job restarts them explicitly.
+- Broker durability is classic-queue durability: `delivery_mode=2` to durable
+  queues survives a clean restart, not an abrupt failure before fsync. A quorum
+  queue is the fix.
+- Idempotency keys do not serialise two concurrent executions of the same key.
+
 ## [0.6.1] - 2026-10-21
 
 Closes the Phase 5 verification gaps the owner flagged before Phase 6.
