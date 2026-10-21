@@ -212,15 +212,19 @@ jobs:
           docker inspect -f 'migrate status={{.State.Status}} exit={{.State.ExitCode}}' "$cid"
           test "$(docker inspect -f '{{.State.ExitCode}}' "$cid")" = "0"
 
-      - name: Scheduler, publisher and worker are running
+      - name: Scheduler, publisher and worker are healthy
         run: |
           set -euo pipefail
           for svc in scheduler publisher worker; do
             cid="$(docker compose ps -aq "$svc")"
             test -n "$cid"
-            status="$(docker inspect -f '{{.State.Status}}' "$cid")"
-            echo "$svc status=$status"
-            test "$status" = "running"
+            for attempt in $(seq 1 30); do
+              health="$(docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' "$cid")"
+              echo "$svc health=$health (attempt $attempt)"
+              if [ "$health" = "healthy" ]; then break; fi
+              sleep 2
+            done
+            test "$(docker inspect -f '{{.State.Health.Status}}' "$cid")" = "healthy"
           done
 
       - name: Wait for readiness
@@ -259,8 +263,37 @@ jobs:
       # The whole pipeline, not just the probes: trigger -> scheduler -> outbox ->
       # publisher -> RabbitMQ -> worker -> DB. `sample_run` exits non-zero unless the
       # run reaches SUCCEEDED, so a broken process fails this step.
-      - name: End-to-end sample workflow
+      - name: End-to-end sample workflow (in process)
         run: docker compose exec -T web python manage.py sample_run --timeout 120
+
+      # The same flow through the public surface: authenticate, publish, trigger,
+      # poll. `sample_run` proves the pipeline; this proves the REST API drives it.
+      - name: End-to-end via the REST API
+        run: |
+          set -euo pipefail
+          docker compose exec -T web python manage.py e2e_token
+          TOKEN="$(docker compose exec -T web cat /tmp/e2e_token | tr -d '\r\n')"
+          BASE=http://localhost:8000/api/v1
+          AUTH="Authorization: Token $TOKEN"
+
+          curl -fsS -X POST "$BASE/workflows/" -H "$AUTH" -H 'Content-Type: application/json' \
+            -d '{"name":"sample-e2e","version":1,"description":"The compose end-to-end sample.","tasks":[{"key":"seed","task_type":"echo","config":{"value":"hello"}},{"key":"sum","task_type":"add","depends_on":["seed"],"config":{"values":[1,2,3]}},{"key":"done","task_type":"noop","depends_on":["sum"]}]}' \
+            -o /tmp/workflow.json
+
+          RUN_ID="$(curl -fsS -X POST "$BASE/runs/" -H "$AUTH" -H 'Content-Type: application/json' \
+            -d '{"name":"sample-e2e","version":1}' | python3 -c 'import json,sys; print(json.load(sys.stdin)["id"])')"
+          echo "triggered run $RUN_ID"
+
+          for attempt in $(seq 1 120); do
+            STATE="$(curl -fsS "$BASE/runs/$RUN_ID/" -H "$AUTH" | python3 -c 'import json,sys; print(json.load(sys.stdin)["state"])')"
+            echo "run $RUN_ID state=$STATE (attempt $attempt)"
+            if [ "$STATE" = "succeeded" ]; then exit 0; fi
+            if [ "$STATE" = "failed" ] || [ "$STATE" = "cancelled" ]; then
+              echo "run $RUN_ID ended $STATE"; exit 1
+            fi
+            sleep 1
+          done
+          echo "run $RUN_ID did not finish"; exit 1
 
       - name: Container logs
         if: always()
