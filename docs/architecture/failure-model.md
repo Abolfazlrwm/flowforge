@@ -40,10 +40,10 @@ when the same test name exists in both `tests/unit` and `tests/integration`.
 | 11 | Partial failure of a run | `derive_workflow_run_state` precedence | Partially verified |
 | 12 | Graceful shutdown | Manual ack + `stop()` after in-flight work | Verified |
 | 13 | Recovery after restart | Django reconnects; outbox drains | Verified |
-| 14 | Broker reconnection | **Not implemented** — processes must be restarted | Known limitation |
+| 14 | Broker reconnection | Worker and publisher reconnect with backoff, no restart | Verified (v0.7.1) |
 | 15 | Non-idempotent handler replay | `idempotency_key` (opt-in per task) | Partially verified |
 | 16 | Clock skew across processes | Single-process `now()` | UNVERIFIED |
-| 17 | Broker loses a confirmed message | `delivery_mode=2`, durable queues | UNVERIFIED |
+| 17 | Broker loses a confirmed message | Quorum queue fsyncs before confirming | Verified for abrupt termination, single node (v0.7.1) |
 
 ## 1. Concurrent transitions
 
@@ -292,36 +292,76 @@ the process exits **0**), `test_graceful_shutdown_finishes_the_in_flight_message
 **What could go wrong.** Every pooled connection is dead; the first request after
 the restart fails, or the stack never recovers.
 
-**What covers it.** Django opens a connection per request and reconnects on the
-next query. Pending outbox rows survive because they are database rows, not broker
-state, so a restarted publisher drains them.
+**What covers it.** Three different shapes of process need three different
+answers, and v0.7.1 found that only the first one worked:
+
+- **The web process** opens a connection per request, so it recovers with no code
+  at all.
+- **The scheduler and publisher** hold one connection for their whole life. A
+  restart kills that socket, and every later query raises
+  `OperationalError: terminating connection due to administrator command`. Both
+  loops now catch `DatabaseError`, discard the connection
+  (`core.db.reset_connections`) and back off, instead of dying. Before this fix the
+  scheduler **exited**, and every run stayed `pending` — the docker job caught it
+  as a 120s timeout.
+- **The worker** catches `DatabaseError` per message, discards the connection and
+  re-raises, so the message stays unacked, the broker requeues it, and the
+  reconnect loop applies the backoff. The lease covers a half-written attempt.
 
 **Tests.** The `docker` CI job restarts the `db` container and asserts
 `/health/ready/` returns to 200 with `"postgres": "ok"`, then runs the end-to-end
 sample workflow again to prove the pipeline still does real work. Without that
 second assertion, "the probe is green" would be the only claim — and a green probe
-over a broken worker is exactly the failure this project has been bitten by before.
+over a dead scheduler is exactly what this run produced.
+`test_a_database_error_resets_the_connection_and_propagates` covers the worker's
+half at unit level.
 
-## 14. Broker reconnection — **known limitation**
+## 14. Broker reconnection — verified in v0.7.1
 
 **What breaks.** RabbitMQ goes away and comes back while the worker and publisher
 are running.
 
-**What actually happens.** Both open their pika connection once. When it drops,
-they do not reconnect: the worker's `start_consuming()` raises and the process
-exits, and the publisher fails its next sweep.
+**What used to happen.** Both opened their pika connection once. When it dropped,
+the worker's `start_consuming()` raised and the process exited; the publisher
+failed its next sweep. Nothing was lost — the outbox row stayed pending and the
+lease was reaped — but the processes had to be restarted by hand. That was the
+v0.7.0 known limitation.
 
-**Why this is not a data-loss bug.** The outbox row is still pending, and the
-lease on any in-flight task still expires, so the reaper retries it. Nothing is
-lost — but the processes must be restarted.
+**What happens now.** `Worker.run()` is a loop. A connection-level failure is
+backed off exponentially with jitter (capped at 30s) and retried; the connection,
+channel, queue declaration and consumer are all re-established. The publisher
+retries its sweep on the same curve, and its rows stay pending until the broker
+confirms them. Both waits are on a `stop` event, so SIGTERM during an outage exits
+promptly instead of waiting out the delay.
 
-**What CI does about it.** The `docker` job restarts `publisher`, `worker` and
-`scheduler` after the broker comes back, and then asserts the end-to-end workflow
-still succeeds. The restart is explicit because automatic reconnection is **not
-implemented in v0.7.0**. It is the first candidate for v0.8.0.
+**The in-flight message.** If the connection dies between the handler and the ack,
+the ack raises. The worker does not swallow it — swallowing would tell the broker a
+message is finished when it is not, which is how a task is lost. The connection is
+torn down, the broker requeues the message, and the redelivery is deduplicated
+against the row that is already terminal.
 
-**Status.** Known limitation, not a verified behaviour. There is no test for
-"the worker reconnects on its own" because it does not.
+**Tests.**
+
+- `TestReconnection::test_a_lost_connection_is_retried_then_consumption_resumes`
+  (unit) — one failure does not end the process; `basic_consume` runs on the retry.
+- `TestReconnection::test_stop_interrupts_a_reconnect_wait` (unit) — with a 30s
+  backoff configured, `stop()` still returns immediately.
+- `TestReconnection::test_a_queue_type_mismatch_is_not_retried` (unit) — the one
+  error that is an operator action, not a transient fault.
+- `TestReconnection::test_an_ack_failure_is_not_treated_as_success` (unit) — the
+  exception propagates instead of being mistaken for a clean ack.
+- `test_a_dropped_connection_redelivers_and_completes_exactly_once` (integration,
+  real RabbitMQ) — the connection is closed mid-task through the connection's own
+  IOLoop; the task still reaches `SUCCEEDED`, the handler runs **once**, the worker
+  reconnects by itself, and a second dispatch completes on the same worker.
+- Docker CI, "Broker outage is reported, recovered from, and a queued run
+  completes" — a workflow is triggered **while the broker is stopped**, the
+  container IDs are compared before and after (a manual restart would change them),
+  and the run must reach `SUCCEEDED`. Nothing is restarted by hand.
+
+**What is still not claimed.** Reconnection is per process. A worker that was
+killed (not disconnected) still needs its supervisor to restart it — that is a
+process-supervision concern, not a connection concern.
 
 ## 15. Non-idempotent handler replay — **partially verified**
 
@@ -367,28 +407,38 @@ skew, and there is no clock-skew injection harness.
 **Mitigation, not a fix.** Leases are 30s by default against a heartbeat interval
 of 10s, so skew must exceed roughly 20s before it matters. NTP is assumed.
 
-## 17. Broker loses a confirmed message — UNVERIFIED
+## 17. Broker loses a confirmed message — verified for abrupt termination, single node
 
-**What breaks.** RabbitMQ confirms a publish, then crashes before the message is
+**What breaks.** RabbitMQ confirms a publish, then dies before the message is
 durably on disk.
 
 **What could go wrong.** The outbox row is stamped `published_at`, so it is never
 republished, and the message is gone: a lost task.
 
-**What covers it, partially.** Messages are published with `delivery_mode=2`
-(persistent) to a durable exchange and durable queues. That is the standard
-classic-queue configuration and is sufficient for a clean broker restart.
+**What covers it.** The dispatch queue is a **quorum queue** (`x-queue-type:
+quorum`). A quorum queue writes through a Raft log and fsyncs before acknowledging,
+so a confirm means the message is on disk — not merely in a memory buffer. This is
+the difference from a classic durable queue, which can acknowledge a message it has
+not flushed.
 
-**Why it is unverified.** It is not sufficient for an abrupt broker failure:
-classic mirrored queues are deprecated in RabbitMQ 4, and only **quorum queues**
-give a durable-replication guarantee. FlowForge declares classic durable queues.
-There is no test that kills the broker between the confirm and the fsync, and
-producing one reliably is not possible from the test suite.
+**Test.** Docker CI, "A confirmed dispatch survives an abrupt broker kill". The
+worker is stopped so a dispatch stays parked in the queue, the outbox is polled
+until every row is confirmed, then the broker is **SIGKILLed** — not stopped, so
+there is no graceful flush — restarted, the worker restarted, and the run must
+reach `SUCCEEDED`. If the message were only in memory, the kill would lose it.
 
-**Consequence.** The outbox is at-least-once with respect to *publishing*, not
-with respect to *broker durability*. Switching the dispatch queue to a quorum
-queue is the fix, and it is a one-line `queue_declare` change plus a broker
-version constraint; it is not in v0.7.0.
+**What is still not claimed.**
+
+- **Single node only.** There is no replica, so this is crash-safe durability, not
+  high availability. A three-node cluster would be needed for failover, and nothing
+  here tests that.
+- **Not tested against disk loss or corruption.** fsync protects against process
+  death, not against a failing volume.
+- **The queue type cannot be changed in place.** Upgrading an existing classic
+  queue needs the delete-and-redeclare procedure in
+  [`execution-model.md`](execution-model.md#the-dispatch-queue-is-a-quorum-queue);
+  `declare_dispatch_queue` raises `QueueTypeMismatchError` with the steps rather
+  than failing opaquely.
 
 ## What this document does not claim
 

@@ -19,9 +19,9 @@ from typing import Any
 
 import pika
 import pytest
-from core.broker_rabbit import DEFAULT_EXCHANGE, RabbitPublisher
+from core.broker_rabbit import DEFAULT_EXCHANGE, RabbitPublisher, declare_dispatch_queue
 from core.domain.states import TaskRunState
-from core.models import TaskRun
+from core.models import Task, TaskRun
 from core.worker.consumer import DEFAULT_ROUTING_KEY, Worker
 from core.worker.registry import register
 from django.db import connection
@@ -45,6 +45,7 @@ def _count(config: Mapping[str, Any]) -> None:
 
 
 def _slow(_config: Mapping[str, Any]) -> None:
+    _COUNTS["slow"] = _COUNTS.get("slow", 0) + 1
     _SLOW_STARTED.set()
     _SLOW_RELEASE.wait(timeout=10)
 
@@ -75,7 +76,9 @@ def _bind_queue(url: str, queue: str) -> pika.BlockingConnection:
     conn = pika.BlockingConnection(pika.URLParameters(url))
     channel = conn.channel()
     channel.exchange_declare(exchange=DEFAULT_EXCHANGE, exchange_type="direct", durable=True)
-    channel.queue_declare(queue=queue, durable=True)
+    # Same declaration the worker makes: a classic queue here would make the
+    # worker's quorum declaration fail with PRECONDITION_FAILED.
+    declare_dispatch_queue(channel, queue)
     channel.queue_bind(queue=queue, exchange=DEFAULT_EXCHANGE, routing_key=DEFAULT_ROUTING_KEY)
     return conn
 
@@ -226,5 +229,63 @@ def test_graceful_shutdown_finishes_the_in_flight_message(task_run: TaskRun) -> 
         assert not thread.is_alive()
         # The in-flight message finished and was acked, not abandoned.
         assert _state(task_run) == TaskRunState.SUCCEEDED.value
+    finally:
+        _stop_worker(worker, thread, conn, queue)
+
+
+def test_a_dropped_connection_redelivers_and_completes_exactly_once(
+    task_run: TaskRun, workflow: Any
+) -> None:
+    """Kill the consumer's connection mid-task: the broker redelivers, the task runs once.
+
+    This is the "lost ack" failure at the connection level. The handler finishes and
+    the durable write succeeds, but the ack cannot be delivered because the channel
+    is gone. The worker must treat that as *not done* (so the broker requeues the
+    message), reconnect on its own, and deduplicate the redelivery against the row
+    it already finished.
+    """
+    require_postgres()
+    url = require_rabbitmq()
+    queue = f"flowforge.test.{uuid.uuid4().hex}"
+    conn = _bind_queue(url, queue)
+    worker, thread = _start_worker(url, queue)
+    try:
+        _publish(url, _payload(task_run, "test.integration.slow", key="drop"))
+        assert _SLOW_STARTED.wait(timeout=15), "the handler never started"
+
+        # Closing from another thread is only safe through the connection's own
+        # IOLoop; this is the documented way to touch a BlockingConnection.
+        first_connection = worker._connection
+        assert first_connection is not None
+        first_connection.add_callback_threadsafe(first_connection.close)
+
+        _SLOW_RELEASE.set()
+        assert _wait_until(lambda: _state(task_run) == TaskRunState.SUCCEEDED.value, timeout=20), (
+            "the task never completed after the connection was dropped"
+        )
+
+        # The worker reconnected by itself — no restart, no test-side nudge.
+        assert _wait_until(
+            lambda: worker._connection is not None and worker._connection is not first_connection,
+            timeout=20,
+        ), "the worker did not reconnect"
+        assert thread.is_alive(), "the worker process must survive a lost connection"
+
+        # The redelivery must not re-execute the handler: the row was already done.
+        assert _COUNTS.get("slow", 0) == 1, f"handler ran {_COUNTS.get('slow', 0)} time(s)"
+
+        # And it is consuming again: a fresh dispatch completes on the same worker.
+        second_task = Task.objects.create(
+            workflow=workflow, key="after-drop", task_type="test.integration.count"
+        )
+        second_run = TaskRun.objects.create(
+            workflow_run=task_run.workflow_run,
+            task=second_task,
+            state=TaskRunState.READY.value,
+        )
+        _publish(url, _payload(second_run, "test.integration.count", key="after-drop"))
+        assert _wait_until(
+            lambda: _state(second_run) == TaskRunState.SUCCEEDED.value, timeout=20
+        ), "the worker did not resume consuming after reconnecting"
     finally:
         _stop_worker(worker, thread, conn, queue)

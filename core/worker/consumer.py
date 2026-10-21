@@ -14,15 +14,24 @@ Reliability contract:
 - **Heartbeat.** A background thread extends the lease while the handler runs, so a
   long task is not reaped mid-flight. If the lease was already lost, the heartbeat
   stops and the finish is correctly rejected as stale.
+- **Reconnection.** ``run()`` re-establishes the connection, channel, queue and
+  consumer with exponential backoff after the broker goes away, without a process
+  restart. An in-flight message whose ack fails is *not* treated as done: the ack
+  raises, the connection is torn down, the broker requeues the message, and the
+  lease/reaper path covers whatever the handler managed to write.
 - **Graceful shutdown.** ``stop()`` halts consumption; the in-flight message
-  finishes and is acked, then the connection closes. Unacked messages are redelivered.
+  finishes and is acked, then the connection closes. ``stop()`` also interrupts a
+  reconnect wait, so SIGTERM during an outage exits promptly. Unacked messages are
+  redelivered.
 - **Trusted handlers only.** The message names a ``task_type``; the handler is
   looked up in the registry. Nothing in the message is imported or executed as code.
 """
 
 from __future__ import annotations
 
+import contextlib
 import json
+import logging
 import threading
 from collections.abc import Callable, Iterator, Mapping
 from contextlib import contextmanager
@@ -30,17 +39,29 @@ from typing import Any
 from uuid import UUID, uuid4
 
 import pika
+from django.db import DatabaseError
 
-from core.broker_rabbit import DEFAULT_EXCHANGE
+from core.broker_rabbit import DEFAULT_EXCHANGE, declare_dispatch_queue
+from core.db import reset_connections
+from core.domain.retry import CONNECTION_BACKOFF, calculate_backoff
 from core.domain.states import TaskRunState
 from core.models import TaskRun
 from core.repositories.transitions import claim_task_run, finish_task_run, renew_lease
 from core.worker.registry import resolve
 
+logger = logging.getLogger(__name__)
+
 #: The queue every worker consumes from. Bound to the dispatch exchange.
 DEFAULT_QUEUE = "flowforge.tasks"
 #: The routing key the scheduler's outbox rows are published under.
 DEFAULT_ROUTING_KEY = "task.dispatch"
+
+#: Failures that mean "the broker is not reachable right now" and are worth
+#: retrying. Deliberately broader than pika's own hierarchy: a stopped container
+#: surfaces as ``socket.gaierror`` (DNS, an ``OSError``) or
+#: ``ConnectionRefusedError``, neither of which is an ``AMQPError``. A
+#: ``DatabaseError`` arrives here too, via ``_on_message``.
+RECONNECTABLE_ERRORS = (pika.exceptions.AMQPError, OSError, DatabaseError)
 
 
 class Worker:
@@ -81,10 +102,14 @@ class Worker:
     # -- connection -------------------------------------------------------
 
     def _connect(self) -> pika.adapters.blocking_connection.BlockingChannel:
+        # Drop any previous connection first. A reconnect must not leave the old
+        # socket open: the broker only requeues that connection's unacked messages
+        # when it closes, so leaking it would strand the in-flight message forever.
+        self.close()
         connection = pika.BlockingConnection(pika.URLParameters(self._url))
         channel = connection.channel()
         channel.exchange_declare(exchange=DEFAULT_EXCHANGE, exchange_type="direct", durable=True)
-        channel.queue_declare(queue=self._queue, durable=True)
+        declare_dispatch_queue(channel, self._queue)
         channel.queue_bind(
             queue=self._queue,
             exchange=DEFAULT_EXCHANGE,
@@ -98,17 +123,73 @@ class Worker:
         return channel
 
     def run(self) -> None:
-        """Consume until ``stop()`` is called, then close the connection."""
-        channel = self._connect()
-        channel.basic_consume(
-            queue=self._queue,
-            on_message_callback=self._on_message,
-            auto_ack=False,
-        )
+        """Consume until ``stop()`` is called, reconnecting through broker outages.
+
+        The loop is the whole reconnection policy: connect, consume, and on a
+        connection-level failure wait out an exponential backoff (with jitter) and
+        try again. ``stop()`` sets the event the wait is watching, so a SIGTERM
+        during an outage exits immediately instead of after the current delay.
+
+        ``start_consuming()`` returning does **not** mean "clean stop". pika returns
+        normally when the connection closes underneath it — a broker restart, a
+        network partition — so the only reliable signal that we asked to stop is
+        ``self._stop``. Anything else is a lost connection and must be retried;
+        treating it as a clean exit is what made a broker restart kill the process.
+
+        Raises:
+            QueueTypeMismatchError: if the queue exists with a different type. That
+                is an operator action, not a transient fault, so it is not retried.
+        """
+        attempt = 0
         try:
-            channel.start_consuming()
+            while not self._stop.is_set():
+                try:
+                    channel = self._connect()
+                    attempt = 0
+                    channel.basic_consume(
+                        queue=self._queue,
+                        on_message_callback=self._on_message,
+                        auto_ack=False,
+                    )
+                    channel.start_consuming()
+                except RECONNECTABLE_ERRORS as exc:
+                    # A database outage reaches here through `_on_message`, which
+                    # resets the connection and re-raises. It is the same kind of
+                    # interruption as a lost broker: back off, retry, and let the
+                    # broker requeue the unacked message.
+                    if isinstance(exc, DatabaseError):
+                        reset_connections()
+                    if self._stop.is_set():
+                        break
+                    attempt = self._back_off(attempt, exc)
+                    continue
+
+                if self._stop.is_set():
+                    break
+                # Returned without being asked to: the connection closed under us.
+                attempt = self._back_off(
+                    attempt, RuntimeError("consumption stopped without a shutdown request")
+                )
         finally:
             self.close()
+
+    def _back_off(self, attempt: int, exc: BaseException) -> int:
+        """Wait before the next connection attempt; return the new attempt count.
+
+        Returns ``attempt + 1``. The wait is on ``self._stop``, so a shutdown
+        request interrupts it rather than waiting out a 30s delay.
+        """
+        attempt += 1
+        delay = calculate_backoff(attempt=attempt, policy=CONNECTION_BACKOFF)
+        logger.warning(
+            "Worker %s lost the broker (%s); reconnecting in %.2fs (attempt %d)",
+            self._worker_id,
+            exc,
+            delay,
+            attempt,
+        )
+        self._stop.wait(delay)
+        return attempt
 
     def stop(self) -> None:
         """Ask the consumer to stop after the in-flight message is acked."""
@@ -121,11 +202,15 @@ class Worker:
             self._channel.stop_consuming()
 
     def close(self) -> None:
-        """Close the connection if open."""
-        if self._connection is not None and self._connection.is_open:
-            self._connection.close()
+        """Close the connection if open. Safe on a connection that is already dead."""
+        connection = self._connection
         self._connection = None
         self._channel = None
+        if connection is not None and connection.is_open:
+            # Closing a socket the peer already dropped can raise; there is nothing
+            # left to do about it, and the caller is on its way to a reconnect.
+            with contextlib.suppress(Exception):
+                connection.close()
 
     # -- message handling -------------------------------------------------
 
@@ -143,11 +228,20 @@ class Worker:
             # Unparseable: it can never succeed, so drop it rather than loop.
             channel.basic_nack(delivery_tag=delivery_tag, requeue=False)
             return
-        self.process(
-            payload,
-            ack=lambda: channel.basic_ack(delivery_tag=delivery_tag),
-            nack=lambda requeue: channel.basic_nack(delivery_tag=delivery_tag, requeue=requeue),
-        )
+        try:
+            self.process(
+                payload,
+                ack=lambda: channel.basic_ack(delivery_tag=delivery_tag),
+                nack=lambda requeue: channel.basic_nack(delivery_tag=delivery_tag, requeue=requeue),
+            )
+        except DatabaseError:
+            # A database restart kills this process's long-lived connection, and
+            # every later message would fail on the same dead socket. Discard it
+            # so the next attempt opens a fresh one, then let the error propagate:
+            # the message stays unacked, the broker requeues it, and the reconnect
+            # loop applies the backoff. The lease covers the half-written attempt.
+            reset_connections()
+            raise
 
     def process(
         self,
@@ -253,7 +347,12 @@ class Worker:
             # The durable write failed: do not ack; requeue for another attempt.
             nack(True)
             return
-        # Durable (or correctly rejected as stale). Ack.
+        # Durable (or correctly rejected as stale). Ack — and deliberately let a
+        # failing ack propagate: if the channel died between the write and the ack,
+        # the broker has *not* been told the message is done, so it must requeue it.
+        # Swallowing that exception would turn a lost ack into a silent success.
+        # The redelivery is harmless: the row is no longer READY, so the second
+        # delivery is claimed by nobody and acked without re-executing.
         ack()
 
     @contextmanager
