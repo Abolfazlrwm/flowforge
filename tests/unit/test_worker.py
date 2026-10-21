@@ -7,13 +7,16 @@ happens to a message and is tested here with fake ack/nack callbacks and a real
 
 from __future__ import annotations
 
+import socket
 import threading
 from collections.abc import Mapping
 from datetime import timedelta
 from typing import Any
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
+import pika
 import pytest
+from core.broker_rabbit import QueueTypeMismatchError
 from core.domain.states import TaskRunState
 from core.models import TaskRun, WorkflowRun
 from core.repositories.transitions import (
@@ -24,6 +27,7 @@ from core.repositories.transitions import (
 )
 from core.worker.consumer import Worker
 from core.worker.registry import handlers, register, resolve
+from django.db import DatabaseError
 
 from tests.conftest import NOW
 
@@ -354,3 +358,208 @@ def test_a_dispatch_without_an_idempotency_key_always_executes(task_run: TaskRun
 
     task_run.refresh_from_db()
     assert task_run.result == {"echo": "x", "ok": True}
+
+
+class TestReconnection:
+    """``run()`` survives a lost broker without a process restart."""
+
+    def test_a_lost_connection_is_retried_then_consumption_resumes(self) -> None:
+        """One failure must not end the process: reconnect and consume again."""
+        channel = MagicMock()
+        worker = _worker()
+        attempts: list[int] = []
+
+        def connect() -> MagicMock:
+            attempts.append(1)
+            if len(attempts) == 1:
+                raise pika.exceptions.AMQPConnectionError("broker went away")
+            return channel
+
+        def consume() -> None:
+            # A clean stop: we asked for it, so `run()` must return.
+            worker.stop()
+
+        channel.start_consuming.side_effect = consume
+
+        with (
+            patch.object(worker, "_connect", side_effect=connect),
+            patch("core.worker.consumer.calculate_backoff", return_value=0.0),
+        ):
+            worker.run()
+
+        assert len(attempts) == 2
+        channel.basic_consume.assert_called_once()
+        channel.start_consuming.assert_called_once()
+
+    def test_a_consumer_that_returns_unasked_is_reconnected(self) -> None:
+        """A consumer that returns unasked must be reconnected.
+
+        pika returns from ``start_consuming`` when the connection closes under it.
+        Treating that normal return as a clean stop is what made a broker restart
+        kill the process, so it must be retried like any other connection loss.
+        """
+        channel = MagicMock()
+        worker = _worker()
+        attempts: list[int] = []
+
+        def connect() -> MagicMock:
+            attempts.append(1)
+            if len(attempts) == 2:
+                worker.stop()  # the second connection is a real clean stop
+            return channel
+
+        with (
+            patch.object(worker, "_connect", side_effect=connect),
+            patch("core.worker.consumer.calculate_backoff", return_value=0.0),
+        ):
+            worker.run()
+
+        assert len(attempts) == 2, "an unasked-for return must trigger a reconnect"
+
+    def test_stop_interrupts_a_reconnect_wait(self) -> None:
+        """SIGTERM during an outage must exit promptly, not after the backoff."""
+        worker = _worker()
+        started = threading.Event()
+
+        def connect() -> MagicMock:
+            started.set()
+            raise pika.exceptions.AMQPConnectionError("still down")
+
+        with (
+            patch.object(worker, "_connect", side_effect=connect),
+            # A long delay: if `stop()` did not interrupt the wait, the join below
+            # would time out instead of returning.
+            patch("core.worker.consumer.calculate_backoff", return_value=30.0),
+        ):
+            thread = threading.Thread(target=worker.run, daemon=True)
+            thread.start()
+            assert started.wait(timeout=5)
+            worker.stop()
+            thread.join(timeout=5)
+
+        assert not thread.is_alive(), "stop() must interrupt the reconnect wait"
+
+    def test_a_queue_type_mismatch_is_not_retried(self) -> None:
+        """An operator action is not a transient fault; retrying would hide it."""
+        worker = _worker()
+        attempts: list[int] = []
+
+        def connect() -> MagicMock:
+            attempts.append(1)
+            raise QueueTypeMismatchError("classic queue, quorum expected")
+
+        with (
+            patch.object(worker, "_connect", side_effect=connect),
+            pytest.raises(QueueTypeMismatchError),
+        ):
+            worker.run()
+
+        assert len(attempts) == 1
+
+    def test_an_ack_failure_is_not_treated_as_success(self, task_run: TaskRun) -> None:
+        """A message whose ack fails must be requeued by the broker, not assumed done.
+
+        The durable write has already happened, so the redelivery is a no-op — but
+        swallowing the ack failure would tell the broker the message is finished
+        when it is not, which is how a task is lost.
+        """
+        worker = _worker()
+
+        def failing_ack() -> None:
+            raise pika.exceptions.ChannelWrongStateError("channel closed")
+
+        with pytest.raises(pika.exceptions.ChannelWrongStateError):
+            worker.process(
+                _payload(task_run, task_type="test.record", config={"tag": "x"}),
+                ack=failing_ack,
+                nack=lambda _requeue: None,
+            )
+
+        task_run.refresh_from_db()
+        assert task_run.state == TaskRunState.SUCCEEDED.value
+
+
+def test_a_database_error_resets_the_connection_and_propagates(task_run: TaskRun) -> None:
+    """A dead database socket must be discarded, and the message must not be acked.
+
+    The error propagates so the broker requeues the message; the connection is
+    closed so the retry does not reuse the same dead socket. Without the reset, a
+    database restart would poison every later message in the process.
+    """
+    worker = _worker()
+    acks: list[bool] = []
+
+    with (
+        patch.object(worker, "process", side_effect=DatabaseError("connection lost")),
+        patch("core.worker.consumer.reset_connections") as reset,
+        pytest.raises(DatabaseError),
+    ):
+        worker._on_message(
+            MagicMock(),
+            MagicMock(delivery_tag=1),
+            MagicMock(),
+            b'{"task_type": "test.record", "task_run_id": "00000000-0000-0000-0000-000000000000"}',
+        )
+
+    reset.assert_called_once()
+    assert acks == []
+
+
+def test_a_database_error_during_consumption_is_retried() -> None:
+    """A database outage must not end the worker process.
+
+    ``DatabaseError`` is not an ``AMQPError``, so before this it escaped ``run()``
+    and killed the process — the run then stayed ``running`` forever because no
+    consumer was left to finish it.
+    """
+    channel = MagicMock()
+    worker = _worker()
+    attempts: list[int] = []
+
+    def connect() -> MagicMock:
+        attempts.append(1)
+        return channel
+
+    def consume() -> None:
+        if len(attempts) == 1:
+            raise DatabaseError("terminating connection due to administrator command")
+        worker.stop()
+
+    channel.start_consuming.side_effect = consume
+
+    with (
+        patch.object(worker, "_connect", side_effect=connect),
+        patch("core.worker.consumer.calculate_backoff", return_value=0.0),
+        patch("core.worker.consumer.reset_connections") as reset,
+    ):
+        worker.run()
+
+    assert len(attempts) == 2, "the worker must reconnect after a database error"
+    reset.assert_called()
+
+
+def test_a_dns_failure_is_retried_like_any_other_outage() -> None:
+    """A stopped container makes DNS fail, which is an OSError, not an AMQPError.
+
+    This is the shape a real ``docker compose stop rabbitmq`` produces, and it used
+    to escape ``run()`` and kill the worker — the exact failure the reconnect work
+    was meant to remove.
+    """
+    channel = MagicMock()
+    worker = _worker()
+    attempts: list[int] = []
+
+    def connect() -> MagicMock:
+        attempts.append(1)
+        if len(attempts) == 1:
+            raise socket.gaierror(-3, "Temporary failure in name resolution")
+        worker.stop()
+        return channel
+
+    with (
+        patch.object(worker, "_connect", side_effect=connect),
+        patch("core.worker.consumer.calculate_backoff", return_value=0.0),
+    ):
+        worker.run()
+
+    assert len(attempts) == 2
