@@ -116,9 +116,11 @@ class Worker:
         try again. ``stop()`` sets the event the wait is watching, so a SIGTERM
         during an outage exits immediately instead of after the current delay.
 
-        ``start_consuming()`` returns normally only after ``stop_consuming()``; any
-        other exit is a lost connection, which is why the success path breaks out
-        and the exception path backs off.
+        ``start_consuming()`` returning does **not** mean "clean stop". pika returns
+        normally when the connection closes underneath it — a broker restart, a
+        network partition — so the only reliable signal that we asked to stop is
+        ``self._stop``. Anything else is a lost connection and must be retried;
+        treating it as a clean exit is what made a broker restart kill the process.
 
         Raises:
             QueueTypeMismatchError: if the queue exists with a different type. That
@@ -129,14 +131,7 @@ class Worker:
             while not self._stop.is_set():
                 try:
                     channel = self._connect()
-                except pika.exceptions.AMQPError as exc:
-                    # Includes StreamLostError and AMQPConnectionError while the
-                    # broker is still down. Back off and try again.
-                    attempt = self._back_off(attempt, exc)
-                    continue
-
-                attempt = 0
-                try:
+                    attempt = 0
                     channel.basic_consume(
                         queue=self._queue,
                         on_message_callback=self._on_message,
@@ -144,9 +139,17 @@ class Worker:
                     )
                     channel.start_consuming()
                 except pika.exceptions.AMQPError as exc:
+                    if self._stop.is_set():
+                        break
                     attempt = self._back_off(attempt, exc)
                     continue
-                break  # stop_consuming() returned: a clean stop
+
+                if self._stop.is_set():
+                    break
+                # Returned without being asked to: the connection closed under us.
+                attempt = self._back_off(
+                    attempt, RuntimeError("consumption stopped without a shutdown request")
+                )
         finally:
             self.close()
 
