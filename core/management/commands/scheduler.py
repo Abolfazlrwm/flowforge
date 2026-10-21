@@ -11,12 +11,16 @@ without spawning a process that never returns.
 
 from __future__ import annotations
 
-import time
+import signal
+import threading
 from argparse import ArgumentParser
 from typing import Any, cast
 
 from django.core.management.base import BaseCommand
+from django.db import DatabaseError
 
+from core.db import reset_connections
+from core.domain.retry import CONNECTION_BACKOFF, calculate_backoff
 from core.repositories.scheduler import schedule_once
 
 
@@ -50,15 +54,34 @@ class Command(BaseCommand):
             )
             return
 
+        stop = threading.Event()
+        signal.signal(signal.SIGTERM, lambda *_: stop.set())
+        signal.signal(signal.SIGINT, lambda *_: stop.set())
+
         self.stdout.write("Scheduler started.")
-        try:
-            while True:
+        failures = 0
+        while not stop.is_set():
+            try:
                 reaped, enqueued = schedule_once()
-                if reaped or enqueued:
-                    self.stdout.write(
-                        "Pass complete: reaped "
-                        f"{reaped} lease(s), enqueued {enqueued} dispatch(es)."
-                    )
-                time.sleep(interval)
-        except KeyboardInterrupt:
-            self.stdout.write("Scheduler stopped.")
+            except DatabaseError as exc:
+                # A database restart kills the loop's one long-lived connection.
+                # Throwing it away and backing off is what turns "the scheduler is
+                # dead until someone restarts it" into "the scheduler resumes".
+                reset_connections()
+                failures += 1
+                delay = calculate_backoff(attempt=failures, policy=CONNECTION_BACKOFF)
+                self.stderr.write(
+                    f"Scheduler pass failed ({exc}); retrying in {delay:.2f}s (attempt {failures})"
+                )
+                stop.wait(delay)
+                continue
+
+            if failures:
+                self.stdout.write(f"Scheduler recovered after {failures} failed pass(es).")
+                failures = 0
+            if reaped or enqueued:
+                self.stdout.write(
+                    f"Pass complete: reaped {reaped} lease(s), enqueued {enqueued} dispatch(es)."
+                )
+            stop.wait(interval)
+        self.stdout.write("Scheduler stopped.")

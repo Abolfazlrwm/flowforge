@@ -303,9 +303,23 @@ jobs:
 
       # Readiness must name the dependency that is actually down. A probe that
       # reports "ready" while the broker is stopped is worse than no probe.
-      - name: Broker outage is reported, and the stack recovers
+      #
+      # This step also proves the reconnection work end to end: a workflow is
+      # triggered *while the broker is down*, so its dispatch has nowhere to go.
+      # Nothing is restarted by hand afterwards — the scheduler, publisher and
+      # worker must recover on their own and finish the run.
+      - name: Broker outage is reported, recovered from, and a queued run completes
         run: |
           set -euo pipefail
+          BASE=http://localhost:8000/api/v1
+          TOKEN="$(docker compose exec -T web cat /tmp/e2e_token | tr -d '\r\n')"
+          AUTH="Authorization: Token $TOKEN"
+
+          # Remember the container identities: a manual restart would change them,
+          # and this step's whole point is that none happens.
+          docker compose ps -q worker publisher scheduler > /tmp/ids-before
+          cat /tmp/ids-before
+
           docker compose stop rabbitmq
 
           code=""
@@ -320,6 +334,12 @@ jobs:
           cat /tmp/ready-down.json
           grep -Eq '"rabbitmq": *"error"' /tmp/ready-down.json
 
+          # Queue work while the broker is down. The API only needs PostgreSQL, so
+          # the run is created; its dispatch cannot be published until recovery.
+          RUN_ID="$(curl -fsS -X POST "$BASE/runs/" -H "$AUTH" -H 'Content-Type: application/json' \
+            -d '{"name":"sample-e2e","version":1}' | python3 -c 'import json,sys; print(json.load(sys.stdin)["id"])')"
+          echo "queued run $RUN_ID during the outage"
+
           docker compose start rabbitmq
           for attempt in $(seq 1 60); do
             code=$(curl -s -o /tmp/ready-up.json -w '%{http_code}' \
@@ -330,13 +350,33 @@ jobs:
           done
           test "$code" = "200" || { echo "readiness did not recover"; cat /tmp/ready-up.json; exit 1; }
 
-      # Known limitation, recorded rather than hidden: the worker and publisher do
-      # not reconnect to a broker that went away — their pika connection is opened
-      # once. Nothing is lost (the outbox row stays pending and the lease is
-      # reaped), but the processes must be restarted. Automatic reconnection is
-      # not implemented in v0.7.0.
-      - name: Restart the broker consumers (no auto-reconnect yet)
-        run: docker compose restart publisher worker scheduler
+          # Same processes as before the outage: nothing was restarted by hand.
+          docker compose ps -q worker publisher scheduler > /tmp/ids-after
+          diff -u /tmp/ids-before /tmp/ids-after \
+            || { echo "a consumer was restarted; automatic recovery was not exercised"; exit 1; }
+
+          # The consumers must have reconnected and said so. The worker always logs
+          # a reconnect; the publisher logs one only when it had a sweep to fail, and
+          # the run queued above guarantees it did.
+          docker compose logs --no-color worker | grep -Eq "reconnecting in" \
+            || { echo "the worker never logged a reconnect"; docker compose logs --no-color worker; exit 1; }
+          docker compose logs --no-color publisher | grep -Eq "retrying in|recovered" \
+            || { echo "the publisher never logged a reconnect"; docker compose logs --no-color publisher; exit 1; }
+
+          # The proof that matters: the run queued during the outage completes,
+          # with no process restart and no manual intervention.
+          for attempt in $(seq 1 120); do
+            STATE="$(curl -fsS "$BASE/runs/$RUN_ID/" -H "$AUTH" | python3 -c 'import json,sys; print(json.load(sys.stdin)["state"])')"
+            echo "run $RUN_ID state=$STATE (attempt $attempt)"
+            if [ "$STATE" = "succeeded" ]; then exit 0; fi
+            if [ "$STATE" = "failed" ] || [ "$STATE" = "cancelled" ]; then
+              echo "run $RUN_ID ended $STATE"; exit 1
+            fi
+            sleep 1
+          done
+          echo "the run queued during the outage never completed"
+          docker compose logs --no-color scheduler publisher worker | tail -100
+          exit 1
 
       # A database restart drops every pooled connection. Django reconnects on
       # the next query, so recovery must be automatic and the readiness probe
@@ -362,6 +402,66 @@ jobs:
       # pipeline must still do real work afterwards.
       - name: End-to-end still works after both faults
         run: docker compose exec -T web python manage.py sample_run --timeout 120
+
+      # Failure mode 17: does a *confirmed* publish survive an abrupt broker death?
+      #
+      # A classic durable queue can acknowledge a message it has not flushed; a
+      # quorum queue fsyncs through Raft before confirming. To test the claim
+      # rather than assert it, park a dispatch in the queue with no consumer,
+      # SIGKILL the broker (not `stop`: no graceful shutdown, no flush), restart
+      # it, and require the message to still be there.
+      - name: A confirmed dispatch survives an abrupt broker kill
+        run: |
+          set -euo pipefail
+          BASE=http://localhost:8000/api/v1
+          TOKEN="$(docker compose exec -T web cat /tmp/e2e_token | tr -d '\r\n')"
+          AUTH="Authorization: Token $TOKEN"
+
+          # No consumer, so the message stays in the queue once published.
+          docker compose stop worker
+
+          RUN_ID="$(curl -fsS -X POST "$BASE/runs/" -H "$AUTH" -H 'Content-Type: application/json' \
+            -d '{"name":"sample-e2e","version":1}' | python3 -c 'import json,sys; print(json.load(sys.stdin)["id"])')"
+          echo "queued run $RUN_ID"
+
+          # Wait until the publisher has confirmed every outbox row (a poll, not a
+          # sleep): only then is the dispatch genuinely "confirmed" by the broker.
+          #
+          # `manage.py shell -c` prints an "N objects imported automatically"
+          # banner with no trailing newline, which glues itself to the number. The
+          # sentinel keeps the parse honest instead of depending on that banner.
+          pending="unknown"
+          for attempt in $(seq 1 60); do
+            pending="$(docker compose exec -T web python manage.py shell -c \
+              'from core.models import OutboxMessage; print("PENDING=" + str(OutboxMessage.objects.filter(published_at__isnull=True).count()))' \
+              2>/dev/null | grep -oE 'PENDING=[0-9]+' | cut -d= -f2 | tail -1 || true)"
+            echo "pending outbox rows=${pending:-?} (attempt $attempt)"
+            if [ "$pending" = "0" ]; then break; fi
+            sleep 1
+          done
+          test "$pending" = "0" || { echo "the dispatch was never published"; exit 1; }
+
+          docker compose kill rabbitmq          # SIGKILL: no flush, no goodbye
+          docker compose start rabbitmq
+          for attempt in $(seq 1 60); do
+            if docker compose exec -T rabbitmq rabbitmq-diagnostics -q ping >/dev/null 2>&1; then break; fi
+            sleep 1
+          done
+
+          docker compose start worker
+
+          for attempt in $(seq 1 120); do
+            STATE="$(curl -fsS "$BASE/runs/$RUN_ID/" -H "$AUTH" | python3 -c 'import json,sys; print(json.load(sys.stdin)["state"])')"
+            echo "run $RUN_ID state=$STATE (attempt $attempt)"
+            if [ "$STATE" = "succeeded" ]; then exit 0; fi
+            if [ "$STATE" = "failed" ] || [ "$STATE" = "cancelled" ]; then
+              echo "run $RUN_ID ended $STATE after the broker was killed"; exit 1
+            fi
+            sleep 1
+          done
+          echo "the dispatch did not survive an abrupt broker kill"
+          docker compose logs --no-color rabbitmq worker | tail -60
+          exit 1
 
       - name: Container logs
         if: always()
