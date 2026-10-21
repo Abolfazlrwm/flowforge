@@ -29,6 +29,7 @@ Reliability contract:
 
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
 import threading
@@ -94,6 +95,10 @@ class Worker:
     # -- connection -------------------------------------------------------
 
     def _connect(self) -> pika.adapters.blocking_connection.BlockingChannel:
+        # Drop any previous connection first. A reconnect must not leave the old
+        # socket open: the broker only requeues that connection's unacked messages
+        # when it closes, so leaking it would strand the in-flight message forever.
+        self.close()
         connection = pika.BlockingConnection(pika.URLParameters(self._url))
         channel = connection.channel()
         channel.exchange_declare(exchange=DEFAULT_EXCHANGE, exchange_type="direct", durable=True)
@@ -140,7 +145,13 @@ class Worker:
                         auto_ack=False,
                     )
                     channel.start_consuming()
-                except pika.exceptions.AMQPError as exc:
+                except (pika.exceptions.AMQPError, DatabaseError) as exc:
+                    # A database outage reaches here through `_on_message`, which
+                    # resets the connection and re-raises. It is the same kind of
+                    # interruption as a lost broker: back off, retry, and let the
+                    # broker requeue the unacked message.
+                    if isinstance(exc, DatabaseError):
+                        reset_connections()
                     if self._stop.is_set():
                         break
                     attempt = self._back_off(attempt, exc)
@@ -184,11 +195,15 @@ class Worker:
             self._channel.stop_consuming()
 
     def close(self) -> None:
-        """Close the connection if open."""
-        if self._connection is not None and self._connection.is_open:
-            self._connection.close()
+        """Close the connection if open. Safe on a connection that is already dead."""
+        connection = self._connection
         self._connection = None
         self._channel = None
+        if connection is not None and connection.is_open:
+            # Closing a socket the peer already dropped can raise; there is nothing
+            # left to do about it, and the caller is on its way to a reconnect.
+            with contextlib.suppress(Exception):
+                connection.close()
 
     # -- message handling -------------------------------------------------
 
