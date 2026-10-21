@@ -6,8 +6,8 @@ section of `docs/development/PROGRESS.md`.
 
 ## Current Phase
 
-**Phase 6 — Reliability: IN PROGRESS (v0.7.0)** on `feat/phase6-reliability`.
-Phases 0–5 are merged, tagged and released (`v0.1.0` … `v0.6.1`).
+**Phase 6 — Reliability: COMPLETE (v0.7.0)**, merged as `3210001` (PR #31).
+Phases 0–6 are merged, tagged and released (`v0.1.0` … `v0.7.0`).
 
 Read `docs/architecture/failure-model.md` before touching execution code: it maps
 every failure mode to a named test and marks the untested ones UNVERIFIED. If you
