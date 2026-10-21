@@ -14,10 +14,12 @@ from core.domain.errors import InvariantViolationError
 from core.domain.states import TaskRunState, WorkflowRunState
 
 #: States that mean "this run is over", independent of how it ended.
+#: ``DEAD`` (retry policy exhausted) is over; ``FAILED`` is *not* — it may still be
+#: retried and recover — so it is deliberately excluded.
 FINISHED_TASK_STATES = frozenset(
     {
         TaskRunState.SUCCEEDED,
-        TaskRunState.FAILED,
+        TaskRunState.DEAD,
         TaskRunState.CANCELLED,
     }
 )
@@ -45,13 +47,14 @@ def derive_workflow_run_state(states: Iterable[TaskRunState]) -> WorkflowRunStat
     The order of the checks is the policy, and it is deliberate:
 
     1. Any cancellation makes the run cancelled — a user asked for it to stop.
-    2. Any failure makes the run failed, even if other tasks are still running.
-       Reporting ``RUNNING`` here would hide a failure behind work that is
-       merely slow, and the operator would learn about it only when the last
-       task finished.
+    2. Any failure or dead task makes the run failed, even if other tasks are
+       still running. A ``DEAD`` task (retry policy exhausted) is a permanent
+       failure, so it is treated the same as a ``FAILED`` one. Reporting
+       ``RUNNING`` here would hide a failure behind work that is merely slow.
     3. All succeeded means succeeded.
     4. Otherwise the run is still in flight: ``RUNNING`` once anything has
-       started, ``PENDING`` while nothing has.
+       started (a task in ``RETRYING`` is still in flight, not pending),
+       ``PENDING`` while nothing has.
 
     An empty sequence is ``PENDING``: a run with no tasks has not started.
 
@@ -68,7 +71,7 @@ def derive_workflow_run_state(states: Iterable[TaskRunState]) -> WorkflowRunStat
         return WorkflowRunState.PENDING
     if any(state is TaskRunState.CANCELLED for state in resolved):
         return WorkflowRunState.CANCELLED
-    if any(state is TaskRunState.FAILED for state in resolved):
+    if any(state is TaskRunState.FAILED or state is TaskRunState.DEAD for state in resolved):
         return WorkflowRunState.FAILED
     if all(state is TaskRunState.SUCCEEDED for state in resolved):
         return WorkflowRunState.SUCCEEDED

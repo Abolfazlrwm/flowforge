@@ -11,13 +11,15 @@ parts of distributed execution explicit — leases, fencing tokens, a
 transactional outbox and at-least-once delivery — instead of hiding them
 behind a task decorator.
 
-> **Status: Phase 5 of 11 — execution works end to end.**
+> **Status: Phase 6 of 11 — execution is reliable, not just working.**
 > A workflow can be described, validated, published, and triggered over HTTP; the
 > scheduler promotes dependency-satisfied tasks into a transactional outbox, the
 > publisher delivers them to RabbitMQ with publisher confirms, and a worker claims
 > each task run with a fencing token, runs a trusted handler, and writes the
-> durable outcome before acking. The compose CI job drives the whole pipeline to
-> `SUCCEEDED`.
+> durable outcome before acking. A failed task is retried with exponential backoff
+> and jitter, a task that exhausts its policy becomes `DEAD` and waits for an
+> operator, and `docs/architecture/failure-model.md` maps every failure mode to a
+> test that proves the recovery.
 > The feature table below lists exactly what is implemented and nothing more.
 
 ## Why this exists
@@ -68,8 +70,9 @@ than implied.
 | Publish/commit atomicity | Transactional outbox | Implemented and verified against a real broker in CI (Phase 4) |
 | Concurrent claiming | Conditional `UPDATE … WHERE state = ?` — the database decides the winner | Implemented (Phase 1) |
 | Stale-writer protection | Monotonic fencing token checked on write | Implemented (Phase 1) |
-| Lease recovery | Expired leases returned to `ready`, token bumped | Implemented (Phase 4) |
-| Failure visibility | Explicit `DEAD` state + manual requeue | Planned (Phase 6) |
+| Lease recovery | Expired leases routed into the retry lifecycle, token bumped | Implemented (Phase 4; reworked in Phase 6) |
+| Failure visibility | Explicit `DEAD` state + manual requeue | Implemented (Phase 6) |
+| Bounded retries | Per-task policy, exponential backoff with full jitter, attempts counted | Implemented (Phase 6) |
 
 **Explicit non-goals:** exactly-once execution, arbitrary user-supplied Python
 in workers, and running untrusted code. FlowForge will never claim exactly-once
@@ -129,11 +132,15 @@ uv run python manage.py runserver
 | Scheduler: promotes dependency-satisfied tasks and starts the run | Implemented (Phase 4) |
 | Transactional outbox: one row per dispatch generation, in the same transaction | Implemented (Phase 4) |
 | Publisher: drains the outbox with `FOR UPDATE SKIP LOCKED` and publisher confirms | Implemented (Phase 4) |
-| Lease reaper: expired leases returned to `ready`, fencing token bumped | Implemented (Phase 4) |
+| Lease reaper: expired leases routed to `retrying` (or `dead`), fencing token bumped | Implemented (Phase 4; reworked in Phase 6) |
 | Worker: manual ack, prefetch, trusted handlers, lease + fencing, heartbeat | Implemented (Phase 5) |
 | Graceful SIGTERM: finish and ack the in-flight message before exiting | Implemented (Phase 5) |
 | Scheduler completes the run when its tasks resolve | Implemented (Phase 5) |
-| Retries, dead-letter handling | **Not implemented** (Phase 6) |
+| Per-task retry policy: exponential backoff with a cap and full jitter | Implemented (Phase 6) |
+| Dead-letter: `DEAD` is terminal; `manage.py requeue_dead` is the way back | Implemented (Phase 6) |
+| Handler results persisted in `TaskRun.result` | Implemented (Phase 6) |
+| Opt-in idempotency keys for handler replay | Implemented (Phase 6) |
+| Failure-injection tests (kill worker/scheduler, lost ack, broker and DB restart) | Implemented (Phase 6) |
 | Multi-tenancy, RBAC, audit log | **Not implemented** (Phase 8) |
 | Metrics, tracing, dashboards | **Not implemented** (Phase 9) |
 | SDK, CLI | **Not implemented** (Phase 10) |

@@ -17,7 +17,12 @@ from core.repositories.scheduler import (
     enqueue_ready_tasks,
     schedule_once,
 )
-from core.repositories.transitions import claim_task_run, finish_task_run, reclaim_task_run
+from core.repositories.transitions import (
+    claim_task_run,
+    finish_task_run,
+    promote_due_retries,
+    reclaim_task_run,
+)
 from django.core.management import call_command
 
 from tests.conftest import NOW
@@ -115,8 +120,10 @@ def test_enqueue_ready_tasks_is_idempotent_per_generation() -> None:
 def test_a_reaped_lease_gets_a_new_generation_row() -> None:
     """Re-dispatch after a reaper pass is a new generation and a new outbox row.
 
-    The scheduler bumps the fencing token on every reaper pass, so the re-dispatched
-    generation is distinct and must not collide with the original row.
+    The reaper routes the dead worker's attempt into ``RETRYING`` and bumps the
+    fencing token; the scheduler promotes it back to ``READY`` when the backoff
+    elapses, so the re-dispatched generation is distinct and must not collide with
+    the original row.
     """
     *_unused, run, tr_extract, _tr_load = _scenario()
     advance_workflow_run(run)  # enqueues extract (generation token 0)
@@ -125,6 +132,7 @@ def test_a_reaped_lease_gets_a_new_generation_row() -> None:
     assert token == 1
     TaskRun.objects.filter(pk=tr_extract.id).update(lease_expires_at=NOW - timedelta(seconds=1))
     assert reclaim_task_run(task_run_id=tr_extract.id, now=NOW + timedelta(seconds=1))
+    assert promote_due_retries(now=NOW + timedelta(seconds=10)) == 1
     tr_extract.refresh_from_db()
     assert tr_extract.state == TaskRunState.READY.value
     assert tr_extract.fencing_token == 2  # reaper invalidated the dead worker's token

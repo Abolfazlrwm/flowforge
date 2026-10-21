@@ -49,6 +49,31 @@
 **Rationale:** Celery provides immediate value for Docker Compose and CI testing. The transactional outbox and lease management are domain concerns that can be layered on any delivery mechanism.
 **Full ADR:** [`docs/adr/ADR-007-celery-as-interim-task-infrastructure.md`](../adr/ADR-007-celery-as-interim-task-infrastructure.md)
 
+## ADR-012: Retry Policy and Dead-Letter Semantics (Phase 6)
+
+**Status:** Accepted 2026-10-21. The *scope* was mandated by the owner's Phase 6
+directive (per-task retry policy, max attempts, exponential backoff with jitter,
+`retrying`/`failed` semantics, a dead-letter state with manual requeue). The
+specific choices — 1-based attempt numbering, a dead worker consuming an attempt,
+backoff in `scheduled_at` rather than a sleep, full jitter, retries reusing the row
+— are recorded as implementation decisions, not attributed to the owner.
+**Context:** `FAILED` was non-terminal but nothing moved a task out of it, and
+`reap_lease` returned a reaped task straight to `READY` without recording an
+attempt. A task that reliably killed its worker was therefore re-dispatched
+forever: no error, no alert, an invisible crash loop.
+**Decision:** `TaskRunState.DEAD` is terminal and `FAILED` is not. A dead worker
+consumes an attempt (`reap_retry` / `reap_dead` replace `reap_lease`), the policy
+is read per task from `config["retry"]`, the backoff is stored in `scheduled_at`
+and promoted by the scheduler, and `manage.py requeue_dead` is the only way out of
+`DEAD`.
+**Rationale:** it bounds total executions, not just handler exceptions, which is
+what closes the poison-message loop. The backoff is durable data, so a scheduler
+restart cannot lose a pending retry.
+**Consequence:** a run can be `FAILED` while one of its tasks is still `RETRYING`.
+That is deliberate — fail fast, recover later — but the run state is no longer a
+simple summary of its tasks.
+**Full ADR:** [`docs/adr/ADR-012-retry-policy-and-dead-letter-semantics.md`](../adr/ADR-012-retry-policy-and-dead-letter-semantics.md)
+
 ## Naming: "FlowForge" retained
 
 **Status:** Decided by the project owner on 2026-10-19. No rename performed.

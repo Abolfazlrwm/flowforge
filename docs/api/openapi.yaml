@@ -535,6 +535,7 @@ components:
       - succeeded
       - failed
       - retrying
+      - dead
       - cancelled
       type: string
       description: |-
@@ -544,6 +545,7 @@ components:
         * `succeeded` - Succeeded
         * `failed` - Failed
         * `retrying` - Retrying
+        * `dead` - Dead
         * `cancelled` - Cancelled
     TokenObtainPair:
       type: object

@@ -46,6 +46,10 @@ def build_dispatch_payload(
         "config": task.config,
         "attempt": attempt_snapshot,
         "fencing_token": fencing_token_snapshot,
+        # Carried so the worker can short-circuit a repeat execution: if another
+        # SUCCEEDED task run already holds this key with a result, the handler is
+        # not re-run and that result is reused (see `core.worker.consumer`).
+        "idempotency_key": task_run.idempotency_key,
     }
 
 

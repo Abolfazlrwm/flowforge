@@ -24,7 +24,9 @@ WORKFLOW_RUN_TERMINAL = tuple(
     state.value
     for state in (WorkflowRunState.SUCCEEDED, WorkflowRunState.FAILED, WorkflowRunState.CANCELLED)
 )
-TASK_RUN_TERMINAL = tuple(state.value for state in (TaskRunState.SUCCEEDED, TaskRunState.CANCELLED))
+TASK_RUN_TERMINAL = tuple(
+    state.value for state in (TaskRunState.SUCCEEDED, TaskRunState.DEAD, TaskRunState.CANCELLED)
+)
 
 WORKFLOW_RUN_STATE_CHOICES = [(state.value, state.name.title()) for state in WorkflowRunState]
 TASK_RUN_STATE_CHOICES = [(state.value, state.name.title()) for state in TaskRunState]
@@ -184,6 +186,17 @@ class TaskRun(models.Model):
     fencing_token = models.PositiveBigIntegerField(default=0)
     lease_owner = models.CharField(max_length=200, null=True, blank=True)
     lease_expires_at = models.DateTimeField(null=True, blank=True)
+    # When a task is RETRYING, this is the earliest moment it may be promoted back
+    # to READY. It encodes the backoff delay so the scheduler needs no clock math.
+    scheduled_at = models.DateTimeField(null=True, blank=True)
+    # The durable return value of the handler, persisted on success. Retries reuse
+    # the row, so the latest attempt's result overwrites the previous; a failed
+    # attempt leaves it null. Phase 6 adds this.
+    result = models.JSONField(null=True, blank=True)
+    # An optional key that makes a handler idempotent: two runs with the same key
+    # (e.g. from two triggers of the same logical operation) execute once, and the
+    # second reuses the first's result. Null means "not idempotent".
+    idempotency_key = models.CharField(max_length=255, null=True, blank=True, db_index=True)
     created_at = models.DateTimeField(auto_now_add=True)
     started_at = models.DateTimeField(null=True, blank=True)
     finished_at = models.DateTimeField(null=True, blank=True)
@@ -203,6 +216,16 @@ class TaskRun(models.Model):
             models.CheckConstraint(
                 condition=Q(attempt__gte=1),
                 name="taskrun_attempt_positive",
+            ),
+            # A backoff delay exists only while a task is RETRYING; in every other
+            # state it must be null, so a row cannot "wake up" from READY/PENDING
+            # or carry a stale delay into SUCCEEDED/DEAD.
+            models.CheckConstraint(
+                condition=(
+                    Q(state=TaskRunState.RETRYING.value, scheduled_at__isnull=False)
+                    | (~Q(state=TaskRunState.RETRYING.value) & Q(scheduled_at__isnull=True))
+                ),
+                name="taskrun_scheduled_iff_retrying",
             ),
             models.CheckConstraint(
                 condition=Q(fencing_token__gte=0),
