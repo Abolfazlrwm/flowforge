@@ -53,6 +53,7 @@ TASK_RUN_MACHINE: StateMachine[TaskRunState] = StateMachine(
     states=TaskRunState,
     terminal=(
         TaskRunState.SUCCEEDED,
+        TaskRunState.DEAD,
         TaskRunState.CANCELLED,
     ),
     transitions=(
@@ -97,20 +98,35 @@ TASK_RUN_MACHINE: StateMachine[TaskRunState] = StateMachine(
             target=TaskRunState.CANCELLED,
             requires_lease=True,
         ),
-        # The lease reaper. A RUNNING task whose lease has expired is returned to
-        # READY so it can be re-dispatched. The reaper does NOT require a lease:
-        # it forcibly reclaims an expired one on behalf of the scheduler. It is the
-        # only edge that moves a task backwards, and that is intentional — a dead
-        # worker must not pin a task run in RUNNING forever.
+        # The lease reaper. A RUNNING task whose lease has expired is not simply
+        # returned to READY — it counts as a failed attempt and is routed by the
+        # reaper into the retry lifecycle: either RETRYING (if attempts remain) or
+        # DEAD (if the policy is exhausted). The reaper does NOT require a lease:
+        # it forcibly reclaims an expired one on behalf of the scheduler. These are
+        # the only edges that move a task backwards, and that is intentional — a
+        # dead worker must not pin a task run in RUNNING forever.
         Transition(
-            name="reap_lease",
+            name="reap_retry",
             source=TaskRunState.RUNNING,
-            target=TaskRunState.READY,
+            target=TaskRunState.RETRYING,
         ),
+        Transition(
+            name="reap_dead",
+            source=TaskRunState.RUNNING,
+            target=TaskRunState.DEAD,
+        ),
+        # Retries are scheduled by the scheduler once a task reaches FAILED (or,
+        # for a dead worker, by the reaper directly). Too many attempts and the
+        # task is buried: a terminal state the operator must requeue by hand.
         Transition(
             name="schedule_retry",
             source=TaskRunState.FAILED,
             target=TaskRunState.RETRYING,
+        ),
+        Transition(
+            name="bury",
+            source=TaskRunState.FAILED,
+            target=TaskRunState.DEAD,
         ),
         Transition(
             name="retry_ready",
