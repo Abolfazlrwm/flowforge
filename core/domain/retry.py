@@ -51,6 +51,15 @@ class RetryPolicy:
 #: Used when a task definition says nothing about retries.
 DEFAULT_RETRY_POLICY = RetryPolicy()
 
+#: Backoff for *connection* retries, used by the worker and the publisher when the
+#: broker goes away. The arithmetic is the same exponential-with-jitter curve as a
+#: task retry, applied to reconnecting rather than re-executing, so it reuses
+#: :func:`calculate_backoff` instead of growing a second implementation.
+#:
+#: ``max_attempts`` is meaningless here (a connection retries forever until the
+#: process is told to stop) and is set to 1 so the dataclass invariant holds.
+CONNECTION_BACKOFF = RetryPolicy(max_attempts=1, base_seconds=0.5, max_seconds=30.0, jitter=True)
+
 
 def get_retry_policy(config: Mapping[str, Any] | None) -> RetryPolicy:
     """Read the retry policy out of a task's ``config`` mapping.
