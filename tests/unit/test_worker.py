@@ -26,6 +26,7 @@ from core.repositories.transitions import (
 )
 from core.worker.consumer import Worker
 from core.worker.registry import handlers, register, resolve
+from django.db import DatabaseError
 
 from tests.conftest import NOW
 
@@ -475,3 +476,29 @@ class TestReconnection:
 
         task_run.refresh_from_db()
         assert task_run.state == TaskRunState.SUCCEEDED.value
+
+
+def test_a_database_error_resets_the_connection_and_propagates(task_run: TaskRun) -> None:
+    """A dead database socket must be discarded, and the message must not be acked.
+
+    The error propagates so the broker requeues the message; the connection is
+    closed so the retry does not reuse the same dead socket. Without the reset, a
+    database restart would poison every later message in the process.
+    """
+    worker = _worker()
+    acks: list[bool] = []
+
+    with (
+        patch.object(worker, "process", side_effect=DatabaseError("connection lost")),
+        patch("core.worker.consumer.reset_connections") as reset,
+        pytest.raises(DatabaseError),
+    ):
+        worker._on_message(
+            MagicMock(),
+            MagicMock(delivery_tag=1),
+            MagicMock(),
+            b'{"task_type": "test.record", "task_run_id": "00000000-0000-0000-0000-000000000000"}',
+        )
+
+    reset.assert_called_once()
+    assert acks == []
