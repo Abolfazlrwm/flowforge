@@ -26,6 +26,7 @@ from django.utils import timezone
 
 from core.domain.errors import IllegalTransitionError
 from core.domain.machines import TASK_RUN_MACHINE, WORKFLOW_RUN_MACHINE
+from core.domain.retry import calculate_backoff, get_retry_policy
 from core.domain.states import TaskRunState, WorkflowRunState
 from core.models import TaskRun, WorkflowRun
 
@@ -72,41 +73,74 @@ def reclaim_task_run(
     task_run_id: UUID,
     now: datetime | None = None,
 ) -> bool:
-    """Return a RUNNING task run whose lease has expired back to ``READY``.
+    """Reclaim a RUNNING task run whose lease has expired, routing it by policy.
 
-    This is the lease reaper's per-row operation. It is a conditional ``UPDATE``
-    that matches only while the row is still ``RUNNING`` *and* its lease has
-    already expired, so a live lease is never reclaimed and a row another reaper
-    just reclaimed is never reclaimed twice.
+    This is the lease reaper's per-row operation. A dead worker counts as a failed
+    attempt, so the row is routed into the retry lifecycle rather than simply
+    returned to ``READY``:
+
+    * **Attempts remain** (``attempt < max_attempts``): ``RUNNING -> RETRYING`` with
+      the attempt counter incremented and a backoff delay written to
+      ``scheduled_at``. The scheduler later promotes it back to ``READY`` once the
+      delay elapses.
+    * **Policy exhausted** (``attempt >= max_attempts``): ``RUNNING -> DEAD``. The
+      task is finished and must be requeued by hand (see :func:`requeue_dead_task_run`).
+
+    The conditional ``UPDATE`` matches only while the row is still ``RUNNING`` *and*
+    its lease has already expired, so a live lease is never reclaimed and a row
+    another reaper just reclaimed is never reclaimed twice.
 
     Reclaiming bumps the fencing token. The worker that held the expired lease may
     still be alive and may try to ``finish_task_run``; its token is now stale (the
-    row is ``READY``, and even a later re-claim increments the token again), so its
-    write matches zero rows. The reaper is what makes a resurrected worker
-    harmless without the broker ever knowing one existed.
+    row is no longer ``RUNNING``, and even a later reclaim increments the token
+    again), so its write matches zero rows. The reaper is what makes a resurrected
+    worker harmless without the broker ever knowing one existed.
 
     Returns:
         ``True`` if this call reclaimed the row, ``False`` if the row was gone,
         no longer running, or its lease had not yet expired.
     """
-    TASK_RUN_MACHINE.apply(TaskRunState.RUNNING, TaskRunState.READY)
-
     moment = _resolve_now(now)
     with transaction.atomic():
-        reclaimed = TaskRun.objects.filter(
-            pk=task_run_id,
-            state=TaskRunState.RUNNING.value,
-            lease_expires_at__lt=moment,
-        ).update(
-            state=TaskRunState.READY.value,
-            lease_owner=None,
-            lease_expires_at=None,
-            # Invalidate any in-flight attempt by the dead worker. A later claim
-            # increments again, so even a second reaper pass keeps the token
-            # strictly ahead of what the dead worker holds.
-            fencing_token=F("fencing_token") + 1,
-            started_at=Coalesce(F("started_at"), Value(moment)),
+        task_run = (
+            TaskRun.objects.select_for_update()
+            .select_related("task")
+            .filter(pk=task_run_id, state=TaskRunState.RUNNING.value, lease_expires_at__lt=moment)
+            .first()
         )
+        if task_run is None:
+            return False
+
+        policy = get_retry_policy(task_run.task.config)
+        attempt = task_run.attempt
+        if attempt < policy.max_attempts:
+            TASK_RUN_MACHINE.apply(TaskRunState.RUNNING, TaskRunState.RETRYING)
+            next_attempt = attempt + 1
+            scheduled_at = moment + timedelta(
+                seconds=calculate_backoff(attempt=next_attempt, policy=policy)
+            )
+            updates: dict[str, object] = {
+                "state": TaskRunState.RETRYING.value,
+                "attempt": next_attempt,
+                "scheduled_at": scheduled_at,
+                "lease_owner": None,
+                "lease_expires_at": None,
+                "fencing_token": F("fencing_token") + 1,
+                "started_at": Coalesce(F("started_at"), Value(moment)),
+            }
+        else:
+            TASK_RUN_MACHINE.apply(TaskRunState.RUNNING, TaskRunState.DEAD)
+            # DEAD is terminal: record the finish time and clear the lease.
+            updates = {
+                "state": TaskRunState.DEAD.value,
+                "finished_at": moment,
+                "lease_owner": None,
+                "lease_expires_at": None,
+                "scheduled_at": None,
+                "fencing_token": F("fencing_token") + 1,
+                "started_at": Coalesce(F("started_at"), Value(moment)),
+            }
+        reclaimed = TaskRun.objects.filter(pk=task_run_id).update(**updates)
         return reclaimed == 1
 
 
@@ -133,35 +167,161 @@ def reap_expired_leases(*, now: datetime | None = None, limit: int = 1000) -> in
     return reclaimed
 
 
+def schedule_retries(*, now: datetime | None = None, limit: int = 1000) -> int:
+    """Route every ``FAILED`` task run into the retry lifecycle, by policy.
+
+    A failed task is not terminal: it is either scheduled for another attempt
+    (``FAILED -> RETRYING`` with a backoff delay in ``scheduled_at``) while
+    attempts remain, or buried (``FAILED -> DEAD``) once the policy is exhausted.
+    The scheduler's :func:`promote_due_retries` later turns the ``RETRYING`` rows
+    back into ``READY`` once their delay elapses.
+
+    Returns:
+        The number of task runs moved in this pass (retried + buried).
+    """
+    moment = _resolve_now(now)
+    failed = list(
+        TaskRun.objects.filter(state=TaskRunState.FAILED.value)
+        .select_related("task")
+        .order_by("id")[:limit]
+    )
+    moved = 0
+    with transaction.atomic():
+        for task_run in failed:
+            policy = get_retry_policy(task_run.task.config)
+            if task_run.attempt < policy.max_attempts:
+                scheduled_at = moment + timedelta(
+                    seconds=calculate_backoff(attempt=task_run.attempt + 1, policy=policy)
+                )
+                if transition_task_run(
+                    task_run_id=task_run.id,
+                    expected=TaskRunState.FAILED,
+                    target=TaskRunState.RETRYING,
+                    now=moment,
+                    scheduled_at=scheduled_at,
+                ):
+                    moved += 1
+            elif transition_task_run(
+                task_run_id=task_run.id,
+                expected=TaskRunState.FAILED,
+                target=TaskRunState.DEAD,
+                now=moment,
+            ):
+                moved += 1
+    return moved
+
+
+def promote_due_retries(*, now: datetime | None = None, limit: int = 1000) -> int:
+    """Promote ``RETRYING`` task runs whose backoff has elapsed back to ``READY``.
+
+    A ``RETRYING`` row carries the earliest moment it may run again in
+    ``scheduled_at``; once that moment has passed it is eligible to be dispatched
+    again. Promoting it to ``READY`` lets the scheduler re-enqueue it as a fresh
+    generation.
+
+    Returns:
+        The number of task runs promoted to ``READY`` in this pass.
+    """
+    moment = _resolve_now(now)
+    due = list(
+        TaskRun.objects.filter(
+            state=TaskRunState.RETRYING.value,
+            scheduled_at__lte=moment,
+        ).order_by("id")[:limit]
+    )
+    promoted = 0
+    with transaction.atomic():
+        for task_run in due:
+            if transition_task_run(
+                task_run_id=task_run.id,
+                expected=TaskRunState.RETRYING,
+                target=TaskRunState.READY,
+                now=moment,
+            ):
+                promoted += 1
+    return promoted
+
+
+def requeue_dead_task_run(*, task_run_id: UUID, now: datetime | None = None) -> bool:
+    """Manually requeue a ``DEAD`` task run for another attempt (dead-letter recovery).
+
+    A ``DEAD`` task run is terminal: the retry policy was exhausted and an operator
+    must intervene. This is that intervention. It resets the row to ``PENDING`` (a
+    fresh attempt: ``attempt = 1``, cleared finish/lease/scheduled/result) and bumps
+    the fencing token so any in-flight reference to the old generation is
+    invalidated. It also reverts the parent workflow run to ``PENDING`` so the
+    scheduler re-evaluates it on the next pass.
+
+    Returns:
+        ``True`` if this call requeued the row, ``False`` if it was gone or not
+        ``DEAD`` (so nothing to do).
+    """
+    _resolve_now(now)
+    with transaction.atomic():
+        task_run = (
+            TaskRun.objects.select_for_update()
+            .select_related("workflow_run")
+            .filter(pk=task_run_id, state=TaskRunState.DEAD.value)
+            .first()
+        )
+        if task_run is None:
+            return False
+        TaskRun.objects.filter(pk=task_run_id).update(
+            state=TaskRunState.PENDING.value,
+            attempt=1,
+            finished_at=None,
+            scheduled_at=None,
+            lease_owner=None,
+            lease_expires_at=None,
+            result=None,
+            fencing_token=F("fencing_token") + 1,
+        )
+        # The run may already be FAILED (because this task was DEAD). Revert it to
+        # PENDING; advance_workflow_run re-promotes it and re-derives its state,
+        # leaving SUCCEEDED siblings untouched.
+        WorkflowRun.objects.filter(pk=task_run.workflow_run_id).update(
+            state=WorkflowRunState.PENDING.value,
+            started_at=None,
+            finished_at=None,
+        )
+        return True
+
+
 def transition_task_run(
     *,
     task_run_id: UUID,
     expected: TaskRunState,
     target: TaskRunState,
     now: datetime | None = None,
+    scheduled_at: datetime | None = None,
 ) -> bool:
     """Move a task run between non-lease states, if it is still in ``expected``.
 
-    This deliberately does **not** handle the transitions that require a lease.
-    Passing one raises :class:`~core.domain.errors.LeaseRequiredError`, which points
-    the caller at :func:`finish_task_run` — the only path that can prove
-    ownership with a fencing token.
+    This deliberately does **not** handle the transitions that require a lease
+    (those go through :func:`finish_task_run`, which proves ownership with a
+    fencing token) nor the reaper edges out of ``RUNNING`` (those go through
+    :func:`reclaim_task_run`, which clears the lease and bumps the token).
 
     Returns:
         ``True`` if this call performed the transition, ``False`` otherwise.
 
     Raises:
-        IllegalTransitionError: if ``expected -> target`` is not a declared edge.
+        IllegalTransitionError: if ``expected -> target`` is not a declared edge,
+            or it is a reaper edge that must go through ``reclaim_task_run``.
         LeaseRequiredError: if the edge requires a held lease.
     """
     TASK_RUN_MACHINE.apply(expected, target)
 
-    # The only non-lease edge out of RUNNING is the reaper (`reap_lease`), which
-    # must clear the lease and bump the fencing token. `transition_task_run` does
-    # neither, so it must never be the path for it — the caller is routed to
-    # `reclaim_task_run` instead. Every other RUNNING edge requires a lease and is
-    # already refused above with `LeaseRequiredError`.
-    if expected is TaskRunState.RUNNING and target is TaskRunState.READY:
+    # The reaper edges out of RUNNING (`reap_retry` -> RETRYING, `reap_dead` ->
+    # DEAD) require reaper-side effects — clearing the lease and bumping the
+    # fencing token — that this function does not perform, so the reaper owns
+    # them exclusively via `reclaim_task_run`. Every other RUNNING edge is a
+    # lease transition and must go through `finish_task_run` (which raises
+    # LeaseRequiredError for it, since `apply` above ran without a token).
+    if (
+        expected is TaskRunState.RUNNING
+        and not TASK_RUN_MACHINE.edge(TaskRunState.RUNNING, target).requires_lease
+    ):
         raise IllegalTransitionError(
             machine=TASK_RUN_MACHINE.name,
             source=expected.value,
@@ -170,7 +330,14 @@ def transition_task_run(
         )
 
     moment = _resolve_now(now)
-    updates: dict[str, object] = {"state": target.value}
+    updates: dict[str, object] = {
+        "state": target.value,
+        # `scheduled_at` only has meaning while the row is RETRYING; the CHECK
+        # constraint `taskrun_scheduled_iff_retrying` enforces exactly that. Clear
+        # it by default so *every* exit from RETRYING (promotion to READY, or a
+        # cancel) satisfies the constraint; the RETRYING branch below overwrites it.
+        "scheduled_at": None,
+    }
 
     if TASK_RUN_MACHINE.is_terminal(target):
         updates["finished_at"] = moment
@@ -180,11 +347,14 @@ def transition_task_run(
     if target is TaskRunState.RETRYING:
         # A retry is a new attempt on the same row, so the attempt counter is
         # the only thing that distinguishes them, and the previous attempt's
-        # finish time must be cleared or the row would claim to be finished.
+        # finish time must be cleared or the row would claim to be finished. The
+        # backoff delay lives in `scheduled_at` until `promote_due_retries`
+        # promotes the row back to READY.
         updates["attempt"] = F("attempt") + 1
         updates["finished_at"] = None
         updates["lease_owner"] = None
         updates["lease_expires_at"] = None
+        updates["scheduled_at"] = scheduled_at if scheduled_at is not None else moment
 
     return TaskRun.objects.filter(pk=task_run_id, state=expected.value).update(**updates) == 1
 
@@ -243,6 +413,7 @@ def finish_task_run(
     task_run_id: UUID,
     target: TaskRunState,
     fencing_token: int,
+    result: object | None = None,
     now: datetime | None = None,
 ) -> bool:
     """Complete a running task run, proving ownership with its fencing token.
@@ -251,6 +422,11 @@ def finish_task_run(
     dead, then resurrected, still holds an older token; when it finally writes,
     the ``fencing_token`` predicate matches nothing and the write is discarded
     instead of overwriting a newer attempt's result.
+
+    ``result`` is the handler's durable return value, persisted only on success
+    (and ignored when ``None`` so a failed attempt leaves the column untouched for
+    the next attempt to overwrite). Idempotent handlers reuse a prior row's
+    ``result`` via the ``idempotency_key`` column — see :mod:`core.worker`.
 
     Returns:
         ``True`` if this call wrote the outcome, ``False`` if the row had moved
@@ -263,10 +439,11 @@ def finish_task_run(
     TASK_RUN_MACHINE.apply(TaskRunState.RUNNING, target, lease_held=True)
 
     # `finish_task_run` is the fencing-token (lease-requiring) path. The reaper
-    # edge `RUNNING -> READY` does not require a lease and has its own side
-    # effects (clearing the lease, bumping the token), so it must not be reachable
-    # through this function. Rejecting it keeps "finishing" meaning "terminating a
-    # task" and leaves reaping exclusively to `reclaim_task_run`.
+    # edges `RUNNING -> RETRYING` and `RUNNING -> DEAD` do not require a lease and
+    # have their own side effects (clearing the lease, bumping the token), so they
+    # must not be reachable through this function. Rejecting them keeps "finishing"
+    # meaning "terminating a task" and leaves reaping exclusively to
+    # `reclaim_task_run`.
     if not TASK_RUN_MACHINE.edge(TaskRunState.RUNNING, target).requires_lease:
         raise IllegalTransitionError(
             machine=TASK_RUN_MACHINE.name,
@@ -286,6 +463,8 @@ def finish_task_run(
         "lease_owner": None,
         "lease_expires_at": None,
     }
+    if result is not None:
+        updates["result"] = result
     return (
         TaskRun.objects.filter(
             pk=task_run_id,

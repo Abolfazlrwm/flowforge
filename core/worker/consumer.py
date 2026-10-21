@@ -33,6 +33,7 @@ import pika
 
 from core.broker_rabbit import DEFAULT_EXCHANGE
 from core.domain.states import TaskRunState
+from core.models import TaskRun
 from core.repositories.transitions import claim_task_run, finish_task_run, renew_lease
 from core.worker.registry import resolve
 
@@ -183,26 +184,71 @@ class Worker:
             self._finish(task_run_id, TaskRunState.FAILED, token, ack=ack, nack=nack)
             return
 
+        # Idempotent handler: if this dispatch carries an idempotency key and a
+        # prior task run with that key already succeeded, reuse its persisted
+        # result and skip executing the handler a second time.
+        idempotency_key = payload.get("idempotency_key")
+        if idempotency_key:
+            prior = self._prior_result(idempotency_key=idempotency_key, task_run_id=task_run_id)
+            if prior is not None:
+                self._finish(
+                    task_run_id,
+                    TaskRunState.SUCCEEDED,
+                    token,
+                    result=prior,
+                    ack=ack,
+                    nack=nack,
+                )
+                return
+
         with self._heartbeat(task_run_id, token):
             try:
-                handler(payload.get("config", {}))
+                result = handler(payload.get("config", {}))
             except Exception:
                 target = TaskRunState.FAILED
+                result = None
             else:
                 target = TaskRunState.SUCCEEDED
-        self._finish(task_run_id, target, token, ack=ack, nack=nack)
+        self._finish(task_run_id, target, token, result=result, ack=ack, nack=nack)
 
-    def _finish(
+    def _prior_result(self, *, idempotency_key: str, task_run_id: UUID) -> object | None:
+        """Return a prior task run's persisted result for a shared idempotency key.
+
+        Looks for a *different* task run that already succeeded with a non-null
+        result under the same key. This is best-effort idempotency: it catches the
+        common case (the first execution has committed before the duplicate is
+        dispatched) but does not serialise two concurrent executions of the same
+        key — request-level de-duplication is the API's ``Idempotency-Key`` header.
+        """
+        prior = (
+            TaskRun.objects.filter(
+                idempotency_key=idempotency_key,
+                state=TaskRunState.SUCCEEDED.value,
+                result__isnull=False,
+            )
+            .exclude(pk=task_run_id)
+            .only("result")
+            .first()
+        )
+        return prior.result if prior is not None else None
+
+    def _finish(  # noqa: PLR0913 - the six parameters are the ack contract itself
         self,
         task_run_id: UUID,
         target: TaskRunState,
         token: int,
         *,
+        result: object | None = None,
         ack: Callable[[], None],
         nack: Callable[[bool], None],
     ) -> None:
         try:
-            finish_task_run(task_run_id=task_run_id, target=target, fencing_token=token)
+            finish_task_run(
+                task_run_id=task_run_id,
+                target=target,
+                fencing_token=token,
+                result=result,
+            )
         except Exception:
             # The durable write failed: do not ack; requeue for another attempt.
             nack(True)
