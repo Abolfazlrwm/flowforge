@@ -56,6 +56,25 @@ TASK_SCHEMA: dict[str, Any] = {
             "default": {},
             "description": "Free-form parameters handed to the handler.",
         },
+        "when": {
+            "type": ["string", "null"],
+            "default": None,
+            "minLength": 1,
+            "description": (
+                "Optional condition over the run's task results. When it is false "
+                "the task is skipped. Evaluated by a sandboxed expression language, "
+                "never by eval()."
+            ),
+        },
+        "join": {
+            "type": "string",
+            "enum": ["all", "any"],
+            "default": "all",
+            "description": (
+                "'all' waits for every dependency to succeed; 'any' becomes "
+                "eligible once one dependency succeeds."
+            ),
+        },
     },
 }
 
@@ -163,6 +182,8 @@ def parse_workflow_definition(payload: Any) -> WorkflowDefinition:
                 task_type=task["task_type"],
                 depends_on=tuple(task.get("depends_on", ())),
                 config=dict(task.get("config", {})),
+                when=task.get("when"),
+                join=task.get("join", "all"),
             )
             for task in payload["tasks"]
         ),
@@ -204,6 +225,8 @@ def to_payload(definition: WorkflowDefinition) -> dict[str, Any]:
                 "task_type": task.task_type,
                 "depends_on": list(task.depends_on),
                 "config": dict(task.config),
+                "when": task.when,
+                "join": task.join,
             }
             for task in definition.tasks
         ],

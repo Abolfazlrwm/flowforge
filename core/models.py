@@ -25,7 +25,13 @@ WORKFLOW_RUN_TERMINAL = tuple(
     for state in (WorkflowRunState.SUCCEEDED, WorkflowRunState.FAILED, WorkflowRunState.CANCELLED)
 )
 TASK_RUN_TERMINAL = tuple(
-    state.value for state in (TaskRunState.SUCCEEDED, TaskRunState.DEAD, TaskRunState.CANCELLED)
+    state.value
+    for state in (
+        TaskRunState.SUCCEEDED,
+        TaskRunState.SKIPPED,
+        TaskRunState.DEAD,
+        TaskRunState.CANCELLED,
+    )
 )
 
 WORKFLOW_RUN_STATE_CHOICES = [(state.value, state.name.title()) for state in WorkflowRunState]
@@ -83,6 +89,13 @@ class Task(models.Model):
     task_type = models.CharField(max_length=200)
     depends_on = models.JSONField(default=list)
     config = models.JSONField(default=dict, blank=True)
+    #: Optional condition, in the sandboxed expression language. Stored as text so
+    #: the row is a faithful record of what was published; it is re-parsed and
+    #: validated on load, which is what keeps a hand-edited row from reaching the
+    #: scheduler as an executable string.
+    when = models.CharField(max_length=2000, null=True, blank=True)
+    #: "all" (every dependency must succeed) or "any" (one is enough).
+    join = models.CharField(max_length=8, default="all")
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:

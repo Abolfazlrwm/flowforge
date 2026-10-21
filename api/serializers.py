@@ -175,6 +175,8 @@ class TaskDocSerializer(serializers.Serializer[Any]):
     task_type = serializers.CharField()
     depends_on = serializers.ListField(child=serializers.CharField(), required=False)
     config = serializers.DictField(required=False)
+    when = serializers.CharField(required=False, allow_null=True)
+    join = serializers.ChoiceField(choices=["all", "any"], required=False)
 
 
 class WorkflowDefinitionDoc(serializers.Serializer[Any]):
