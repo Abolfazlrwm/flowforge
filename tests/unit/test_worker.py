@@ -7,6 +7,7 @@ happens to a message and is tested here with fake ack/nack callbacks and a real
 
 from __future__ import annotations
 
+import socket
 import threading
 from collections.abc import Mapping
 from datetime import timedelta
@@ -535,3 +536,30 @@ def test_a_database_error_during_consumption_is_retried() -> None:
 
     assert len(attempts) == 2, "the worker must reconnect after a database error"
     reset.assert_called()
+
+
+def test_a_dns_failure_is_retried_like_any_other_outage() -> None:
+    """A stopped container makes DNS fail, which is an OSError, not an AMQPError.
+
+    This is the shape a real ``docker compose stop rabbitmq`` produces, and it used
+    to escape ``run()`` and kill the worker — the exact failure the reconnect work
+    was meant to remove.
+    """
+    channel = MagicMock()
+    worker = _worker()
+    attempts: list[int] = []
+
+    def connect() -> MagicMock:
+        attempts.append(1)
+        if len(attempts) == 1:
+            raise socket.gaierror(-3, "Temporary failure in name resolution")
+        worker.stop()
+        return channel
+
+    with (
+        patch.object(worker, "_connect", side_effect=connect),
+        patch("core.worker.consumer.calculate_backoff", return_value=0.0),
+    ):
+        worker.run()
+
+    assert len(attempts) == 2
