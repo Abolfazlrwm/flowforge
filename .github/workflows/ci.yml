@@ -295,6 +295,72 @@ jobs:
           done
           echo "run $RUN_ID did not finish"; exit 1
 
+      # --- Failure injection -------------------------------------------------
+      # The pytest suite kills worker and scheduler *processes* (see
+      # tests/integration/test_failure_injection.py). Container- and
+      # infrastructure-level faults cannot be produced from inside a test, so they
+      # are injected here, against the same compose stack the e2e just used.
+
+      # Readiness must name the dependency that is actually down. A probe that
+      # reports "ready" while the broker is stopped is worse than no probe.
+      - name: Broker outage is reported, and the stack recovers
+        run: |
+          set -euo pipefail
+          docker compose stop rabbitmq
+
+          code=""
+          for attempt in $(seq 1 30); do
+            code=$(curl -s -o /tmp/ready-down.json -w '%{http_code}' \
+              http://localhost:8000/health/ready/ || true)
+            echo "readiness=$code (attempt $attempt)"
+            if [ "$code" = "503" ]; then break; fi
+            sleep 1
+          done
+          test "$code" = "503" || { echo "readiness did not degrade"; cat /tmp/ready-down.json; exit 1; }
+          cat /tmp/ready-down.json
+          grep -Eq '"rabbitmq": *"error"' /tmp/ready-down.json
+
+          docker compose start rabbitmq
+          for attempt in $(seq 1 60); do
+            code=$(curl -s -o /tmp/ready-up.json -w '%{http_code}' \
+              http://localhost:8000/health/ready/ || true)
+            echo "readiness=$code (attempt $attempt)"
+            if [ "$code" = "200" ]; then break; fi
+            sleep 1
+          done
+          test "$code" = "200" || { echo "readiness did not recover"; cat /tmp/ready-up.json; exit 1; }
+
+      # Known limitation, recorded rather than hidden: the worker and publisher do
+      # not reconnect to a broker that went away — their pika connection is opened
+      # once. Nothing is lost (the outbox row stays pending and the lease is
+      # reaped), but the processes must be restarted. Automatic reconnection is
+      # not implemented in v0.7.0.
+      - name: Restart the broker consumers (no auto-reconnect yet)
+        run: docker compose restart publisher worker scheduler
+
+      # A database restart drops every pooled connection. Django reconnects on
+      # the next query, so recovery must be automatic and the readiness probe
+      # must confirm it.
+      - name: Database restart is survived
+        run: |
+          set -euo pipefail
+          docker compose restart postgres
+
+          code=""
+          for attempt in $(seq 1 90); do
+            code=$(curl -s -o /tmp/ready-db.json -w '%{http_code}' \
+              http://localhost:8000/health/ready/ || true)
+            if [ "$code" = "200" ]; then break; fi
+            sleep 1
+          done
+          test "$code" = "200" || { echo "stack did not survive the DB restart"; cat /tmp/ready-db.json; exit 1; }
+          grep -Eq '"postgres": *"ok"' /tmp/ready-db.json
+
+      # The point of the two faults above is not just that the probes recover: the
+      # pipeline must still do real work afterwards.
+      - name: End-to-end still works after both faults
+        run: docker compose exec -T web python manage.py sample_run --timeout 120
+
       - name: Container logs
         if: always()
         run: docker compose logs --no-color --tail=200

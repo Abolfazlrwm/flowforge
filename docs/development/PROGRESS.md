@@ -2,9 +2,9 @@
 
 ## Current Phase
 
-**Phase 5 — Distributed Workers: COMPLETE (v0.6.0).** Verification gaps are being
-closed in this PR (`fix/phase5-verification-gaps`), which will be tagged **v0.6.1**
-on merge. Phase 6 — Reliability — is next.
+**Phase 6 — Reliability: IN PROGRESS.** The work is on
+`feat/phase6-reliability` and will be tagged **v0.7.0** on merge. Phase 5 is
+complete and released (`v0.6.0`), and its verification gaps closed as `v0.6.1`.
 
 ## Resume point
 
@@ -12,35 +12,37 @@ If this session is resumed cold, read this section first.
 
 | Question | Answer |
 |----------|--------|
-| Where is the work | `fix/phase5-verification-gaps`; on merge it becomes `v0.6.1`. `main` is the integration branch. |
-| What is released | `v0.1.0` … `v0.6.0`, plus `v0.5.1` (Phase 4 gap). `v0.6.1` (Phase 5 gaps) is the target of this PR. |
+| Where is the work | `feat/phase6-reliability`; on merge it becomes `v0.7.0`. `main` is the integration branch. |
+| What is released | `v0.1.0` … `v0.6.1` (including the `v0.5.1` and `v0.6.1` gap releases). |
 | Framework | **Django 5.2 LTS** (owner decision, [ADR-010](../adr/ADR-010-django-5-2-lts.md)). Python stays at 3.13. |
 | Message broker | **RabbitMQ via pika**, no Celery ([ADR-011](../adr/ADR-011-custom-scheduler-and-transactional-outbox.md)). `RABBITMQ_URL` is the one broker. |
-| What is next | Merge the v0.6.1 PR, tag `v0.6.1`, then Phase 6 — Reliability (retries, dead-letter, backoff). |
-| What blocks Phase 6 | **Nothing.** |
+| What is next | Merge the Phase 6 PR, tag `v0.7.0`. |
+| What blocks Phase 7 | **Nothing.** |
 | What else is open | Nothing pending an owner decision. |
 
 ## Status
 
 | Item | State |
 |------|-------|
-| Branch | `fix/phase5-verification-gaps` → will be tagged `v0.6.1` on merge |
+| Branch | `feat/phase6-reliability` → will be tagged `v0.7.0` on merge |
 | Phase 0 PR | #1 — **MERGED** as `97c17bf` |
 | Stack upgrade | **MERGED** as `525e919` (Django 5.2 LTS, DRF 3.17, Actions re-pinned) |
 | Phase 1 | **MERGED** as `869720f`, tagged `v0.2.0` |
 | Phase 2 | **MERGED** as `d31abf3`, tagged `v0.3.0` |
 | Phase 3 | **MERGED** as `405cb3d`, tagged `v0.4.0` |
 | Phase 4 | **MERGED** as `a68ac2a` (PR #25), tagged `v0.5.0`; gap closed by PR #27 (`v0.5.1`) |
-| Phase 5 | **MERGED** as `6b0564f` (PR #28), tagged `v0.6.0`; verification gaps close in this PR (target `v0.6.1`) |
-| CI | Green on `main`: `lint`, `test`, `schema`, `docs`, `docker` (Phase 5 run `39506564517`) |
+| Phase 5 | **MERGED** as `6b0564f` (PR #28), tagged `v0.6.0`; verification gaps closed by PR #30 (`303a1fa`), tagged `v0.6.1` |
+| Phase 6 | **IN PROGRESS** on `feat/phase6-reliability` (target `v0.7.0`) |
+| CI | Green on `main` through the `v0.6.1` run `39546701729` |
 | Docker | **Verified in CI** (build + compose up + health probes + e2e). Accepted by owner decision 2026-10-19 — no local check is required |
-| Tags | `v0.1.0` … `v0.6.0` annotated; `v0.5.1` is a follow-up release. `v0.6.1` will be tagged on merge of this PR. |
-| GitHub Releases | Published for `v0.1.0` … `v0.6.0` and `v0.5.1`. `v0.6.1` pending this PR's merge. |
+| Tags | `v0.1.0` … `v0.6.1`, annotated. |
+| GitHub Releases | Published for `v0.1.0` … `v0.6.1`. |
 | Branch protection | Active on `main`: `lint`, `test`, `docker` required, strict, no force push, 0 approving reviews, **admins cannot bypass** (`enforce_admins`) |
 | Django | **5.2 LTS** (ADR-010) |
 | Python | 3.13 (3.14 deferred — see limitations) |
 | Phase 4 | Complete — scheduler, outbox, publisher, lease reaper; no Celery. Publisher verified against a real broker. |
 | Phase 5 | Complete — worker with manual ack, prefetch, trusted handlers, lease+fencing, heartbeat, graceful shutdown. The e2e sample reaches `SUCCEEDED` in the compose CI job, in-process and via the REST API. |
+| Phase 6 | In progress — retry policy with exponential backoff and jitter, `DEAD` dead-letter state with manual requeue, persisted handler results, idempotency keys, failure-injection tests and `docs/architecture/failure-model.md`. |
 
 ## Completed
 
@@ -256,12 +258,58 @@ If this session is resumed cold, read this section first.
 70. `docs/architecture/execution-model.md` records the worker's contract and what it
     does not claim.
 
+### Phase 6 — Reliability
+
+71. `core/domain/retry.py`: `RetryPolicy` (frozen, validated at construction),
+    `get_retry_policy(config)` reading the per-task `config["retry"]` block, and
+    `calculate_backoff` — exponential growth, a hard cap, and optional full jitter.
+    Pure domain: no Django import.
+72. `TaskRunState.DEAD` added; the task machine now has 12 edges. `reap_lease`
+    (RUNNING→READY) is gone, replaced by `reap_retry` (RUNNING→RETRYING) and
+    `reap_dead` (RUNNING→DEAD). A dead worker is a *consumed attempt*, not a free
+    retry — returning it to READY would let a crash loop run forever uncounted.
+    `bury` (FAILED→DEAD) added.
+73. `core/repositories/transitions.py`: `reclaim_task_run` routes by policy,
+    `schedule_retries` moves FAILED into the retry lifecycle, `promote_due_retries`
+    promotes RETRYING back to READY only once the backoff has elapsed, and
+    `requeue_dead_task_run` is the manual recovery path.
+74. `core/models.TaskRun` gained `scheduled_at`, `result` and `idempotency_key`,
+    plus the `taskrun_scheduled_iff_retrying` CHECK constraint. Migration `0005`.
+75. `schedule_once` now runs reap → schedule_retries → promote_due_retries →
+    advance, in that order, so a retry scheduled in this pass is not dispatched
+    before its delay.
+76. The worker persists handler return values into `TaskRun.result` (success only)
+    and reuses a prior `SUCCEEDED` result when the dispatch carries an
+    `idempotency_key`.
+77. `manage.py requeue_dead <task_run_id>`: the operator's way out of `DEAD`. It
+    exits non-zero for a missing row, a malformed id, or a task that is not DEAD.
+78. Failure-injection tests on real PostgreSQL + RabbitMQ
+    (`tests/integration/test_failure_injection.py`): SIGKILL a worker mid-task and
+    prove the reaper retries it to `SUCCEEDED`; SIGKILL the scheduler and prove a
+    fresh pass cannot double-dispatch; lose a publisher confirm and prove the
+    outbox row stays pending and is delivered exactly once.
+79. The `docker` CI job now injects infrastructure faults: it stops RabbitMQ and
+    asserts readiness returns 503 naming `rabbitmq`, starts it and asserts 200;
+    restarts PostgreSQL and asserts recovery; then runs the end-to-end sample
+    again, so "the probe is green" is never the only claim.
+80. `docs/architecture/failure-model.md` maps every failure mode to a named test
+    and marks the ones without one UNVERIFIED (clock skew, broker durability,
+    in-flight sibling cancellation).
+
 ## Verification
 
 ### In CI (authoritative)
 
 Phase 5 run: https://github.com/Abolfazlrwm/flowforge/actions/runs/39506564517
 (v0.6.0 — worker; 389 unit + 20 integration green; docker e2e reached `SUCCEEDED`)
+
+Phase 5 gap release: https://github.com/Abolfazlrwm/flowforge/actions/runs/39546701729
+(v0.6.1 — 390 unit + 21 integration; the SIGTERM subprocess test passed; the REST
+API e2e reached `succeeded`; docker asserted `healthy` for scheduler, publisher and
+worker)
+
+Phase 6: the CI URL is added once the run is green, not before — see the ordering
+note at the end of this document.
 
 Phase 2 run: https://github.com/Abolfazlrwm/flowforge/actions/runs/39252710339
 
@@ -337,79 +385,97 @@ passed only because of container start ordering.
 
 ### Architectural
 
-1. **Handler return values are not persisted.** The worker records the task
-   outcome (SUCCEEDED/FAILED) durably, but a handler's return value is discarded.
-   Result storage belongs to Phase 6; today the outcome is the result.
-2. **The publisher's broker path is verified against a real broker in CI** (v0.5.1).
+1. **The worker does not reconnect to RabbitMQ.** Both the worker and the publisher
+   open their pika connection once. If the broker restarts, the worker process
+   exits and the publisher fails its next sweep. Nothing is lost — the outbox row
+   stays pending and the lease is reaped — but the processes must be restarted.
+   The docker CI job restarts them explicitly rather than pretending recovery is
+   automatic. Recorded as failure mode 14 in
+   [`docs/architecture/failure-model.md`](../architecture/failure-model.md).
+2. **Broker durability is classic-queue durability.** Messages are published
+   `delivery_mode=2` to a durable exchange and durable queues, which survives a
+   clean broker restart. It does not survive an abrupt broker failure before
+   fsync, because the dispatch queue is a classic queue, not a quorum queue.
+   Failure mode 17, UNVERIFIED.
+3. **Idempotency keys are best-effort, not a lock.** A dispatch whose key already
+   has a `SUCCEEDED` result reuses it, but two *concurrent* executions of the same
+   key can both run. A handler without a key that is not naturally idempotent
+   will replay after a crash; at-least-once delivery is the contract, and the
+   registry is trusted-only precisely so the operator decides what is safe.
+4. **A failed run does not cancel its running siblings.** `derive_workflow_run_state`
+   marks the run FAILED as soon as any task fails, but tasks already `RUNNING` run
+   to completion. Cooperative cancellation is not implemented. Failure mode 11.
+5. **The publisher's broker path is verified against a real broker in CI** (v0.5.1).
    `tests/integration/test_rabbit_publisher.py` runs against a RabbitMQ service
    container with `REQUIRE_RABBITMQ=1`: confirms + arrival, mandatory routing,
    outage then recovery, crash-window redelivery, and two publishers without
    duplicates. No remaining owner-side verification is required.
-3. **Readiness checks are mostly real but not exhaustive.** RabbitMQ is checked
+6. **Readiness checks are mostly real but not exhaustive.** RabbitMQ is checked
    with a real AMQP connection open/close (not a TCP connect), Redis with a cache
    write (which would also pass against a different cache backend), and PostgreSQL
    with `SELECT 1`. None asserts the broker's vhost/permissions beyond a successful
    handshake.
-4. **`make demo` does not run a workflow yet.** It brings up the stack and probes
+7. **`make demo` does not run a workflow yet.** It brings up the stack and probes
    both health endpoints. A real end-to-end run is exercised by `manage.py
    sample_run` (in-process) and by the REST API in the compose CI job, not by
    `make demo`.
 
 ### Tooling
 
-5. **Base image pinned by tag, not digest.** `python:3.13-slim` can drift.
-6. **No dedicated `tests/e2e/` directory.** End-to-end coverage lives in the
+8. **Base image pinned by tag, not digest.** `python:3.13-slim` can drift.
+9. **No dedicated `tests/e2e/` directory.** End-to-end coverage lives in the
    compose CI job: `manage.py sample_run` drives a workflow in-process to
    `SUCCEEDED`, and a separate step drives the same flow through the REST API
    (auth → publish → trigger → poll). The SIGTERM subprocess test
    (`tests/integration/test_worker_sigterm.py`) covers graceful shutdown against
    real PostgreSQL + RabbitMQ. These run only in CI (no local Docker/PostgreSQL).
-7. **Coverage is 100% of a very small codebase.** The number is not yet
-   meaningful as a quality signal.
-8. **Pre-commit hooks use `language: system`**, so they depend on the local
+10. **Coverage is a line count, not a quality signal.** 86.73% at v0.7.0 (gate
+    80%). The uncovered lines are concentrated in the pika connection paths, which
+    only the integration suite exercises.
+11. **Pre-commit hooks use `language: system`**, so they depend on the local
    environment rather than a locked one.
-9. **Compose bind-mounts the source over `/app`**, which hides the image's
+12. **Compose bind-mounts the source over `/app`**, which hides the image's
    `staticfiles/` output. Harmless with `DEBUG=True` (Django serves static
    itself) but wrong for a production-like run.
-10. **The migration gate needs Docker Compose v2.20+** for
+13. **The migration gate needs Docker Compose v2.20+** for
     `service_completed_successfully`. Older Compose silently ignores the
     condition and the race returns. The stack is not yet gated on the Compose
     version.
 
 ### Naming
 
-11. **The name "FlowForge" is conflicted** — npm name reserved, PyPI
+14. **The name "FlowForge" is conflicted** — npm name reserved, PyPI
     `flow-forge` taken, a prior venture-funded company (now FlowFuse), and an
     active `flowforgesoft.com`. Five alternatives were measured and all are
     taken on PyPI (ADR-009). Retained by owner-delegated decision.
 
 ### Dependency deferrals
 
-12. **Python stays at 3.13.** Django 5.2 supports Python 3.14 only from 5.2.8.
+15. **Python stays at 3.13.** Django 5.2 supports Python 3.14 only from 5.2.8.
     The compiled dependencies do ship `cp314` wheels (`psycopg-binary` 11,
     `pydantic-core` 31, `rpds-py` 29) and the rest are pure Python, but "every
     dependency verified on 3.14 in CI" has not been demonstrated: that needs a
     3.14 entry in the CI matrix *and* a matching Docker base image. Docker
     Python minor/major bumps are ignored in `dependabot.yml` until then.
-13. **redis-py stays below 6 for the Redis cache backend.** The Celery-driven pin
+16. **redis-py stays below 6 for the Redis cache backend.** The Celery-driven pin
     is gone (ADR-011); the remaining reason is cache-backend compatibility, which
     is verified separately before a major bump.
-14. **Celery is gone.** Removed in Phase 4 (ADR-011); the Celery Dependabot
+17. **Celery is gone.** Removed in Phase 4 (ADR-011); the Celery Dependabot
     ignore was removed with it.
-15. **Docker is verified in CI only, and that is now sufficient by owner
+18. **Docker is verified in CI only, and that is now sufficient by owner
     decision.** The daemon is offline on the maintainer's machine, so
     `docker compose up` has never run there. On 2026-10-19 the owner withdrew the
     earlier "do not tag until Docker is verified on my machine" rule and accepted
     the CI `docker` job (build + compose up + both health probes) as the evidence.
     Recorded in [DECISIONS.md](DECISIONS.md).
-16. **The Phase 2 publish-race tests have not run on the developer's machine.**
+19. **The Phase 2 publish-race tests have not run on the developer's machine.**
     A local PostgreSQL is listening on `localhost:5432` but rejects the
     `flowforge` credentials in `.env` (`password authentication failed`), so the
     three new concurrency tests skip locally — the same CI-only coverage Phase 1's
     transition races have. The developer's own credentials were not changed to
     force a local run: the owner's database is not theirs to modify. CI supplies
     `POSTGRES_PASSWORD: flowforge`, so the tests run for real there.
-17. **`publish_definition` does not serialise concurrent first-publishes.**
+20. **`publish_definition` does not serialise concurrent first-publishes.**
     `select_for_update()` cannot lock a row that does not exist, so two callers
     publishing the same `(name, version)` for the first time both see "not there"
     and both insert. The unique constraint picks the winner and the loser's
@@ -417,11 +483,11 @@ passed only because of container start ordering.
     an `IntegrityError` rather than a friendly conflict, and it is the caller's
     job to retry. Serialising would need a whole-range lock or a retry loop;
     neither was added. Documented in `docs/architecture/definitions.md`.
-18. **`docs/architecture/definitions.md` is the only new architecture document,
+21. **`docs/architecture/definitions.md` is the only new architecture document,
     and its Mermaid diagram is not rendered in CI.** There is no Markdown link
     checker and no diagram render step in the pipeline; the diagram is verified
     by reading, not by a build.
-19. **The MkDocs site is now built in CI, but a Mermaid syntax error is still
+22. **The MkDocs site is now built in CI, but a Mermaid syntax error is still
     invisible.** Owner decision on 2026-10-19 added a `docs` job running
     `mkdocs build --strict` with `mkdocs-material` and `pymdownx.superfences`, so
     a broken internal link, a nav entry with no target, or an unparseable page
@@ -450,20 +516,24 @@ nine separate merges, so a regression can be attributed to one change.
 
 ## Blockers
 
-None. Phase 6 is unblocked.
+None.
 
 ## Next step
 
-Phase 5 is complete (`v0.6.0`) and its verification gaps close in this PR (target
-`v0.6.1`). Proceed to **Phase 6 — Reliability (v0.7.0)**: retry policies,
-exponential backoff with jitter, dead-letter handling, and persisting handler
-results. The `retrying` state and `schedule_retry` edge already exist; Phase 6 is
-the policy that drives them and the DLQ.
+Phase 6 is in progress on `feat/phase6-reliability` (target `v0.7.0`): retry
+policies with exponential backoff and jitter, the `DEAD` dead-letter state with
+manual requeue, persisted handler results, idempotency keys, and failure-injection
+tests. `docs/architecture/failure-model.md` is the map of what is proven and what
+is not — read its UNVERIFIED entries before claiming a failure mode is handled.
 
-Phase 5 left two things Phase 6 will feel: **a failed task does not retry** (the
-worker marks it FAILED and the run FAILED; nothing schedules a retry or a
-dead-letter route yet), and **handler return values are not persisted** (only the
-task outcome).
+The three gaps Phase 7 will feel, all recorded in that document:
+
+- **the worker does not reconnect to RabbitMQ** (failure mode 14) — a broker
+  restart requires restarting the processes;
+- **broker durability is classic-queue durability** (failure mode 17) — a quorum
+  queue is the fix;
+- **a failed run does not cancel its running siblings** (failure mode 11) —
+  cooperative cancellation is not implemented.
 
 ## Ordering note
 
