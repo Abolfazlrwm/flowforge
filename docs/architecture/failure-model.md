@@ -296,7 +296,7 @@ the restart fails, or the stack never recovers.
 next query. Pending outbox rows survive because they are database rows, not broker
 state, so a restarted publisher drains them.
 
-**Tests.** The `docker` CI job restarts the `postgres` container and asserts
+**Tests.** The `docker` CI job restarts the `db` container and asserts
 `/health/ready/` returns to 200 with `"postgres": "ok"`, then runs the end-to-end
 sample workflow again to prove the pipeline still does real work. Without that
 second assertion, "the probe is green" would be the only claim — and a green probe

@@ -194,11 +194,13 @@ def test_a_stale_token_loses_even_under_concurrency(task_run: TaskRun) -> None:
 
 
 def test_exactly_one_reaper_reclaims_an_expired_lease(task_run: TaskRun) -> None:
-    """N reapers race for one expired lease; exactly one may return it to READY.
+    """N reapers race for one expired lease; exactly one may consume the attempt.
 
     Two reapers both seeing the row as expired must not both succeed: the second's
     conditional UPDATE finds the row already reclaimed (no longer RUNNING, lease
-    cleared), so it matches nothing and returns ``False``.
+    cleared), so it matches nothing and returns ``False``. A single reclaim is what
+    keeps the attempt counter honest — a double reclaim would count one dead worker
+    twice.
     """
     require_postgres()
     TaskRun.objects.filter(pk=task_run.id).update(
@@ -219,7 +221,10 @@ def test_exactly_one_reaper_reclaims_an_expired_lease(task_run: TaskRun) -> None
     )
 
     task_run.refresh_from_db()
-    assert task_run.state == TaskRunState.READY.value
+    # The reaper routes the dead attempt into the retry lifecycle, never straight
+    # back to READY: a dead worker is a consumed attempt, not a free retry.
+    assert task_run.state == TaskRunState.RETRYING.value
+    assert task_run.attempt == 2
     assert task_run.fencing_token == 2
     assert task_run.lease_owner is None
 
@@ -243,4 +248,5 @@ def test_reap_expired_leases_is_safe_under_concurrency(task_run: TaskRun) -> Non
     assert sum(counts) == 1, f"expected total reclamations of 1, got {sum(counts)}: {counts}"
 
     task_run.refresh_from_db()
-    assert task_run.state == TaskRunState.READY.value
+    assert task_run.state == TaskRunState.RETRYING.value
+    assert task_run.attempt == 2
