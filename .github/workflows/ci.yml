@@ -426,11 +426,16 @@ jobs:
 
           # Wait until the publisher has confirmed every outbox row (a poll, not a
           # sleep): only then is the dispatch genuinely "confirmed" by the broker.
+          #
+          # `manage.py shell -c` prints an "N objects imported automatically"
+          # banner with no trailing newline, which glues itself to the number. The
+          # sentinel keeps the parse honest instead of depending on that banner.
+          pending="unknown"
           for attempt in $(seq 1 60); do
             pending="$(docker compose exec -T web python manage.py shell -c \
-              'from core.models import OutboxMessage; print(OutboxMessage.objects.filter(published_at__isnull=True).count())' \
-              | tr -d '\r\n')"
-            echo "pending outbox rows=$pending (attempt $attempt)"
+              'from core.models import OutboxMessage; print("PENDING=" + str(OutboxMessage.objects.filter(published_at__isnull=True).count()))' \
+              2>/dev/null | grep -oE 'PENDING=[0-9]+' | cut -d= -f2 | tail -1 || true)"
+            echo "pending outbox rows=${pending:-?} (attempt $attempt)"
             if [ "$pending" = "0" ]; then break; fi
             sleep 1
           done
