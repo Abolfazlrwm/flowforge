@@ -377,6 +377,14 @@ components:
       required:
       - password
       - username
+    JoinEnum:
+      enum:
+      - all
+      - any
+      type: string
+      description: |-
+        * `all` - all
+        * `any` - any
     PaginatedWorkflowRunSummaryList:
       type: object
       required:
@@ -469,6 +477,12 @@ components:
         config:
           type: object
           additionalProperties: {}
+        when:
+          type: string
+          nullable: true
+          minLength: 1
+        join:
+          $ref: '#/components/schemas/JoinEnum'
       required:
       - key
       - task_type
@@ -533,6 +547,7 @@ components:
       - ready
       - running
       - succeeded
+      - skipped
       - failed
       - retrying
       - dead
@@ -543,6 +558,7 @@ components:
         * `ready` - Ready
         * `running` - Running
         * `succeeded` - Succeeded
+        * `skipped` - Skipped
         * `failed` - Failed
         * `retrying` - Retrying
         * `dead` - Dead
