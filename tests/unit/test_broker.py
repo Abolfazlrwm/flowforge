@@ -8,9 +8,12 @@ separately in the integration suite against PostgreSQL.
 
 from __future__ import annotations
 
+from unittest.mock import MagicMock
+
 import pika
 import pytest
 from core.broker import FakePublisher, build_publisher, publish_once
+from core.broker_rabbit import QueueTypeMismatchError, declare_dispatch_queue
 from core.domain.states import TaskRunState, WorkflowRunState
 from core.models import OutboxMessage, Task, TaskRun, Workflow, WorkflowRun
 from core.repositories import enqueue_ready_tasks
@@ -117,3 +120,41 @@ def test_publisher_command_single_pass() -> None:
     # Every row was delivered and stamped; the fake publisher is dropped, but the
     # durable effect (no pending rows remain) is what the command must guarantee.
     assert OutboxMessage.objects.filter(published_at__isnull=True).count() == 0
+
+
+class TestQuorumQueueDeclaration:
+    """The dispatch queue is a quorum queue, and a type mismatch is explained."""
+
+    def test_the_queue_is_declared_as_a_quorum_queue(self) -> None:
+        """Quorum is what makes a confirmed publish survive an abrupt broker failure."""
+        channel = MagicMock()
+
+        declare_dispatch_queue(channel, "flowforge.tasks")
+
+        channel.queue_declare.assert_called_once_with(
+            queue="flowforge.tasks",
+            durable=True,
+            arguments={"x-queue-type": "quorum"},
+        )
+
+    def test_an_existing_classic_queue_raises_a_migration_error(self) -> None:
+        """PRECONDITION_FAILED is an operator action, so it must say what to do."""
+        channel = MagicMock()
+        channel.queue_declare.side_effect = pika.exceptions.ChannelClosedByBroker(
+            406, "PRECONDITION_FAILED - inequivalent arg 'x-queue-type'"
+        )
+
+        with pytest.raises(QueueTypeMismatchError) as raised:
+            declare_dispatch_queue(channel, "flowforge.tasks")
+
+        message = str(raised.value)
+        assert "delete_queue flowforge.tasks" in message
+        assert "cannot be changed in place" in message
+
+    def test_another_channel_error_is_not_disguised_as_a_type_mismatch(self) -> None:
+        """Only 406 means "wrong type"; anything else is a different problem."""
+        channel = MagicMock()
+        channel.queue_declare.side_effect = pika.exceptions.ChannelClosedByBroker(404, "NOT_FOUND")
+
+        with pytest.raises(pika.exceptions.ChannelClosedByBroker):
+            declare_dispatch_queue(channel, "flowforge.tasks")

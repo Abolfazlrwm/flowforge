@@ -14,8 +14,15 @@ Reliability contract:
 - **Heartbeat.** A background thread extends the lease while the handler runs, so a
   long task is not reaped mid-flight. If the lease was already lost, the heartbeat
   stops and the finish is correctly rejected as stale.
+- **Reconnection.** ``run()`` re-establishes the connection, channel, queue and
+  consumer with exponential backoff after the broker goes away, without a process
+  restart. An in-flight message whose ack fails is *not* treated as done: the ack
+  raises, the connection is torn down, the broker requeues the message, and the
+  lease/reaper path covers whatever the handler managed to write.
 - **Graceful shutdown.** ``stop()`` halts consumption; the in-flight message
-  finishes and is acked, then the connection closes. Unacked messages are redelivered.
+  finishes and is acked, then the connection closes. ``stop()`` also interrupts a
+  reconnect wait, so SIGTERM during an outage exits promptly. Unacked messages are
+  redelivered.
 - **Trusted handlers only.** The message names a ``task_type``; the handler is
   looked up in the registry. Nothing in the message is imported or executed as code.
 """
@@ -23,6 +30,7 @@ Reliability contract:
 from __future__ import annotations
 
 import json
+import logging
 import threading
 from collections.abc import Callable, Iterator, Mapping
 from contextlib import contextmanager
@@ -31,11 +39,14 @@ from uuid import UUID, uuid4
 
 import pika
 
-from core.broker_rabbit import DEFAULT_EXCHANGE
+from core.broker_rabbit import DEFAULT_EXCHANGE, declare_dispatch_queue
+from core.domain.retry import CONNECTION_BACKOFF, calculate_backoff
 from core.domain.states import TaskRunState
 from core.models import TaskRun
 from core.repositories.transitions import claim_task_run, finish_task_run, renew_lease
 from core.worker.registry import resolve
+
+logger = logging.getLogger(__name__)
 
 #: The queue every worker consumes from. Bound to the dispatch exchange.
 DEFAULT_QUEUE = "flowforge.tasks"
@@ -84,7 +95,7 @@ class Worker:
         connection = pika.BlockingConnection(pika.URLParameters(self._url))
         channel = connection.channel()
         channel.exchange_declare(exchange=DEFAULT_EXCHANGE, exchange_type="direct", durable=True)
-        channel.queue_declare(queue=self._queue, durable=True)
+        declare_dispatch_queue(channel, self._queue)
         channel.queue_bind(
             queue=self._queue,
             exchange=DEFAULT_EXCHANGE,
@@ -98,17 +109,64 @@ class Worker:
         return channel
 
     def run(self) -> None:
-        """Consume until ``stop()`` is called, then close the connection."""
-        channel = self._connect()
-        channel.basic_consume(
-            queue=self._queue,
-            on_message_callback=self._on_message,
-            auto_ack=False,
-        )
+        """Consume until ``stop()`` is called, reconnecting through broker outages.
+
+        The loop is the whole reconnection policy: connect, consume, and on a
+        connection-level failure wait out an exponential backoff (with jitter) and
+        try again. ``stop()`` sets the event the wait is watching, so a SIGTERM
+        during an outage exits immediately instead of after the current delay.
+
+        ``start_consuming()`` returns normally only after ``stop_consuming()``; any
+        other exit is a lost connection, which is why the success path breaks out
+        and the exception path backs off.
+
+        Raises:
+            QueueTypeMismatchError: if the queue exists with a different type. That
+                is an operator action, not a transient fault, so it is not retried.
+        """
+        attempt = 0
         try:
-            channel.start_consuming()
+            while not self._stop.is_set():
+                try:
+                    channel = self._connect()
+                except pika.exceptions.AMQPError as exc:
+                    # Includes StreamLostError and AMQPConnectionError while the
+                    # broker is still down. Back off and try again.
+                    attempt = self._back_off(attempt, exc)
+                    continue
+
+                attempt = 0
+                try:
+                    channel.basic_consume(
+                        queue=self._queue,
+                        on_message_callback=self._on_message,
+                        auto_ack=False,
+                    )
+                    channel.start_consuming()
+                except pika.exceptions.AMQPError as exc:
+                    attempt = self._back_off(attempt, exc)
+                    continue
+                break  # stop_consuming() returned: a clean stop
         finally:
             self.close()
+
+    def _back_off(self, attempt: int, exc: BaseException) -> int:
+        """Wait before the next connection attempt; return the new attempt count.
+
+        Returns ``attempt + 1``. The wait is on ``self._stop``, so a shutdown
+        request interrupts it rather than waiting out a 30s delay.
+        """
+        attempt += 1
+        delay = calculate_backoff(attempt=attempt, policy=CONNECTION_BACKOFF)
+        logger.warning(
+            "Worker %s lost the broker (%s); reconnecting in %.2fs (attempt %d)",
+            self._worker_id,
+            exc,
+            delay,
+            attempt,
+        )
+        self._stop.wait(delay)
+        return attempt
 
     def stop(self) -> None:
         """Ask the consumer to stop after the in-flight message is acked."""
@@ -253,7 +311,12 @@ class Worker:
             # The durable write failed: do not ack; requeue for another attempt.
             nack(True)
             return
-        # Durable (or correctly rejected as stale). Ack.
+        # Durable (or correctly rejected as stale). Ack — and deliberately let a
+        # failing ack propagate: if the channel died between the write and the ack,
+        # the broker has *not* been told the message is done, so it must requeue it.
+        # Swallowing that exception would turn a lost ack into a silent success.
+        # The redelivery is harmless: the row is no longer READY, so the second
+        # delivery is claimed by nobody and acked without re-executing.
         ack()
 
     @contextmanager

@@ -28,6 +28,67 @@ import pika
 #: between the outbox write and the worker read does not drop messages.
 DEFAULT_EXCHANGE = "flowforge.direct"
 
+#: Arguments every declaration of the dispatch queue must carry.
+#:
+#: A **quorum queue** replicates each message through Raft and fsyncs it before
+#: acknowledging, so a confirmed publish survives an abrupt broker failure — the
+#: guarantee a classic durable queue does *not* give (it can lose a message the
+#: broker confirmed but had not flushed). On a single node this buys crash-safe
+#: durability, not high availability: there is no replica to fail over to.
+#:
+#: The type is fixed at declaration time. An existing classic queue with the same
+#: name cannot be converted in place; see ``docs/architecture/execution-model.md``
+#: for the delete-and-redeclare procedure, and :func:`declare_dispatch_queue` for
+#: the error that tells an operator they need it.
+DISPATCH_QUEUE_ARGUMENTS: dict[str, Any] = {"x-queue-type": "quorum"}
+
+
+class QueueTypeMismatchError(RuntimeError):
+    """The dispatch queue exists with a different type than this build declares.
+
+    Raised instead of letting a raw ``PRECONDITION_FAILED`` channel closure
+    surface, because the fix is a documented operator action rather than a retry:
+    a queue's type cannot be changed in place.
+    """
+
+
+def declare_dispatch_queue(
+    channel: pika.adapters.blocking_connection.BlockingChannel,
+    queue: str,
+) -> None:
+    """Declare the dispatch queue as a quorum queue, with a migration-shaped error.
+
+    Every component that declares this queue must use these arguments. If the
+    queue already exists as a classic queue, the broker closes the channel with
+    ``PRECONDITION_FAILED``; that is translated into
+    :class:`QueueTypeMismatchError` carrying the procedure, because retrying will
+    never fix it and the operator needs to know why.
+
+    Raises:
+        QueueTypeMismatchError: if the queue exists with a different type.
+    """
+    try:
+        channel.queue_declare(
+            queue=queue,
+            durable=True,
+            arguments=DISPATCH_QUEUE_ARGUMENTS,
+        )
+    except pika.exceptions.ChannelClosedByBroker as exc:
+        if exc.reply_code != 406:  # PRECONDITION_FAILED
+            raise
+        raise QueueTypeMismatchError(
+            f"The queue {queue!r} already exists with a different type than "
+            f"{DISPATCH_QUEUE_ARGUMENTS['x-queue-type']!r}. A queue's type cannot be "
+            "changed in place. Drain it, then delete and redeclare:\n"
+            f"  1. stop the worker and publisher;\n"
+            f"  2. wait until the queue is empty (or accept losing unacked dispatches, "
+            f"which the outbox will republish);\n"
+            f"  3. rabbitmqctl delete_queue {queue}  (or the management UI);\n"
+            f"  4. start the worker, which redeclares it as a quorum queue;\n"
+            f"  5. start the publisher.\n"
+            "See docs/architecture/execution-model.md."
+        ) from exc
+
 
 class RabbitPublisher:
     """Delivers outbox payloads to RabbitMQ, blocking on publisher confirms."""
