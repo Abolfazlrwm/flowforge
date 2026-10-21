@@ -13,8 +13,9 @@ from collections.abc import Callable, Mapping
 from types import MappingProxyType
 from typing import Any
 
-#: A handler takes the task's config mapping. The return value is not persisted
-#: yet (Phase 6 adds result storage); Phase 5 records success or failure only.
+#: A handler takes the task's config mapping. A non-``None`` return value is
+#: persisted into ``TaskRun.result`` when the task succeeds (Phase 6), and is the
+#: value an idempotent retry reuses instead of executing again.
 Handler = Callable[[Mapping[str, Any]], Any]
 
 _HANDLERS: dict[str, Handler] = {}

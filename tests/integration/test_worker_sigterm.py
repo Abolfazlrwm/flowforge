@@ -17,20 +17,23 @@ import os
 import signal
 import subprocess
 import sys
-import time
 import uuid
-from collections.abc import Callable
 from pathlib import Path
 
-import pika
 import pytest
-from core.broker_rabbit import DEFAULT_EXCHANGE, RabbitPublisher
 from core.domain.states import TaskRunState
 from core.models import TaskRun
-from core.worker.consumer import DEFAULT_ROUTING_KEY
 from django.conf import settings
 
-from tests.integration.conftest import require_postgres, require_rabbitmq
+from tests.integration.conftest import (
+    bind_queue,
+    publish_raw,
+    queue_is_empty,
+    require_postgres,
+    require_rabbitmq,
+    subprocess_database_url,
+    wait_until,
+)
 
 pytestmark = [
     pytest.mark.integration,
@@ -39,56 +42,9 @@ pytestmark = [
 ]
 
 
-def _wait_until(predicate: Callable[[], bool], timeout: float = 30.0) -> bool:
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        if predicate():
-            return True
-        time.sleep(0.05)  # bounded poll, not a synchronisation sleep
-    return False
-
-
-def _bind_queue(url: str, queue: str) -> pika.BlockingConnection:
-    conn = pika.BlockingConnection(pika.URLParameters(url))
-    channel = conn.channel()
-    channel.exchange_declare(exchange=DEFAULT_EXCHANGE, exchange_type="direct", durable=True)
-    channel.queue_declare(queue=queue, durable=True)
-    channel.queue_bind(queue=queue, exchange=DEFAULT_EXCHANGE, routing_key=DEFAULT_ROUTING_KEY)
-    return conn
-
-
-def _publish(url: str, payload: dict[str, object]) -> None:
-    publisher = RabbitPublisher(url)
-    try:
-        publisher.publish(
-            exchange=DEFAULT_EXCHANGE,
-            routing_key=DEFAULT_ROUTING_KEY,
-            payload=payload,
-        )
-    finally:
-        publisher.close()
-
-
-def _queue_is_empty(url: str, queue: str) -> bool:
-    conn = pika.BlockingConnection(pika.URLParameters(url))
-    try:
-        result = conn.channel().queue_declare(queue=queue, passive=True)
-        return result.method.message_count == 0
-    finally:
-        conn.close()
-
-
 def _state(task_run: TaskRun) -> str:
     task_run.refresh_from_db()
     return task_run.state
-
-
-def _database_url() -> str:
-    """The *test* database, so the subprocess sees the rows this test created."""
-    db = settings.DATABASES["default"]
-    host = db.get("HOST") or "localhost"
-    port = db.get("PORT") or "5432"
-    return f"postgres://{db['USER']}:{db['PASSWORD']}@{host}:{port}/{db['NAME']}"
 
 
 def test_sigterm_finishes_the_in_flight_task_and_exits_cleanly(
@@ -103,7 +59,7 @@ def test_sigterm_finishes_the_in_flight_task_and_exits_cleanly(
 
     # Bind the queue before publishing, so the message waits for the worker
     # instead of racing the worker's own queue declaration.
-    conn = _bind_queue(url, queue)
+    conn = bind_queue(url, queue)
     try:
         payload: dict[str, object] = {
             "dispatch_id": uuid.uuid4().hex,
@@ -112,12 +68,12 @@ def test_sigterm_finishes_the_in_flight_task_and_exits_cleanly(
             "config": {"path": str(release_file), "timeout": 60},
             "fencing_token": task_run.fencing_token,
         }
-        _publish(url, payload)
+        publish_raw(url, payload)
 
         env = {
             **os.environ,
             "DJANGO_SETTINGS_MODULE": "flowforge.settings.test",
-            "DATABASE_URL": _database_url(),
+            "DATABASE_URL": subprocess_database_url(),
             "RABBITMQ_URL": url,
             "PYTHONUNBUFFERED": "1",
         }
@@ -140,7 +96,7 @@ def test_sigterm_finishes_the_in_flight_task_and_exits_cleanly(
             )
             try:
                 # The worker claims the task; the handler then blocks on the file.
-                assert _wait_until(lambda: _state(task_run) == TaskRunState.RUNNING.value)
+                assert wait_until(lambda: _state(task_run) == TaskRunState.RUNNING.value)
                 task_run.refresh_from_db()
                 assert task_run.lease_expires_at is not None
 
@@ -149,7 +105,7 @@ def test_sigterm_finishes_the_in_flight_task_and_exits_cleanly(
                 # Release the handler. The worker must finish and ack it, then exit.
                 release_file.write_text("go")
 
-                assert _wait_until(lambda: proc.poll() is not None, timeout=60)
+                assert wait_until(lambda: proc.poll() is not None, timeout=60)
                 returncode = proc.returncode
             finally:
                 if proc.poll() is None:
@@ -165,7 +121,7 @@ def test_sigterm_finishes_the_in_flight_task_and_exits_cleanly(
         assert not TaskRun.objects.filter(
             state=TaskRunState.RUNNING.value, lease_expires_at__isnull=False
         ).exists()
-        assert _wait_until(lambda: _queue_is_empty(url, queue))
+        assert wait_until(lambda: queue_is_empty(url, queue))
     finally:
         # The channel may already be closed; cleanup is best-effort.
         with contextlib.suppress(Exception):
