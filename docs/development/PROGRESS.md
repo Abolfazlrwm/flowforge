@@ -2,9 +2,8 @@
 
 ## Current Phase
 
-**Phase 6 — Reliability: IN PROGRESS.** The work is on
-`feat/phase6-reliability` and will be tagged **v0.7.0** on merge. Phase 5 is
-complete and released (`v0.6.0`), and its verification gaps closed as `v0.6.1`.
+**Phase 6 — Reliability: COMPLETE (v0.7.0).** Merged as `3210001` (PR #31), tagged
+`v0.7.0`, released. Phase 7 is next.
 
 ## Resume point
 
@@ -12,11 +11,11 @@ If this session is resumed cold, read this section first.
 
 | Question | Answer |
 |----------|--------|
-| Where is the work | `feat/phase6-reliability`; on merge it becomes `v0.7.0`. `main` is the integration branch. |
-| What is released | `v0.1.0` … `v0.6.1` (including the `v0.5.1` and `v0.6.1` gap releases). |
+| Where is the work | `main`. Phase 6 is merged, tagged and released. |
+| What is released | `v0.1.0` … `v0.7.0` (including the `v0.5.1` and `v0.6.1` gap releases). |
 | Framework | **Django 5.2 LTS** (owner decision, [ADR-010](../adr/ADR-010-django-5-2-lts.md)). Python stays at 3.13. |
 | Message broker | **RabbitMQ via pika**, no Celery ([ADR-011](../adr/ADR-011-custom-scheduler-and-transactional-outbox.md)). `RABBITMQ_URL` is the one broker. |
-| What is next | Merge the Phase 6 PR, tag `v0.7.0`. |
+| What is next | Phase 7. |
 | What blocks Phase 7 | **Nothing.** |
 | What else is open | Nothing pending an owner decision. |
 
@@ -24,7 +23,7 @@ If this session is resumed cold, read this section first.
 
 | Item | State |
 |------|-------|
-| Branch | `feat/phase6-reliability` → will be tagged `v0.7.0` on merge |
+| Branch | `main` (Phase 6 merged as `3210001`) |
 | Phase 0 PR | #1 — **MERGED** as `97c17bf` |
 | Stack upgrade | **MERGED** as `525e919` (Django 5.2 LTS, DRF 3.17, Actions re-pinned) |
 | Phase 1 | **MERGED** as `869720f`, tagged `v0.2.0` |
@@ -32,17 +31,17 @@ If this session is resumed cold, read this section first.
 | Phase 3 | **MERGED** as `405cb3d`, tagged `v0.4.0` |
 | Phase 4 | **MERGED** as `a68ac2a` (PR #25), tagged `v0.5.0`; gap closed by PR #27 (`v0.5.1`) |
 | Phase 5 | **MERGED** as `6b0564f` (PR #28), tagged `v0.6.0`; verification gaps closed by PR #30 (`303a1fa`), tagged `v0.6.1` |
-| Phase 6 | **IN PROGRESS** on `feat/phase6-reliability` (target `v0.7.0`) |
-| CI | Green on `main` through the `v0.6.1` run `39546701729` |
-| Docker | **Verified in CI** (build + compose up + health probes + e2e). Accepted by owner decision 2026-10-19 — no local check is required |
-| Tags | `v0.1.0` … `v0.6.1`, annotated. |
-| GitHub Releases | Published for `v0.1.0` … `v0.6.1`. |
+| Phase 6 | **MERGED** as `3210001` (PR #31), tagged `v0.7.0` |
+| CI | Green on `main`: `lint`, `test`, `schema`, `docs`, `docker` (Phase 6 run `39605151141`) |
+| Docker | **Verified in CI** (build + compose up + health probes + e2e + failure injection). Accepted by owner decision 2026-10-19 — no local check is required |
+| Tags | `v0.1.0` … `v0.7.0`, annotated. |
+| GitHub Releases | Published for `v0.1.0` … `v0.7.0`. |
 | Branch protection | Active on `main`: `lint`, `test`, `docker` required, strict, no force push, 0 approving reviews, **admins cannot bypass** (`enforce_admins`) |
 | Django | **5.2 LTS** (ADR-010) |
 | Python | 3.13 (3.14 deferred — see limitations) |
 | Phase 4 | Complete — scheduler, outbox, publisher, lease reaper; no Celery. Publisher verified against a real broker. |
 | Phase 5 | Complete — worker with manual ack, prefetch, trusted handlers, lease+fencing, heartbeat, graceful shutdown. The e2e sample reaches `SUCCEEDED` in the compose CI job, in-process and via the REST API. |
-| Phase 6 | In progress — retry policy with exponential backoff and jitter, `DEAD` dead-letter state with manual requeue, persisted handler results, idempotency keys, failure-injection tests and `docs/architecture/failure-model.md`. |
+| Phase 6 | Complete — retry policy with exponential backoff and jitter, `DEAD` dead-letter state with manual requeue, persisted handler results, idempotency keys, failure-injection tests and `docs/architecture/failure-model.md`. |
 
 ## Completed
 
@@ -308,8 +307,11 @@ Phase 5 gap release: https://github.com/Abolfazlrwm/flowforge/actions/runs/39546
 API e2e reached `succeeded`; docker asserted `healthy` for scheduler, publisher and
 worker)
 
-Phase 6: the CI URL is added once the run is green, not before — see the ordering
-note at the end of this document.
+Phase 6: https://github.com/Abolfazlrwm/flowforge/actions/runs/39605151141
+(v0.7.0 — 435 unit + 24 integration green; the three failure-injection tests
+passed, including the SIGKILL-a-worker chain; docker reported the broker outage as
+503 with `"rabbitmq": "error"`, recovered to 200, survived the DB restart, and the
+e2e sample still reached `SUCCEEDED` afterwards)
 
 Phase 2 run: https://github.com/Abolfazlrwm/flowforge/actions/runs/39252710339
 
@@ -520,13 +522,10 @@ None.
 
 ## Next step
 
-Phase 6 is in progress on `feat/phase6-reliability` (target `v0.7.0`): retry
-policies with exponential backoff and jitter, the `DEAD` dead-letter state with
-manual requeue, persisted handler results, idempotency keys, and failure-injection
-tests. `docs/architecture/failure-model.md` is the map of what is proven and what
-is not — read its UNVERIFIED entries before claiming a failure mode is handled.
+Phase 6 is complete and released as `v0.7.0`. Phase 7 is next.
 
-The three gaps Phase 7 will feel, all recorded in that document:
+The three gaps Phase 7 will feel, all recorded in
+[`docs/architecture/failure-model.md`](../architecture/failure-model.md):
 
 - **the worker does not reconnect to RabbitMQ** (failure mode 14) — a broker
   restart requires restarting the processes;
