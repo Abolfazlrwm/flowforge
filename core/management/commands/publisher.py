@@ -22,6 +22,7 @@ from django.conf import settings
 from django.core.management.base import BaseCommand
 
 from core.broker import build_publisher, publish_once
+from core.db import reset_connections
 from core.domain.retry import CONNECTION_BACKOFF, calculate_backoff
 
 
@@ -70,6 +71,12 @@ class Command(BaseCommand):
                     # recovery the next sweep drains them. Crashing here would leave
                     # the process dead forever, which is exactly the manual restart
                     # this loop exists to remove.
+                    #
+                    # The failure may be the database rather than the broker (a
+                    # restart kills this loop's long-lived connection), so the
+                    # connection is discarded too — otherwise every later sweep
+                    # would reuse the same dead socket and fail identically.
+                    reset_connections()
                     failures += 1
                     delay = calculate_backoff(attempt=failures, policy=CONNECTION_BACKOFF)
                     self.stderr.write(
