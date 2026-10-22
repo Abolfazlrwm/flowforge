@@ -208,9 +208,11 @@ the DLQ. A failed task currently fails the run without a retry.
 - Every feature must include tests.
 - Conventional Commits required.
 - **Do not squash-merge.** `AUDIT_REPORT.md` cites every fix by SHA.
-- Do not merge PRs or create release tags without explicit owner approval, except
-  when CI is fully green and the change is within the current phase.
-- v1.0.0 requires explicit owner approval before it is tagged.
+- Merge PRs and cut release tags automatically once CI is fully green and the
+  change meets its acceptance criteria; no per-release approval is required. This
+  is an owner decision (2026-10-22), recorded in `DECISIONS.md`.
+- v1.0.0 is the one exception: it requires explicit owner approval before it is
+  tagged.
 - Do not attribute decisions to the owner that they did not make. If a decision
   is needed, ask and wait.
 - Never claim a check passed without the command output or the CI run URL.
