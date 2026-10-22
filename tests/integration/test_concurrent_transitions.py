@@ -21,16 +21,23 @@ import pytest
 from core.domain.states import TaskRunState, WorkflowRunState
 from core.models import TaskRun, WorkflowRun
 from core.repositories.transitions import (
+    cancel_task_run,
     claim_task_run,
     finish_task_run,
     reap_expired_leases,
     reclaim_task_run,
+    requeue_failed_task_run,
     transition_task_run,
     transition_workflow_run,
 )
 
 from tests.conftest import NOW
-from tests.integration.conftest import THREADS, require_postgres, run_concurrently
+from tests.integration.conftest import (
+    THREADS,
+    require_postgres,
+    run_concurrently,
+    run_concurrently_with_losers,
+)
 
 pytestmark = [
     pytest.mark.integration,
@@ -250,3 +257,67 @@ def test_reap_expired_leases_is_safe_under_concurrency(task_run: TaskRun) -> Non
     task_run.refresh_from_db()
     assert task_run.state == TaskRunState.RETRYING.value
     assert task_run.attempt == 2
+
+
+def test_cancellation_and_completion_cannot_both_win(task_run: TaskRun) -> None:
+    """A worker finishing while an operator cancels: exactly one outcome lands.
+
+    Both are conditional `UPDATE`s, so PostgreSQL decides. The loser matches zero
+    rows, which is the whole guarantee — there is no window in which a cancelled
+    task also carries a result, or a completed task is retroactively cancelled.
+    """
+    require_postgres()
+    token = claim_task_run(task_run_id=task_run.id, worker_id="worker-1", lease_seconds=30, now=NOW)
+    assert token is not None
+
+    results, errors = run_concurrently_with_losers(
+        THREADS,
+        lambda index: (
+            finish_task_run(
+                task_run_id=task_run.id,
+                target=TaskRunState.SUCCEEDED,
+                fencing_token=token,
+                result={"by": "worker"},
+                now=NOW,
+            )
+            if index % 2 == 0
+            else cancel_task_run(task_run_id=task_run.id, now=NOW)
+        ),
+    )
+
+    winners = [value for value in results if value is True]
+    assert len(winners) == 1, f"expected exactly one winner, got {winners}"
+    # A lost conditional UPDATE returns False; it does not raise. So a clean race
+    # has no errors, and anything here is a defect rather than a tolerated loss.
+    assert not errors, f"threads raised: {errors!r}"
+
+    task_run.refresh_from_db()
+    if task_run.state == TaskRunState.SUCCEEDED.value:
+        assert task_run.result == {"by": "worker"}
+    else:
+        assert task_run.state == TaskRunState.CANCELLED.value
+        assert task_run.result is None
+    assert task_run.lease_expires_at is None
+
+
+def test_two_operators_cannot_both_requeue_the_same_failed_task(task_run: TaskRun) -> None:
+    """Two operators re-running one FAILED task: exactly one requeue lands.
+
+    `requeue_failed_task_run` claims the row with `SELECT FOR UPDATE`, so the
+    second operator blocks, then sees the row already reset (no longer FAILED) and
+    is a no-op. The task is re-dispatched once, not twice — the same row-level
+    arbitration as every other transition here.
+    """
+    require_postgres()
+    task_run_id = task_run.id
+    TaskRun.objects.filter(pk=task_run_id).update(state=TaskRunState.FAILED.value, attempt=3)
+
+    results = run_concurrently(
+        THREADS,
+        lambda _index: requeue_failed_task_run(task_run_id=task_run_id),
+    )
+
+    assert sum(1 for value in results if value is True) == 1
+    task_run.refresh_from_db()
+    assert task_run.state == TaskRunState.PENDING.value
+    assert task_run.attempt == 1
