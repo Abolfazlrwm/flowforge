@@ -2,8 +2,11 @@
 
 ## Current Phase
 
-**Phase 6 — Reliability: COMPLETE (v0.7.0).** Merged as `3210001` (PR #31), tagged
-`v0.7.0`, released. Phase 7 is next.
+**Phase 7 — Advanced Workflows: IN PROGRESS** (`feat/phase7-advanced-workflows`).
+Phases 0–6 are complete and released. Two resilience gap releases followed Phase 6:
+`v0.7.1` (broker + database reconnection, quorum queue) and `v0.7.2` (per-process
+proof that worker, publisher and scheduler survive a broker/PostgreSQL restart with
+no process restart).
 
 ## Resume point
 
@@ -11,13 +14,13 @@ If this session is resumed cold, read this section first.
 
 | Question | Answer |
 |----------|--------|
-| Where is the work | `main`. Phase 6 is merged, tagged and released. |
-| What is released | `v0.1.0` … `v0.7.0` (including the `v0.5.1` and `v0.6.1` gap releases). |
+| Where is the work | `main` is at `v0.7.2`; Phase 7 is on `feat/phase7-advanced-workflows`. |
+| What is released | `v0.1.0` … `v0.7.2` (including the `v0.5.1`, `v0.6.1`, `v0.7.1` and `v0.7.2` gap releases). |
 | Framework | **Django 5.2 LTS** (owner decision, [ADR-010](../adr/ADR-010-django-5-2-lts.md)). Python stays at 3.13. |
 | Message broker | **RabbitMQ via pika**, no Celery ([ADR-011](../adr/ADR-011-custom-scheduler-and-transactional-outbox.md)). `RABBITMQ_URL` is the one broker. |
-| What is next | Phase 7. |
+| What is next | Finish Phase 7 — fan-out/fan-in, conditional branching, cron triggers, cancellation, event log, manual re-run, saga compensation — then `v0.8.0`. |
 | What blocks Phase 7 | **Nothing.** |
-| What else is open | Nothing pending an owner decision. |
+| What else is open | Nothing pending an owner decision. Release tags are cut automatically on green CI; only `v1.0.0` needs owner approval ([DECISIONS.md](DECISIONS.md)). |
 
 ## Status
 
@@ -32,10 +35,13 @@ If this session is resumed cold, read this section first.
 | Phase 4 | **MERGED** as `a68ac2a` (PR #25), tagged `v0.5.0`; gap closed by PR #27 (`v0.5.1`) |
 | Phase 5 | **MERGED** as `6b0564f` (PR #28), tagged `v0.6.0`; verification gaps closed by PR #30 (`303a1fa`), tagged `v0.6.1` |
 | Phase 6 | **MERGED** as `3210001` (PR #31), tagged `v0.7.0` |
+| Broker/DB resilience | **MERGED** as `0d05e42` (PR #33), tagged `v0.7.1` |
+| Resilience verification | **MERGED** as `47ca4f4` (PR #34), tagged `v0.7.2` |
+| Phase 7 | **IN PROGRESS** on `feat/phase7-advanced-workflows` (not yet merged) |
 | CI | Green on `main`: `lint`, `test`, `schema`, `docs`, `docker` (Phase 6 run `39605151141`) |
 | Docker | **Verified in CI** (build + compose up + health probes + e2e + failure injection). Accepted by owner decision 2026-10-19 — no local check is required |
-| Tags | `v0.1.0` … `v0.7.0`, annotated. |
-| GitHub Releases | Published for `v0.1.0` … `v0.7.0`. |
+| Tags | `v0.1.0` … `v0.7.2`, annotated. |
+| GitHub Releases | Published for `v0.1.0` … `v0.7.2`. |
 | Branch protection | Active on `main`: `lint`, `test`, `docker` required, strict, no force push, 0 approving reviews, **admins cannot bypass** (`enforce_admins`) |
 | Django | **5.2 LTS** (ADR-010) |
 | Python | 3.13 (3.14 deferred — see limitations) |
