@@ -10,11 +10,11 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime
-from typing import Any
 
 import structlog
 from croniter import croniter
-from django.db import transaction
+from django.db import connection, transaction
+from django.utils import timezone
 
 logger = structlog.get_logger(__name__)
 
@@ -22,7 +22,7 @@ from core.domain.definition import TaskDefinition, WorkflowDefinition
 from core.domain.expressions import evaluate_condition
 from core.domain.services import derive_workflow_run_state
 from core.domain.states import TaskRunState, WorkflowRunState
-from core.models import ScheduledTrigger, TaskRun, WorkflowRun
+from core.models import ScheduledTrigger, Task, TaskRun, WorkflowRun
 from core.repositories.definitions import load_definition
 from core.repositories.outbox import create_dispatch
 from core.repositories.transitions import (
@@ -243,6 +243,9 @@ def schedule_once() -> tuple[int, int]:
     reaped = reap_expired_leases()
     schedule_retries()
     promoted = promote_due_retries()
+    # Fire due scheduled triggers before advancing runs, so a trigger's fresh run
+    # is eligible for scheduling in the very same pass rather than the next one.
+    tick_scheduled_triggers()
     enqueued = 0
     for run in WorkflowRun.objects.filter(
         state__in=[WorkflowRunState.PENDING.value, WorkflowRunState.RUNNING.value]
@@ -256,7 +259,7 @@ def schedule_once() -> tuple[int, int]:
 
 
 def tick_scheduled_triggers(
-    *, now: datetime | None = None, user: Any | None = None
+    *, now: datetime | None = None, requested_by_id: int | None = None
 ) -> int:
     """Fire every due trigger exactly once, atomically claimed per instance.
 
@@ -266,9 +269,16 @@ def tick_scheduled_triggers(
     others skip locked rows and move on. No distributed lock, no coordination
     protocol — the database is the mutex.
 
-    ``next_run_at`` is advanced *before* the workflow is triggered. If the
-    trigger crashes mid-flight, the trigger already says "I fired at this time";
-    the operator must inspect the run, not the clock.
+    The claim-and-advance happens inside one transaction that is committed
+    *before* any workflow is triggered. That ordering matters for two reasons:
+    it releases the row lock so a slow trigger cannot block the others, and it
+    means ``next_run_at`` is advanced before the trigger runs. If the trigger
+    then raises, the clock already says "I fired at this time", so recovery is a
+    missing run, never a double-fire.
+
+    A trigger whose workflow has no tasks is a dangling reference (the workflow
+    was never published). Such a trigger is advanced but not fired — the operator
+    must fix the workflow, not the clock.
 
     Returns the number of workflows triggered in this tick.
     """
@@ -277,27 +287,45 @@ def tick_scheduled_triggers(
     moment = _resolve_now(now)
     triggered = 0
 
+    # SKIP LOCKED is the no-double-fire mechanism on PostgreSQL. SQLite has no
+    # row locks to skip, but it also serialises writers, so the unit tests that
+    # run against it cannot race anyway; there the lock is advisory only.
+    skip_locked = connection.vendor == "postgresql"
+
     # The ordering matters: oldest first, so a backlog is drained in sequence
-    # rather than jumping around. SKIP LOCKED is the no-double-fire mechanism.
-    due = (
-        ScheduledTrigger.objects.filter(enabled=True, next_run_at__lte=moment)
-        .select_for_update(skip_locked=True)
-        .order_by("next_run_at")
-    )
+    # rather than jumping around. The lock is held only across the clock advance;
+    # `trigger` runs after the transaction commits.
+    with transaction.atomic():
+        due = list(
+            ScheduledTrigger.objects.filter(enabled=True, next_run_at__lte=moment)
+            .select_related("workflow")
+            .select_for_update(skip_locked=skip_locked)
+            .order_by("next_run_at")
+        )
+        for scheduled in due:
+            itr = croniter(scheduled.cron_expression, moment)
+            next_dt = itr.get_next(datetime)
+            # Older croniter builds can return a naive value; the field is
+            # tz-aware, so a naive result would raise on save. Normalise.
+            if timezone.is_naive(next_dt):
+                next_dt = timezone.make_aware(next_dt, timezone.utc)
+            scheduled.next_run_at = next_dt
+            scheduled.last_run_at = moment
+            scheduled.save(update_fields=["next_run_at", "last_run_at"])
 
+    # Outside the row lock: trigger each advanced workflow. A trigger that raises
+    # must not abort the rest, and must not double-fire (the clock advanced above).
     for scheduled in due:
-        # Advance the clock before triggering, so a crash during trigger does
-        # not produce a double-fire on recovery.
-        itr = croniter(scheduled.cron_expression, moment)
-        scheduled.next_run_at = itr.get_next(datetime)
-        scheduled.last_run_at = moment
-        scheduled.save(update_fields=["next_run_at", "last_run_at"])
-
-        try:
-            trigger(
-                workflow=scheduled.workflow,
-                requested_by=user,
+        # A workflow with no tasks was never published; advancing was enough.
+        if not Task.objects.filter(workflow_id=scheduled.workflow_id).exists():
+            logger.warning(
+                "scheduled_trigger_unpublished",
+                trigger_id=str(scheduled.id),
+                workflow_id=str(scheduled.workflow_id),
             )
+            continue
+        try:
+            trigger(workflow=scheduled.workflow, requested_by_id=requested_by_id)
         except Exception:
             # The trigger advanced, so this failure is a missing run, not a
             # double-fire. Log and continue so one broken trigger does not
