@@ -274,6 +274,23 @@ Recorded so these are not rediscovered as surprises.
 
 ---
 
+## Compensation (Phase 7)
+
+A task may declare `compensate_for: "<key>"`, naming the forward task it undoes.
+A compensation task is **not** part of the forward DAG: it is not materialised
+when the run starts and is never promoted during normal scheduling. It may not
+declare `depends_on` (it runs on its own) and it may not compensate itself.
+
+When a run's forward tasks resolve to `FAILED`, the scheduler runs the
+compensations of the tasks that had **succeeded** — strictly one at a time, in
+reverse dependency order, so a dependent is undone before its dependency. The run
+is held `RUNNING` until the rollback settles (every triggered compensator has
+resolved, or one failed and halted it), and only then does it finish `FAILED`. A
+run that succeeds is never compensated. See
+[`execution-model.md`](execution-model.md) and `core/repositories/scheduler.py`.
+
+---
+
 ## Related
 
 - [`execution-model.md`](execution-model.md) — the state machines, the fencing

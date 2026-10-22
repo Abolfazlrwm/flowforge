@@ -96,6 +96,10 @@ class Task(models.Model):
     when = models.CharField(max_length=2000, null=True, blank=True)
     #: "all" (every dependency must succeed) or "any" (one is enough).
     join = models.CharField(max_length=8, default="all")
+    #: Optional key of the forward task this one compensates. A compensation task
+    #: is excluded from the forward DAG and runs, in reverse dependency order,
+    #: only when the run fails (saga rollback).
+    compensate_for = models.CharField(max_length=200, null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:

@@ -75,6 +75,16 @@ TASK_SCHEMA: dict[str, Any] = {
                 "eligible once one dependency succeeds."
             ),
         },
+        "compensate_for": {
+            "type": ["string", "null"],
+            "default": None,
+            "minLength": 1,
+            "description": (
+                "Optional key of the forward task this one undoes. A compensation "
+                "task is held out of the forward DAG and runs, in reverse "
+                "dependency order, only when the run fails."
+            ),
+        },
     },
 }
 
@@ -184,6 +194,7 @@ def parse_workflow_definition(payload: Any) -> WorkflowDefinition:
                 config=dict(task.get("config", {})),
                 when=task.get("when"),
                 join=task.get("join", "all"),
+                compensate_for=task.get("compensate_for"),
             )
             for task in payload["tasks"]
         ),
@@ -227,6 +238,7 @@ def to_payload(definition: WorkflowDefinition) -> dict[str, Any]:
                 "config": dict(task.config),
                 "when": task.when,
                 "join": task.join,
+                "compensate_for": task.compensate_for,
             }
             for task in definition.tasks
         ],
