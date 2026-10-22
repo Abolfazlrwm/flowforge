@@ -295,6 +295,17 @@ jobs:
           done
           echo "run $RUN_ID did not finish"; exit 1
 
+      # Cron end to end: the running scheduler fires a ScheduledTrigger and the
+      # run reaches SUCCEEDED through the real broker and worker. sample_run
+      # drives the pipeline directly; this proves the cron path drives it too.
+      - name: End-to-end cron-triggered workflow
+        run: docker compose exec -T web python manage.py cron_e2e --timeout 120
+
+      # Saga end to end: a task fails through the real worker and its compensator
+      # actually executes; the run settles at its final FAILED state.
+      - name: End-to-end saga compensation
+        run: docker compose exec -T web python manage.py saga_e2e --timeout 120
+
       # --- Failure injection -------------------------------------------------
       # The pytest suite kills worker and scheduler *processes* (see
       # tests/integration/test_failure_injection.py). Container- and
