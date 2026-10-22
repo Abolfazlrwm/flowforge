@@ -46,11 +46,10 @@ def _record_task_run_event(
     """Append one event-log row for a task-run transition that actually happened.
 
     Called only after the conditional ``UPDATE`` matched a row, so a lost race
-    records nothing. Where the caller runs inside a transaction (the scheduler
-    advances within ``atomic``), the event shares it and commits with the state
-    change; the autocommit paths (claim/finish/cancel) write the event as their
-    own statement. The log is an audit trail, not the source of truth, so a crash
-    between the two statements costs at most a missing event, never a wrong state.
+    records nothing. Every caller runs inside a ``transaction.atomic()`` that also
+    wraps the state ``UPDATE`` (ADR-013), so the event and the state change commit
+    or roll back together: a crash can never leave a durable state change without
+    its audit entry, nor an entry without its state change.
     """
     TaskRunEvent.objects.create(
         task_run_id=task_run_id,
@@ -315,26 +314,28 @@ def cancel_task_run(*, task_run_id: UUID, now: datetime | None = None) -> bool:
         already terminal.
     """
     moment = _resolve_now(now)
-    updated = (
-        TaskRun.objects.filter(pk=task_run_id, state__in=CANCELLABLE_TASK_STATES).update(
-            state=TaskRunState.CANCELLED.value,
-            finished_at=moment,
-            lease_owner=None,
-            lease_expires_at=None,
-            scheduled_at=None,
-            fencing_token=F("fencing_token") + 1,
+    # The state write and its event commit together (ADR-013), same as finish.
+    with transaction.atomic():
+        updated = (
+            TaskRun.objects.filter(pk=task_run_id, state__in=CANCELLABLE_TASK_STATES).update(
+                state=TaskRunState.CANCELLED.value,
+                finished_at=moment,
+                lease_owner=None,
+                lease_expires_at=None,
+                scheduled_at=None,
+                fencing_token=F("fencing_token") + 1,
+            )
+            == 1
         )
-        == 1
-    )
-    if updated:
-        # from_state is null: the prior state is whatever cancellable state the
-        # row held, and it is implied by the event that precedes this one.
-        _record_task_run_event(
-            task_run_id=task_run_id,
-            kind=TaskRunEvent.Kind.CANCEL.value,
-            from_state=None,
-            to_state=TaskRunState.CANCELLED.value,
-        )
+        if updated:
+            # from_state is null: the prior state is whatever cancellable state the
+            # row held, and it is implied by the event that precedes this one.
+            _record_task_run_event(
+                task_run_id=task_run_id,
+                kind=TaskRunEvent.Kind.CANCEL.value,
+                from_state=None,
+                to_state=TaskRunState.CANCELLED.value,
+            )
     return updated
 
 
@@ -640,21 +641,24 @@ def finish_task_run(
     }
     if result is not None:
         updates["result"] = result
-    updated = (
-        TaskRun.objects.filter(
-            pk=task_run_id,
-            state=TaskRunState.RUNNING.value,
-            fencing_token=fencing_token,
-        ).update(**updates)
-        == 1
-    )
-    if updated:
-        _record_task_run_event(
-            task_run_id=task_run_id,
-            kind=TaskRunEvent.Kind.FINISH.value,
-            from_state=TaskRunState.RUNNING.value,
-            to_state=target.value,
+    # The state write and its event commit together (ADR-013): a crash rolls back
+    # both, so the audit trail never has a gap where the state moved silently.
+    with transaction.atomic():
+        updated = (
+            TaskRun.objects.filter(
+                pk=task_run_id,
+                state=TaskRunState.RUNNING.value,
+                fencing_token=fencing_token,
+            ).update(**updates)
+            == 1
         )
+        if updated:
+            _record_task_run_event(
+                task_run_id=task_run_id,
+                kind=TaskRunEvent.Kind.FINISH.value,
+                from_state=TaskRunState.RUNNING.value,
+                to_state=target.value,
+            )
     return updated
 
 
