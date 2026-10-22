@@ -53,6 +53,7 @@ TASK_RUN_MACHINE: StateMachine[TaskRunState] = StateMachine(
     states=TaskRunState,
     terminal=(
         TaskRunState.SUCCEEDED,
+        TaskRunState.SKIPPED,
         TaskRunState.DEAD,
         TaskRunState.CANCELLED,
     ),
@@ -67,6 +68,14 @@ TASK_RUN_MACHINE: StateMachine[TaskRunState] = StateMachine(
             source=TaskRunState.PENDING,
             target=TaskRunState.CANCELLED,
         ),
+        # A task whose `when` condition is false never becomes eligible: it is
+        # skipped from PENDING (the condition is evaluated before promotion) or
+        # from READY (a re-evaluation after a manual requeue).
+        Transition(
+            name="skip_pending",
+            source=TaskRunState.PENDING,
+            target=TaskRunState.SKIPPED,
+        ),
         # Claiming acquires the lease, so it does not require one.
         Transition(
             name="claim",
@@ -77,6 +86,11 @@ TASK_RUN_MACHINE: StateMachine[TaskRunState] = StateMachine(
             name="cancel_ready",
             source=TaskRunState.READY,
             target=TaskRunState.CANCELLED,
+        ),
+        Transition(
+            name="skip_ready",
+            source=TaskRunState.READY,
+            target=TaskRunState.SKIPPED,
         ),
         # Finishing requires the lease: only the worker holding the current
         # fencing token may write a terminal outcome.

@@ -19,7 +19,7 @@ from __future__ import annotations
 
 from typing import Any, ClassVar
 
-from core.models import Task, TaskRun, Workflow, WorkflowRun
+from core.models import Task, TaskRun, TaskRunEvent, Workflow, WorkflowRun
 from rest_framework import serializers
 
 
@@ -158,6 +158,27 @@ class WorkflowRunSummarySerializer(serializers.ModelSerializer[WorkflowRun]):
         read_only_fields: ClassVar[list[str]] = fields
 
 
+class TaskRunEventSerializer(serializers.ModelSerializer[TaskRunEvent]):
+    """One entry in a task run's append-only event log."""
+
+    task_key = serializers.CharField(source="task_run.task.key", read_only=True)
+
+    class Meta:
+        """Field mapping."""
+
+        model = TaskRunEvent
+        fields: ClassVar[list[str]] = [
+            "id",
+            "task_run",
+            "task_key",
+            "kind",
+            "from_state",
+            "to_state",
+            "created_at",
+        ]
+        read_only_fields: ClassVar[list[str]] = fields
+
+
 class TriggerSerializer(serializers.Serializer[Any]):
     """The body of a run trigger: which published definition to instantiate."""
 
@@ -175,6 +196,9 @@ class TaskDocSerializer(serializers.Serializer[Any]):
     task_type = serializers.CharField()
     depends_on = serializers.ListField(child=serializers.CharField(), required=False)
     config = serializers.DictField(required=False)
+    when = serializers.CharField(required=False, allow_null=True)
+    join = serializers.ChoiceField(choices=["all", "any"], required=False)
+    compensate_for = serializers.CharField(required=False, allow_null=True)
 
 
 class WorkflowDefinitionDoc(serializers.Serializer[Any]):

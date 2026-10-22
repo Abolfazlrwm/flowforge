@@ -23,6 +23,7 @@ erDiagram
     Task ||--o{ TaskRun : "is instantiated as"
     TaskRun ||--o{ OutboxMessage : "is dispatched as"
     WorkflowRun ||--o{ OutboxMessage : "dispatches via"
+    TaskRun ||--o{ TaskRunEvent : "records"
 
     Workflow {
         uuid id PK
@@ -67,6 +68,14 @@ erDiagram
         bigint fencing_token_snapshot
         int attempt_snapshot
         timestamptz published_at
+        timestamptz created_at
+    }
+    TaskRunEvent {
+        uuid id PK
+        uuid task_run_id FK
+        varchar kind
+        varchar from_state
+        varchar to_state
         timestamptz created_at
     }
 ```
@@ -242,6 +251,18 @@ Like the lease index, this one is **partial on `published_at IS NULL`**. Deliver
 rows accumulate forever, so a full index would grow without bound for a query that
 only ever looks at the undelivered tail. The partial index stays proportional to
 the backlog, not to the history.
+
+### `TaskRunEvent`
+
+| Name | Columns | Query served | Exists today? |
+| --- | --- | --- | --- |
+| `idx_event_taskrun_created` | `(task_run, created_at)` | `SELECT ... WHERE task_run_id = ? ORDER BY created_at` — a run's event log (`GET /api/v1/runs/<id>/events/`) | **Yes.** Phase 7 |
+
+`TaskRunEvent` is append-only: it is written beside every transition in
+`core/repositories/transitions.py` and never updated or deleted. The composite
+index serves the read endpoint's filter and ordering in one scan; the table is
+history, so it grows with transitions rather than with in-flight work, and a full
+scan is acceptable only because the per-run slice is what is ever queried.
 
 ### Implicit indexes and a known redundancy
 
