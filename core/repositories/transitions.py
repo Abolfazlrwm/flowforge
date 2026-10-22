@@ -389,6 +389,65 @@ def requeue_dead_task_run(*, task_run_id: UUID, now: datetime | None = None) -> 
         return True
 
 
+def requeue_failed_task_run(*, task_run_id: UUID, now: datetime | None = None) -> bool:
+    """Manually re-run a ``FAILED`` task run for a fresh attempt.
+
+    A ``FAILED`` task is normally handled by the automatic retry lifecycle
+    (:func:`schedule_retries` moves it to ``RETRYING`` while attempts remain, or
+    buries it as ``DEAD`` once they are exhausted). An operator may nonetheless
+    want another attempt *now* — a task whose policy allows no automatic retries,
+    or one that has exhausted them and is about to be buried. This is that
+    intervention.
+
+    The row is reset to ``PENDING`` with ``attempt = 1`` — a fresh attempt, with
+    finish/scheduled/lease/result cleared — and the fencing token is bumped so any
+    stale in-flight reference to the old generation is invalidated. A parent run
+    that has ``FAILED`` is reverted to ``PENDING`` so the scheduler re-evaluates
+    it; a run that already ``SUCCEEDED`` or was ``CANCELLED`` is left alone, so
+    re-running one task cannot resurrect a run that finished.
+
+    Returns:
+        ``True`` if this call requeued the row, ``False`` if it was gone or not
+        ``FAILED`` (so nothing to do).
+    """
+    _resolve_now(now)
+    with transaction.atomic():
+        task_run = (
+            TaskRun.objects.select_for_update()
+            .select_related("workflow_run")
+            .filter(pk=task_run_id, state=TaskRunState.FAILED.value)
+            .first()
+        )
+        if task_run is None:
+            return False
+        TaskRun.objects.filter(pk=task_run_id).update(
+            state=TaskRunState.PENDING.value,
+            attempt=1,
+            finished_at=None,
+            scheduled_at=None,
+            lease_owner=None,
+            lease_expires_at=None,
+            result=None,
+            fencing_token=F("fencing_token") + 1,
+        )
+        # Only a FAILED run is reverted; a SUCCEEDED or CANCELLED run must not be
+        # resurrected by re-running one of its tasks.
+        WorkflowRun.objects.filter(
+            pk=task_run.workflow_run_id, state=WorkflowRunState.FAILED.value
+        ).update(
+            state=WorkflowRunState.PENDING.value,
+            started_at=None,
+            finished_at=None,
+        )
+        _record_task_run_event(
+            task_run_id=task_run_id,
+            kind=TaskRunEvent.Kind.REQUEUE.value,
+            from_state=TaskRunState.FAILED.value,
+            to_state=TaskRunState.PENDING.value,
+        )
+        return True
+
+
 def transition_task_run(
     *,
     task_run_id: UUID,

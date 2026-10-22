@@ -26,8 +26,9 @@ from __future__ import annotations
 from typing import Any
 
 from core.domain.schema import parse_workflow_definition
-from core.models import TaskRunEvent, Workflow, WorkflowRun
+from core.models import TaskRun, TaskRunEvent, Workflow, WorkflowRun
 from core.repositories.definitions import publish_definition
+from core.repositories.transitions import requeue_failed_task_run
 from core.services import runs as run_service
 from django.db.models import Count, QuerySet
 from django.shortcuts import get_object_or_404
@@ -43,6 +44,7 @@ from api.pagination import StandardCursorPagination
 from api.permissions import IsAuthenticatedAndActive, IsOwnerOrStaff, IsStaffOrReadOnly
 from api.serializers import (
     TaskRunEventSerializer,
+    TaskRunSerializer,
     TriggerSerializer,
     UserSerializer,
     WorkflowDefinitionDoc,
@@ -257,6 +259,43 @@ class RunEventsView(ListAPIView[TaskRunEvent]):
             .select_related("task_run__task")
             .order_by("created_at", "id")
         )
+
+
+class TaskRunRequeueView(APIView):
+    """Re-run a ``FAILED`` task run for a fresh attempt (manual retry).
+
+    A task run that is not ``FAILED`` is a 409, not a silent no-op: the caller
+    asked for a specific recovery and it did not happen, so it must be told. A
+    task run belonging to somebody else's run is a 404 — the same visibility rule
+    as everywhere else, enforced by scoping the lookup to the caller's runs.
+    """
+
+    permission_classes = [IsAuthenticatedAndActive]
+    throttle_scope = "trigger"
+
+    @extend_schema(
+        request=None,
+        responses={
+            200: TaskRunSerializer,
+            409: OpenApiResponse(description="The task run is not FAILED."),
+            401: OpenApiResponse(description="Missing or invalid credentials."),
+            404: OpenApiResponse(description="No such task run, or not visible to the caller."),
+        },
+        tags=["task runs"],
+    )
+    def post(self, request: Request, pk: Any) -> Response:
+        """Requeue the task run and return its refreshed state."""
+        task_run = get_object_or_404(
+            TaskRun.objects.filter(workflow_run__in=run_service.runs_visible_to(request.user)),
+            pk=pk,
+        )
+        if not requeue_failed_task_run(task_run_id=task_run.id):
+            return Response(
+                {"detail": "Task run is not FAILED; only a failed task can be re-run."},
+                status=status.HTTP_409_CONFLICT,
+            )
+        task_run.refresh_from_db()
+        return Response(TaskRunSerializer(task_run).data, status=status.HTTP_200_OK)
 
 
 def _with_tasks(workflow: Workflow) -> Workflow:
