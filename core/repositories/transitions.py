@@ -28,7 +28,7 @@ from core.domain.errors import IllegalTransitionError
 from core.domain.machines import TASK_RUN_MACHINE, WORKFLOW_RUN_MACHINE
 from core.domain.retry import calculate_backoff, get_retry_policy
 from core.domain.states import TaskRunState, WorkflowRunState
-from core.models import TaskRun, WorkflowRun
+from core.models import TaskRun, TaskRunEvent, WorkflowRun
 
 
 def _resolve_now(now: datetime | None) -> datetime:
@@ -38,6 +38,38 @@ def _resolve_now(now: datetime | None) -> datetime:
     default exists so production callers do not have to.
     """
     return now if now is not None else timezone.now()
+
+
+def _record_task_run_event(
+    *, task_run_id: UUID, kind: str, from_state: str | None, to_state: str
+) -> None:
+    """Append one event-log row for a task-run transition that actually happened.
+
+    Called only after the conditional ``UPDATE`` matched a row, so a lost race
+    records nothing. Where the caller runs inside a transaction (the scheduler
+    advances within ``atomic``), the event shares it and commits with the state
+    change; the autocommit paths (claim/finish/cancel) write the event as their
+    own statement. The log is an audit trail, not the source of truth, so a crash
+    between the two statements costs at most a missing event, never a wrong state.
+    """
+    TaskRunEvent.objects.create(
+        task_run_id=task_run_id,
+        kind=kind,
+        from_state=from_state,
+        to_state=to_state,
+    )
+
+
+#: The event kind for each non-lease edge, derived from the edge itself so the
+#: emission inside :func:`transition_task_run` needs no extra argument from any
+#: of its callers (the scheduler, the retry promoter, the branch skipper).
+_TRANSITION_EVENT_KIND: dict[tuple[TaskRunState, TaskRunState], str] = {
+    (TaskRunState.PENDING, TaskRunState.READY): TaskRunEvent.Kind.PROMOTE.value,
+    (TaskRunState.PENDING, TaskRunState.SKIPPED): TaskRunEvent.Kind.SKIP.value,
+    (TaskRunState.RETRYING, TaskRunState.READY): TaskRunEvent.Kind.PROMOTE.value,
+    (TaskRunState.FAILED, TaskRunState.RETRYING): TaskRunEvent.Kind.RETRY.value,
+    (TaskRunState.FAILED, TaskRunState.DEAD): TaskRunEvent.Kind.DEAD.value,
+}
 
 
 def transition_workflow_run(
@@ -140,8 +172,17 @@ def reclaim_task_run(
                 "fencing_token": F("fencing_token") + 1,
                 "started_at": Coalesce(F("started_at"), Value(moment)),
             }
-        reclaimed = TaskRun.objects.filter(pk=task_run_id).update(**updates)
-        return reclaimed == 1
+        reclaimed = TaskRun.objects.filter(pk=task_run_id).update(**updates) == 1
+        if reclaimed:
+            _record_task_run_event(
+                task_run_id=task_run_id,
+                kind=TaskRunEvent.Kind.RECLAIM.value,
+                from_state=TaskRunState.RUNNING.value,
+                to_state=(
+                    TaskRunState.RETRYING if attempt < policy.max_attempts else TaskRunState.DEAD
+                ).value,
+            )
+        return reclaimed
 
 
 def reap_expired_leases(*, now: datetime | None = None, limit: int = 1000) -> int:
@@ -242,6 +283,61 @@ def promote_due_retries(*, now: datetime | None = None, limit: int = 1000) -> in
     return promoted
 
 
+#: States a cancellation may act on. A terminal row is already resolved, so
+#: cancelling it would either be a no-op or would overwrite a real outcome.
+CANCELLABLE_TASK_STATES = (
+    TaskRunState.PENDING.value,
+    TaskRunState.READY.value,
+    TaskRunState.RUNNING.value,
+    TaskRunState.RETRYING.value,
+)
+
+
+def cancel_task_run(*, task_run_id: UUID, now: datetime | None = None) -> bool:
+    """Cancel a task run, whoever holds its lease.
+
+    Cancellation is an *operator* action, not a lease-holder action, so it cannot
+    go through :func:`finish_task_run` — the caller has no fencing token to prove
+    ownership with. It also cannot go through :func:`transition_task_run`, whose
+    contract deliberately refuses lease edges.
+
+    This is the same shape as the reaper: one conditional ``UPDATE`` that matches
+    only while the row is still cancellable, clearing the lease and bumping the
+    fencing token. Bumping the token is what makes cancellation *cooperative*: a
+    handler that is still running will try to finish, and its write matches zero
+    rows, so its result is discarded rather than resurrecting a cancelled task.
+
+    ``RETRYING`` is cancellable too — a retry waiting out its backoff must not be
+    promoted after the run was cancelled.
+
+    Returns:
+        ``True`` if this call cancelled the row, ``False`` if it was gone or
+        already terminal.
+    """
+    moment = _resolve_now(now)
+    updated = (
+        TaskRun.objects.filter(pk=task_run_id, state__in=CANCELLABLE_TASK_STATES).update(
+            state=TaskRunState.CANCELLED.value,
+            finished_at=moment,
+            lease_owner=None,
+            lease_expires_at=None,
+            scheduled_at=None,
+            fencing_token=F("fencing_token") + 1,
+        )
+        == 1
+    )
+    if updated:
+        # from_state is null: the prior state is whatever cancellable state the
+        # row held, and it is implied by the event that precedes this one.
+        _record_task_run_event(
+            task_run_id=task_run_id,
+            kind=TaskRunEvent.Kind.CANCEL.value,
+            from_state=None,
+            to_state=TaskRunState.CANCELLED.value,
+        )
+    return updated
+
+
 def requeue_dead_task_run(*, task_run_id: UUID, now: datetime | None = None) -> bool:
     """Manually requeue a ``DEAD`` task run for another attempt (dead-letter recovery).
 
@@ -283,6 +379,71 @@ def requeue_dead_task_run(*, task_run_id: UUID, now: datetime | None = None) -> 
             state=WorkflowRunState.PENDING.value,
             started_at=None,
             finished_at=None,
+        )
+        _record_task_run_event(
+            task_run_id=task_run_id,
+            kind=TaskRunEvent.Kind.REQUEUE.value,
+            from_state=TaskRunState.DEAD.value,
+            to_state=TaskRunState.PENDING.value,
+        )
+        return True
+
+
+def requeue_failed_task_run(*, task_run_id: UUID, now: datetime | None = None) -> bool:
+    """Manually re-run a ``FAILED`` task run for a fresh attempt.
+
+    A ``FAILED`` task is normally handled by the automatic retry lifecycle
+    (:func:`schedule_retries` moves it to ``RETRYING`` while attempts remain, or
+    buries it as ``DEAD`` once they are exhausted). An operator may nonetheless
+    want another attempt *now* — a task whose policy allows no automatic retries,
+    or one that has exhausted them and is about to be buried. This is that
+    intervention.
+
+    The row is reset to ``PENDING`` with ``attempt = 1`` — a fresh attempt, with
+    finish/scheduled/lease/result cleared — and the fencing token is bumped so any
+    stale in-flight reference to the old generation is invalidated. A parent run
+    that has ``FAILED`` is reverted to ``PENDING`` so the scheduler re-evaluates
+    it; a run that already ``SUCCEEDED`` or was ``CANCELLED`` is left alone, so
+    re-running one task cannot resurrect a run that finished.
+
+    Returns:
+        ``True`` if this call requeued the row, ``False`` if it was gone or not
+        ``FAILED`` (so nothing to do).
+    """
+    _resolve_now(now)
+    with transaction.atomic():
+        task_run = (
+            TaskRun.objects.select_for_update()
+            .select_related("workflow_run")
+            .filter(pk=task_run_id, state=TaskRunState.FAILED.value)
+            .first()
+        )
+        if task_run is None:
+            return False
+        TaskRun.objects.filter(pk=task_run_id).update(
+            state=TaskRunState.PENDING.value,
+            attempt=1,
+            finished_at=None,
+            scheduled_at=None,
+            lease_owner=None,
+            lease_expires_at=None,
+            result=None,
+            fencing_token=F("fencing_token") + 1,
+        )
+        # Only a FAILED run is reverted; a SUCCEEDED or CANCELLED run must not be
+        # resurrected by re-running one of its tasks.
+        WorkflowRun.objects.filter(
+            pk=task_run.workflow_run_id, state=WorkflowRunState.FAILED.value
+        ).update(
+            state=WorkflowRunState.PENDING.value,
+            started_at=None,
+            finished_at=None,
+        )
+        _record_task_run_event(
+            task_run_id=task_run_id,
+            kind=TaskRunEvent.Kind.REQUEUE.value,
+            from_state=TaskRunState.FAILED.value,
+            to_state=TaskRunState.PENDING.value,
         )
         return True
 
@@ -356,7 +517,15 @@ def transition_task_run(
         updates["lease_expires_at"] = None
         updates["scheduled_at"] = scheduled_at if scheduled_at is not None else moment
 
-    return TaskRun.objects.filter(pk=task_run_id, state=expected.value).update(**updates) == 1
+    updated = TaskRun.objects.filter(pk=task_run_id, state=expected.value).update(**updates) == 1
+    if updated:
+        _record_task_run_event(
+            task_run_id=task_run_id,
+            kind=_TRANSITION_EVENT_KIND.get((expected, target), TaskRunEvent.Kind.TRANSITION.value),
+            from_state=expected.value,
+            to_state=target.value,
+        )
+    return updated
 
 
 def claim_task_run(
@@ -403,6 +572,12 @@ def claim_task_run(
         )
         if claimed != 1:
             return None
+        _record_task_run_event(
+            task_run_id=task_run_id,
+            kind=TaskRunEvent.Kind.CLAIM.value,
+            from_state=TaskRunState.READY.value,
+            to_state=TaskRunState.RUNNING.value,
+        )
         # Safe inside the transaction: the row is locked by our UPDATE and is
         # no longer READY, so nothing can bump the token underneath us.
         return TaskRun.objects.values_list("fencing_token", flat=True).get(pk=task_run_id)
@@ -465,7 +640,7 @@ def finish_task_run(
     }
     if result is not None:
         updates["result"] = result
-    return (
+    updated = (
         TaskRun.objects.filter(
             pk=task_run_id,
             state=TaskRunState.RUNNING.value,
@@ -473,6 +648,14 @@ def finish_task_run(
         ).update(**updates)
         == 1
     )
+    if updated:
+        _record_task_run_event(
+            task_run_id=task_run_id,
+            kind=TaskRunEvent.Kind.FINISH.value,
+            from_state=TaskRunState.RUNNING.value,
+            to_state=target.value,
+        )
+    return updated
 
 
 def renew_lease(

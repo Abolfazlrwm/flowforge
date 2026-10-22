@@ -31,8 +31,10 @@ def test_task_run_table_is_exactly_as_documented() -> None:
     assert TASK_RUN_MACHINE.rows() == (
         ("dependencies_satisfied", "pending", "ready", False),
         ("cancel_pending", "pending", "cancelled", False),
+        ("skip_pending", "pending", "skipped", False),
         ("claim", "ready", "running", False),
         ("cancel_ready", "ready", "cancelled", False),
+        ("skip_ready", "ready", "skipped", False),
         ("succeed", "running", "succeeded", True),
         ("fail", "running", "failed", True),
         ("cancel_running", "running", "cancelled", True),
@@ -265,7 +267,7 @@ def test_repr_shows_shape_not_the_whole_table() -> None:
     """The repr is for debugging, so it should stay one line."""
     text = repr(TASK_RUN_MACHINE)
     assert "TaskRun" in text
-    assert "edges=12" in text
+    assert "edges=14" in text
     assert "\n" not in text
 
 

@@ -25,7 +25,13 @@ WORKFLOW_RUN_TERMINAL = tuple(
     for state in (WorkflowRunState.SUCCEEDED, WorkflowRunState.FAILED, WorkflowRunState.CANCELLED)
 )
 TASK_RUN_TERMINAL = tuple(
-    state.value for state in (TaskRunState.SUCCEEDED, TaskRunState.DEAD, TaskRunState.CANCELLED)
+    state.value
+    for state in (
+        TaskRunState.SUCCEEDED,
+        TaskRunState.SKIPPED,
+        TaskRunState.DEAD,
+        TaskRunState.CANCELLED,
+    )
 )
 
 WORKFLOW_RUN_STATE_CHOICES = [(state.value, state.name.title()) for state in WorkflowRunState]
@@ -83,6 +89,17 @@ class Task(models.Model):
     task_type = models.CharField(max_length=200)
     depends_on = models.JSONField(default=list)
     config = models.JSONField(default=dict, blank=True)
+    #: Optional condition, in the sandboxed expression language. Stored as text so
+    #: the row is a faithful record of what was published; it is re-parsed and
+    #: validated on load, which is what keeps a hand-edited row from reaching the
+    #: scheduler as an executable string.
+    when = models.CharField(max_length=2000, null=True, blank=True)
+    #: "all" (every dependency must succeed) or "any" (one is enough).
+    join = models.CharField(max_length=8, default="all")
+    #: Optional key of the forward task this one compensates. A compensation task
+    #: is excluded from the forward DAG and runs, in reverse dependency order,
+    #: only when the run fails (saga rollback).
+    compensate_for = models.CharField(max_length=200, null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
@@ -396,3 +413,93 @@ class OutboxMessage(models.Model):
     def __str__(self) -> str:
         """Readable label for the admin and logs."""
         return f"outbox {self.id} for task run {self.task_run_id}"
+
+
+class ScheduledTrigger(models.Model):
+    """A cron-based trigger that starts a workflow run on a schedule.
+
+    The scheduler polls ``next_run_at``; when it is due, the trigger is claimed
+    atomically with ``SELECT FOR UPDATE SKIP LOCKED`` so N scheduler instances
+    cannot fire the same trigger twice. The ``next_run_at`` is advanced *before*
+    the workflow is triggered, so a crash during trigger does not cause a
+    double-fire on recovery — the trigger already says "I fired at this time".
+
+    If the trigger's workflow is not published, the tick is a no-op and the
+    trigger advances anyway (the operator must fix the workflow, not the clock).
+    """
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    workflow = models.ForeignKey(
+        Workflow, on_delete=models.CASCADE, related_name="scheduled_triggers"
+    )
+    #: Cron expression in the standard 5-field format: ``min hour dom month dow``.
+    cron_expression = models.CharField(max_length=100)
+    enabled = models.BooleanField(default=True)
+    #: The next time this trigger is eligible to fire. Advanced by the scheduler.
+    next_run_at = models.DateTimeField(db_index=True)
+    #: The last time the trigger successfully fired. Null until the first tick.
+    last_run_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        """Index the poll query: enabled and due, ordered by soonest first."""
+
+        indexes = [
+            models.Index(
+                fields=["enabled", "next_run_at"],
+                name="idx_trigger_due",
+            ),
+        ]
+
+    def __str__(self) -> str:
+        """Readable label for the admin and logs."""
+        return f"trigger {self.id} for {self.workflow.name} ({self.cron_expression})"
+
+
+class TaskRunEvent(models.Model):
+    """An append-only record of one task-run state change.
+
+    The event log is the audit trail of execution: every transition performed by
+    the scheduler, a worker, the reaper or an operator is recorded here, in the
+    order it happened. It is never updated or deleted, so a run's history stays
+    reconstructable even after the run row itself is gone. ``kind`` names the
+    actor; ``from_state``/``to_state`` give the precise edge. ``from_state`` is
+    null only for operator cancellations, where the prior state is implied by the
+    event that precedes it.
+    """
+
+    class Kind(models.TextChoices):
+        """Who performed the transition."""
+
+        CLAIM = "claim", "Claimed by a worker"
+        FINISH = "finish", "Finished by a worker"
+        CANCEL = "cancel", "Cancelled by an operator"
+        REQUEUE = "requeue", "Requeued by an operator"
+        RECLAIM = "reclaim", "Lease reclaimed by the reaper"
+        PROMOTE = "promote", "Promoted to ready"
+        RETRY = "retry", "Scheduled for retry"
+        DEAD = "dead", "Exhausted retries"
+        SKIP = "skip", "Branch skipped"
+        TRANSITION = "transition", "State transition"
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    task_run = models.ForeignKey(TaskRun, on_delete=models.CASCADE, related_name="events")
+    kind = models.CharField(max_length=20, choices=Kind.choices)
+    from_state = models.CharField(max_length=20, null=True, blank=True)
+    to_state = models.CharField(max_length=20)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        """Order by time, and index the per-run history query."""
+
+        ordering = ["created_at", "id"]
+        indexes = [
+            models.Index(
+                fields=["task_run", "created_at"],
+                name="idx_event_taskrun_created",
+            ),
+        ]
+
+    def __str__(self) -> str:
+        """Readable label for the admin and logs."""
+        return f"event {self.id}: {self.task_run_id} {self.from_state} -> {self.to_state}"

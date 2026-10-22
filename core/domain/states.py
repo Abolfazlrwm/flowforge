@@ -27,13 +27,15 @@ class TaskRunState(StrEnum):
     """Lifecycle of one task inside a workflow run.
 
     ``FAILED`` is not terminal: a failed task may be scheduled for another
-    attempt via ``RETRYING``. Only ``SUCCEEDED`` and ``CANCELLED`` are.
+    attempt via ``RETRYING``. ``SKIPPED`` is terminal and means the task's
+    ``when`` condition was false — it did not run, and it is not a failure.
     """
 
     PENDING = "pending"
     READY = "ready"
     RUNNING = "running"
     SUCCEEDED = "succeeded"
+    SKIPPED = "skipped"
     FAILED = "failed"
     RETRYING = "retrying"
     DEAD = "dead"
