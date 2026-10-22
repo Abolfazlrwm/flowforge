@@ -47,6 +47,8 @@ nav:
       - Project name evaluation: adr/ADR-009-project-name-evaluation.md
       - Django 5.2 LTS: adr/ADR-010-django-5-2-lts.md
       - Custom scheduler and transactional outbox: adr/ADR-011-custom-scheduler-and-transactional-outbox.md
+      - Retry policy and dead-letter semantics: adr/ADR-012-retry-policy-and-dead-letter-semantics.md
+      - The event log is transactional: adr/ADR-013-event-log-is-transactional.md
 
 plugins:
   - search
