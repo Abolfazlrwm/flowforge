@@ -146,3 +146,18 @@ is recorded here instead.
 
 **Consequence:** a future direct push to `main` fails at the remote. The only way
 to land a change is a pull request, which is the intended path.
+
+## Release tagging: automatic after green CI (2026-10-22)
+
+**Status:** Decided by the project owner on 2026-10-22.
+
+Version tags are cut automatically once CI is fully green and the change meets its
+acceptance criteria. There is no per-release owner-approval step. The only
+exception is **v1.0.0**, which requires explicit owner approval before it is
+tagged. Merging a pull request follows the same rule: green CI plus acceptance
+criteria, no per-PR approval.
+
+An earlier revision of `AGENTS.md` stated that creating a release tag required
+explicit owner approval. That rule was never set by the owner — it was inferred and
+wrongly attributed — and it has been removed. It is recorded here so the corrected
+rule is not re-invented.
