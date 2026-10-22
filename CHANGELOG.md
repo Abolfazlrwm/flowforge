@@ -14,6 +14,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   each transition (claim, finish, cancel, requeue, reclaim, promote, retry, skip).
   A lost race records nothing. `GET /api/v1/runs/<id>/events/` returns a run's
   events, oldest first, with the same per-user visibility as the run detail.
+- **Manual re-run of a failed task.** `requeue_failed_task_run` resets a `FAILED`
+  task run to `PENDING` with a fresh attempt and reverts a `FAILED` run — never a
+  `SUCCEEDED` or `CANCELLED` one. `POST /api/v1/task-runs/<id>/requeue/` exposes
+  it; a task that is not `FAILED` is a 409, and two operators racing the same task
+  re-run it exactly once (`SELECT FOR UPDATE`).
 
 ## [0.7.2] - 2026-10-22
 
