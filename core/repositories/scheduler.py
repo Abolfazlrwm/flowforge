@@ -145,17 +145,28 @@ def advance_workflow_run(run: WorkflowRun) -> tuple[int, int]:
             "tasks": {tr.task.key: tr.result for tr in task_runs if tr.result is not None}
         }
         specs = {spec.key: spec for spec in definition.tasks}
+        by_key = {tr.task.key: tr for tr in task_runs}
 
         promoted = 0
-        for task_run in (tr for tr in task_runs if tr.state == TaskRunState.PENDING.value):
-            spec = specs[task_run.task.key]
+        # Iterate in dependency order, not in the order the database returned the
+        # rows. PostgreSQL makes no ordering guarantee, so iterating the queryset
+        # directly makes skip/promotion propagation order-dependent: a dependant
+        # processed before the dependency it waits on would not yet see that
+        # dependency skipped, and a single pass would leave it PENDING. The
+        # topological order puts every dependency before its dependants, so one
+        # pass fully propagates skips and promotions deterministically.
+        for key in definition.graph.topological_order():
+            task_run = by_key.get(key)
+            if task_run is None or task_run.state != TaskRunState.PENDING.value:
+                continue
+            spec = specs[key]
             if _should_skip(spec, succeeded=succeeded, skipped=skipped, context=context):
                 transition_task_run(
                     task_run_id=task_run.id,
                     expected=TaskRunState.PENDING,
                     target=TaskRunState.SKIPPED,
                 )
-                skipped.add(spec.key)
+                skipped.add(key)
                 continue
             if _is_eligible(spec, succeeded) and transition_task_run(
                 task_run_id=task_run.id,
