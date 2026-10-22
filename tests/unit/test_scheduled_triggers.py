@@ -13,6 +13,7 @@ from datetime import timedelta
 import pytest
 from core.models import ScheduledTrigger, Task, Workflow, WorkflowRun
 from core.repositories.scheduler import schedule_once, tick_scheduled_triggers
+from core.services import runs as run_service
 
 from tests.conftest import NOW
 
@@ -72,10 +73,8 @@ def test_the_clock_advances_even_when_the_trigger_raises() -> None:
 
     # `trigger` is imported locally inside `tick_scheduled_triggers`, so patch it
     # at the source module.
-    import core.services.runs as runs
-
     with pytest.MonkeyPatch().context() as mp:
-        mp.setattr(runs, "trigger", _boom)
+        mp.setattr(run_service, "trigger", _boom)
         fired = tick_scheduled_triggers(now=NOW)
 
     assert fired == 0
@@ -120,8 +119,11 @@ def test_a_trigger_due_in_the_future_is_not_fired() -> None:
 
 
 def test_schedule_once_fires_due_triggers_in_the_same_pass() -> None:
-    """Wiring the tick into ``schedule_once`` means a due trigger's fresh run is
-    eligible for scheduling in the very same pass, not the next one."""
+    """Wiring the tick into ``schedule_once`` covers both the loop and ``--once``.
+
+    A due trigger's fresh run is eligible for scheduling in the very same pass,
+    not the next one.
+    """
     _due_trigger(workflow=_published_workflow())
 
     reaped, enqueued = schedule_once()
