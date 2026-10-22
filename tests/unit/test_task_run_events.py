@@ -153,3 +153,38 @@ def test_a_requeue_from_dead_is_recorded() -> None:
     assert requeue_dead_task_run(task_run_id=task_run.id, now=NOW)
 
     assert _edges() == [("requeue", "dead", "pending")]
+
+
+def test_a_failed_event_insert_rolls_back_the_state_change(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """ADR-013: the state write and its event share one transaction.
+
+    If the event insert raises, the state change is rolled back with it — a
+    durable state change can never outlive its audit entry. Before ADR-013 the
+    finish path wrote the state in autocommit and the event separately, so a
+    failed insert would have left the state moved and the event lost.
+    """
+
+    def _boom(**_kwargs: object) -> None:
+        raise RuntimeError("event insert failed")
+
+    task_run = _ready_run()
+    token = claim_task_run(task_run_id=task_run.id, worker_id="w1", lease_seconds=30, now=NOW)
+    assert token is not None
+
+    # Only the finish path's event insert fails; the claim above already recorded.
+    monkeypatch.setattr("core.repositories.transitions._record_task_run_event", _boom)
+
+    with pytest.raises(RuntimeError, match="event insert failed"):
+        finish_task_run(
+            task_run_id=task_run.id,
+            target=TaskRunState.SUCCEEDED,
+            fencing_token=token,
+            now=NOW,
+        )
+
+    # The state change rolled back with the failed event insert.
+    task_run.refresh_from_db()
+    assert task_run.state == TaskRunState.RUNNING.value
+    assert [event.kind for event in TaskRunEvent.objects.all()] == ["claim"]

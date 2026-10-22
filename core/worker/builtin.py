@@ -45,7 +45,18 @@ def wait_for_file(config: Mapping[str, Any]) -> bool:
     return path.exists()
 
 
+def fail(config: Mapping[str, Any]) -> Any:
+    """Always raise. A deterministic failure for retry and saga end-to-end tests.
+
+    A saga test needs a task that genuinely fails through the real worker, not one
+    whose state is forced by a test. This raises so the worker records FAILED and
+    the retry/compensation lifecycle runs exactly as it would in production.
+    """
+    raise RuntimeError(str(config.get("message", "fail handler invoked")))
+
+
 register("noop", noop)
 register("echo", echo)
 register("add", add)
 register("wait_for_file", wait_for_file)
+register("fail", fail)
