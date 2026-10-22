@@ -19,6 +19,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `SUCCEEDED` or `CANCELLED` one. `POST /api/v1/task-runs/<id>/requeue/` exposes
   it; a task that is not `FAILED` is a 409, and two operators racing the same task
   re-run it exactly once (`SELECT FOR UPDATE`).
+- **Saga-style compensation.** A task may declare `compensate_for: <key>`. Such a
+  task is held out of the forward DAG — it is not materialised when the run starts
+  — and runs only when the run fails, to undo the tasks that had *succeeded*.
+  Compensations run strictly one at a time in reverse dependency order (a
+  dependent is undone before its dependency), and the run is held `RUNNING` until
+  the rollback settles before it finishes `FAILED`.
 
 ## [0.7.2] - 2026-10-22
 
