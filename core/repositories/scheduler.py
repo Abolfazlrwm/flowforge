@@ -8,15 +8,12 @@ eligibility work and the outbox write commit together — the dual-write remedy.
 
 from __future__ import annotations
 
-import logging
-from datetime import datetime
+from datetime import UTC, datetime
 
 import structlog
 from croniter import croniter
 from django.db import connection, transaction
 from django.utils import timezone
-
-logger = structlog.get_logger(__name__)
 
 from core.domain.definition import TaskDefinition, WorkflowDefinition
 from core.domain.expressions import evaluate_condition
@@ -33,6 +30,8 @@ from core.repositories.transitions import (
     transition_task_run,
     transition_workflow_run,
 )
+
+logger = structlog.get_logger(__name__)
 
 
 def _is_eligible(spec: TaskDefinition, succeeded: set[str]) -> bool:
@@ -282,7 +281,9 @@ def tick_scheduled_triggers(
 
     Returns the number of workflows triggered in this tick.
     """
-    from core.services.runs import trigger
+    # Deferred import: core.services.runs imports the core.repositories package,
+    # whose __init__ imports this module, so a top-level import would be a cycle.
+    from core.services.runs import trigger  # noqa: PLC0415
 
     moment = _resolve_now(now)
     triggered = 0
@@ -308,7 +309,7 @@ def tick_scheduled_triggers(
             # Older croniter builds can return a naive value; the field is
             # tz-aware, so a naive result would raise on save. Normalise.
             if timezone.is_naive(next_dt):
-                next_dt = timezone.make_aware(next_dt, timezone.utc)
+                next_dt = timezone.make_aware(next_dt, UTC)
             scheduled.next_run_at = next_dt
             scheduled.last_run_at = moment
             scheduled.save(update_fields=["next_run_at", "last_run_at"])
