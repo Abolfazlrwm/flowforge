@@ -353,6 +353,46 @@ paths:
               schema:
                 $ref: '#/components/schemas/WorkflowRun'
           description: ''
+  /api/v1/runs/{id}/events/:
+    get:
+      operationId: runs_events_list
+      description: |-
+        The append-only event log for one run, in the order it happened.
+
+        A run belonging to somebody else is a 404, not a 403 — the same visibility
+        rule as :class:`RunDetailView`, so a caller cannot learn that another user's
+        run exists by probing for its events. The list is returned as a plain array,
+        oldest first: the default cursor pagination orders newest-first, which is the
+        wrong direction for a chronological log, and the per-run event count is
+        bounded by the number of tasks and their attempts.
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: string
+          format: uuid
+        required: true
+      - name: ordering
+        required: false
+        in: query
+        description: Which field to use when ordering the results.
+        schema:
+          type: string
+      tags:
+      - runs
+      security:
+      - jwtAuth: []
+      - tokenAuth: []
+      - cookieAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/TaskRunEvent'
+          description: ''
 components:
   schemas:
     AuthToken:
@@ -385,6 +425,30 @@ components:
       description: |-
         * `all` - all
         * `any` - any
+    KindEnum:
+      enum:
+      - claim
+      - finish
+      - cancel
+      - requeue
+      - reclaim
+      - promote
+      - retry
+      - dead
+      - skip
+      - transition
+      type: string
+      description: |-
+        * `claim` - Claimed by a worker
+        * `finish` - Finished by a worker
+        * `cancel` - Cancelled by an operator
+        * `requeue` - Requeued by an operator
+        * `reclaim` - Lease reclaimed by the reaper
+        * `promote` - Promoted to ready
+        * `retry` - Scheduled for retry
+        * `dead` - Exhausted retries
+        * `skip` - Branch skipped
+        * `transition` - State transition
     PaginatedWorkflowRunSummaryList:
       type: object
       required:
@@ -541,6 +605,44 @@ components:
       - started_at
       - state
       - task_key
+    TaskRunEvent:
+      type: object
+      description: One entry in a task run's append-only event log.
+      properties:
+        id:
+          type: string
+          format: uuid
+          readOnly: true
+        task_run:
+          type: string
+          format: uuid
+          readOnly: true
+        task_key:
+          type: string
+          readOnly: true
+        kind:
+          allOf:
+          - $ref: '#/components/schemas/KindEnum'
+          readOnly: true
+        from_state:
+          type: string
+          readOnly: true
+          nullable: true
+        to_state:
+          type: string
+          readOnly: true
+        created_at:
+          type: string
+          format: date-time
+          readOnly: true
+      required:
+      - created_at
+      - from_state
+      - id
+      - kind
+      - task_key
+      - task_run
+      - to_state
     TaskRunStateEnum:
       enum:
       - pending
