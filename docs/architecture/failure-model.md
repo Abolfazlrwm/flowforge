@@ -39,8 +39,8 @@ when the same test name exists in both `tests/unit` and `tests/integration`.
 | 10 | Stale results | Fencing token on `finish_task_run` | Verified |
 | 11 | Partial failure of a run | `derive_workflow_run_state` precedence | Partially verified |
 | 12 | Graceful shutdown | Manual ack + `stop()` after in-flight work | Verified |
-| 13 | Recovery after restart | Django reconnects; outbox drains | Verified |
-| 14 | Broker reconnection | Worker and publisher reconnect with backoff, no restart | Verified (v0.7.1) |
+| 13 | Recovery after restart (PostgreSQL) | `reset_connections` + backoff in scheduler/publisher/worker; outbox drains | Verified — see [reconnection matrix](#reconnection-matrix) |
+| 14 | Broker reconnection | Worker and publisher reconnect with backoff, no restart | Verified (v0.7.1) — see [reconnection matrix](#reconnection-matrix) |
 | 15 | Non-idempotent handler replay | `idempotency_key` (opt-in per task) | Partially verified |
 | 16 | Clock skew across processes | Single-process `now()` | UNVERIFIED |
 | 17 | Broker loses a confirmed message | Quorum queue fsyncs before confirming | Verified for abrupt termination, single node (v0.7.1) |
@@ -308,13 +308,20 @@ answers, and v0.7.1 found that only the first one worked:
   re-raises, so the message stays unacked, the broker requeues it, and the
   reconnect loop applies the backoff. The lease covers a half-written attempt.
 
-**Tests.** The `docker` CI job restarts the `db` container and asserts
-`/health/ready/` returns to 200 with `"postgres": "ok"`, then runs the end-to-end
-sample workflow again to prove the pipeline still does real work. Without that
-second assertion, "the probe is green" would be the only claim — and a green probe
-over a dead scheduler is exactly what this run produced.
-`test_a_database_error_resets_the_connection_and_propagates` covers the worker's
-half at unit level.
+**Tests.** CI proves every process individually (see the [reconnection matrix](#reconnection-matrix)); the named tests are:
+
+- `docker` CI, *"PostgreSQL restart — scheduler and publisher recover and the worker
+  completes work, no process restart"* — `docker compose restart db`, then asserts
+  the **scheduler** logs `Scheduler recovered`, the **publisher** logs
+  `Publisher recovered`, no container was restarted (ID diff), and a fresh run
+  reaches `SUCCEEDED` against the restarted database.
+- `test_a_database_error_resets_the_connection_and_propagates` and
+  `test_a_database_error_during_consumption_is_retried` (unit) cover the worker's
+  per-message path without needing a real restart.
+
+The docker step was the only thing that ever caught a silent scheduler death: a
+green probe over a dead scheduler previously hid a 120s timeout. The step now greps
+for the recovery logs, so "the probe is green" is no longer the only claim.
 
 ## 14. Broker reconnection — verified in v0.7.1
 
@@ -354,10 +361,12 @@ against the row that is already terminal.
   real RabbitMQ) — the connection is closed mid-task through the connection's own
   IOLoop; the task still reaches `SUCCEEDED`, the handler runs **once**, the worker
   reconnects by itself, and a second dispatch completes on the same worker.
-- Docker CI, "Broker outage is reported, recovered from, and a queued run
-  completes" — a workflow is triggered **while the broker is stopped**, the
-  container IDs are compared before and after (a manual restart would change them),
-  and the run must reach `SUCCEEDED`. Nothing is restarted by hand.
+- Docker CI, *"Broker restart — worker and publisher reconnect, scheduler
+  unaffected, no process restart"* — a workflow is triggered **while the broker is
+  stopped**, then asserts the **worker** logged `reconnecting in`, the **publisher**
+  logged `Publisher recovered`, the **scheduler** (which never connects to the
+  broker) was not restarted (container ID diff), and the run must reach `SUCCEEDED`.
+  Nothing is restarted by hand.
 
 **What is still not claimed.** Reconnection is per process. A worker that was
 killed (not disconnected) still needs its supervisor to restart it — that is a
@@ -439,6 +448,37 @@ reach `SUCCEEDED`. If the message were only in memory, the kill would lose it.
   [`execution-model.md`](execution-model.md#the-dispatch-queue-is-a-quorum-queue);
   `declare_dispatch_queue` raises `QueueTypeMismatchError` with the steps rather
   than failing opaquely.
+
+## Reconnection matrix
+
+The user-facing question — *does each process survive each restart without a
+process restart, and which test proves it?* — answered in one table. Every cell is
+a **named** test in CI (the docker job runs against real PostgreSQL + RabbitMQ;
+pytest integration tests run against the same real services as a service container).
+
+| Process | Broker restart | PostgreSQL restart |
+|---|---|---|
+| **Worker** | `test_a_dropped_connection_redelivers_and_completes_exactly_once` (pytest, real RabbitMQ) + docker *"Broker restart — worker and publisher reconnect…"* (logs `reconnecting in`) | docker *"PostgreSQL restart — scheduler and publisher recover and the worker completes work…"* (fresh run reaches `SUCCEEDED` against the restarted DB, no worker restart); unit `test_a_database_error_during_consumption_is_retried` |
+| **Publisher** | docker *"Broker restart — worker and publisher reconnect…"* (logs `Publisher recovered`) | docker *"PostgreSQL restart — scheduler and publisher recover and the worker completes work…"* (logs `Publisher recovered`) |
+| **Scheduler** | docker *"Broker restart — worker and publisher reconnect…"* — **N/A**: the scheduler never opens a broker connection, so the outage is invisible to it; the step asserts it was not restarted and kept scheduling | docker *"PostgreSQL restart — scheduler and publisher recover and the worker completes work…"* (logs `Scheduler recovered`) |
+
+**Why the broker row for the scheduler is N/A, not UNVERIFIED.** The scheduler
+reads the database and writes the outbox; it never connects to RabbitMQ. A broker
+restart therefore cannot break its connection. The docker step still asserts the
+scheduler container is unchanged across the outage, so a future regression that
+*does* give it a broker dependency would be caught.
+
+**What is genuinely UNVERIFIED** (no named test exists):
+
+- **Clock skew across processes** (mode 16) — see that entry.
+- **Multi-node / quorum failover** (mode 17) — only single-node crash safety is
+  tested; a three-node cluster failover is not.
+- **Disk loss / corruption** (mode 17) — fsync is tested, volume failure is not.
+- **A worker that is *killed*, not disconnected** — reconnection covers a dropped
+  socket, not a dead process; process supervision (systemd / k8s restart) is out of
+  scope and untested here.
+
+Everything else in the matrix has a named test and is marked **Verified**.
 
 ## What this document does not claim
 

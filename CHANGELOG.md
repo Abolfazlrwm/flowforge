@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.2] - 2026-10-22
+
+Resilience verification for the v0.7.1 reconnection work: every process is now
+proven, individually, to survive a broker restart *and* a PostgreSQL restart
+with no process restart.
+
+### Changed
+
+- **Resilience verification tightened.** The `docker` CI job now proves, per process,
+  that the worker, publisher and scheduler survive a broker restart *and* a
+  PostgreSQL restart with no process restart. Each process is asserted individually:
+  the worker logs `reconnecting in`, the publisher logs `Publisher recovered`, the
+  scheduler logs `Scheduler recovered`, container IDs are diffed before/after (a
+  manual restart would change them), and a freshly queued run must reach `SUCCEEDED`.
+  The recovery-log greps poll with deadlines rather than sleeping. `docs/architecture/
+  failure-model.md` gains a [reconnection matrix](#reconnection-matrix) mapping every
+  process × fault to its named test; anything without a test is marked UNVERIFIED.
+
 ## [0.7.1] - 2026-10-21
 
 Closes the two gaps Phase 6 left open: the broker connection was single-shot, and
