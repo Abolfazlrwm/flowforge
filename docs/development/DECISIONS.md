@@ -161,3 +161,15 @@ An earlier revision of `AGENTS.md` stated that creating a release tag required
 explicit owner approval. That rule was never set by the owner — it was inferred and
 wrongly attributed — and it has been removed. It is recorded here so the corrected
 rule is not re-invented.
+
+## ADR-013: The Event Log Is Transactional With Its State Change (v0.8.1)
+
+**Status:** Accepted 2026-10-22.
+
+The `TaskRunEvent` audit entry is written in the same transaction as the state
+change it describes, on every path. `finish_task_run` and `cancel_task_run` were
+the last best-effort exceptions (bare `UPDATE` in autocommit, event as a separate
+statement); they now wrap both in `transaction.atomic()`, matching the scheduler
+paths and the outbox (ADR-011). A crash rolls back the state change and its event
+together, so the audit trail has no silent gap.
+**Full ADR:** [`docs/adr/ADR-013-event-log-is-transactional.md`](../adr/ADR-013-event-log-is-transactional.md)

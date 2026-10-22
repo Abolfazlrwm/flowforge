@@ -7,6 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.1] - 2026-10-22
+
+Closes the two Phase 7 end-to-end gaps and makes the event log transactional.
+
+### Added
+
+- **End-to-end cron and saga checks in the compose CI job.** `cron_e2e` lets the
+  running scheduler fire a `ScheduledTrigger` and requires the triggered run to
+  reach `SUCCEEDED` through the real outbox → publisher → RabbitMQ → worker path;
+  `saga_e2e` fails a task and requires its compensator to actually execute through
+  a real worker, with the run settling at its final `FAILED` state. A `fail`
+  built-in handler produces the deterministic failure.
+- **ADR-013** ([`docs/adr/ADR-013-event-log-is-transactional.md`](docs/adr/ADR-013-event-log-is-transactional.md)):
+  the `TaskRunEvent` audit entry is written in the same transaction as the state
+  change it describes, on every path.
+
+### Changed
+
+- `finish_task_run` and `cancel_task_run` now wrap the state `UPDATE` and the event
+  insert in one `transaction.atomic()` (ADR-013). A crash rolls back the state change
+  and its event together, so the audit trail has no silent gap where the state moved
+  without an entry. The other transition paths and the outbox were already
+  transactional.
+
 ## [0.8.0] - 2026-10-22
 
 Phase 7 — Advanced Workflows. Fan-out/fan-in, conditional branching on a sandboxed
