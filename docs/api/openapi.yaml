@@ -577,6 +577,10 @@ components:
           minLength: 1
         join:
           $ref: '#/components/schemas/JoinEnum'
+        compensate_for:
+          type: string
+          nullable: true
+          minLength: 1
       required:
       - key
       - task_type

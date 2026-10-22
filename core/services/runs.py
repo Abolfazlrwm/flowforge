@@ -132,6 +132,9 @@ def _materialise(workflow: Workflow, *, requested_by_id: int | None) -> Workflow
                 idempotency_key=task.config.get("idempotency_key"),
             )
             for task in definition.tasks
+            # A compensation task is not part of the forward DAG: it gets no task
+            # run until the run fails and the scheduler triggers the rollback.
+            if task.compensate_for is None
         ]
     )
     return run
