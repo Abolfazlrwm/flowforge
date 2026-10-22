@@ -7,8 +7,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-10-22
+
+Phase 7 — Advanced Workflows. Fan-out/fan-in, conditional branching on a sandboxed
+expression language, cron scheduling with no double-fire across instances,
+cooperative cancellation, an append-only event log, manual re-run of a failed task,
+and saga-style compensation.
+
 ### Added
 
+- **Conditional branching and fan-out/fan-in.** A task may declare a `when`
+  condition over the run's task results and a `join` policy — `all` (every
+  dependency must succeed, the default) or `any` (one surviving path is enough,
+  for a fan-in over alternative branches). A false condition `SKIP`s the task, and
+  a skip propagates to its dependants so a branch that was not taken cannot stall
+  the run. New `TaskRunState.SKIPPED`.
+- **A sandboxed expression evaluator** (`core/domain/expressions.py`). `when`
+  conditions are evaluated by a hand-written tokenizer + recursive-descent parser
+  and evaluator — no `eval`, no attribute access, no calls, no indexing — with
+  injection tests. A broken condition is a loud definition error, never a silent
+  skip.
+- **Cron scheduling.** `ScheduledTrigger` starts a workflow run on a cron schedule.
+  The scheduler fires each due trigger with `SELECT FOR UPDATE SKIP LOCKED`, so N
+  scheduler instances cannot double-fire; `next_run_at` is advanced before the
+  trigger runs, so a crash is a missing run, not a duplicate.
+- **Cooperative cancellation.** `cancel_task_run` / `request_cancellation` cancel
+  a run and every unresolved task — including `RUNNING` siblings — and bump the
+  fencing token so a handler that is still running has its late result discarded
+  rather than resurrecting a cancelled task. A cancel-vs-completion race test on
+  real PostgreSQL proves exactly one of the two wins.
 - **Execution history / event log.** `TaskRunEvent` is an append-only record of
   every task-run state change, emitted from `core/repositories/transitions.py` on
   each transition (claim, finish, cancel, requeue, reclaim, promote, retry, skip).
@@ -25,6 +52,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Compensations run strictly one at a time in reverse dependency order (a
   dependent is undone before its dependency), and the run is held `RUNNING` until
   the rollback settles before it finishes `FAILED`.
+
+### Fixed
+
+- **Skip and promotion propagation now completes in one scheduler pass on any
+  backend.** `advance_workflow_run` iterated task runs in database-return order,
+  which is insertion order on SQLite but unspecified on PostgreSQL — so a dependant
+  processed before the dependency it waits on could miss a just-applied skip and
+  stay `PENDING`. It now walks `definition.graph.topological_order()`, so the
+  result no longer depends on row order.
 
 ## [0.7.2] - 2026-10-22
 
