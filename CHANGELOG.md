@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Execution history / event log.** `TaskRunEvent` is an append-only record of
+  every task-run state change, emitted from `core/repositories/transitions.py` on
+  each transition (claim, finish, cancel, requeue, reclaim, promote, retry, skip).
+  A lost race records nothing. `GET /api/v1/runs/<id>/events/` returns a run's
+  events, oldest first, with the same per-user visibility as the run detail.
+
 ## [0.7.2] - 2026-10-22
 
 Resilience verification for the v0.7.1 reconnection work: every process is now

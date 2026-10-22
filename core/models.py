@@ -450,3 +450,52 @@ class ScheduledTrigger(models.Model):
     def __str__(self) -> str:
         """Readable label for the admin and logs."""
         return f"trigger {self.id} for {self.workflow.name} ({self.cron_expression})"
+
+
+class TaskRunEvent(models.Model):
+    """An append-only record of one task-run state change.
+
+    The event log is the audit trail of execution: every transition performed by
+    the scheduler, a worker, the reaper or an operator is recorded here, in the
+    order it happened. It is never updated or deleted, so a run's history stays
+    reconstructable even after the run row itself is gone. ``kind`` names the
+    actor; ``from_state``/``to_state`` give the precise edge. ``from_state`` is
+    null only for operator cancellations, where the prior state is implied by the
+    event that precedes it.
+    """
+
+    class Kind(models.TextChoices):
+        """Who performed the transition."""
+
+        CLAIM = "claim", "Claimed by a worker"
+        FINISH = "finish", "Finished by a worker"
+        CANCEL = "cancel", "Cancelled by an operator"
+        REQUEUE = "requeue", "Requeued by an operator"
+        RECLAIM = "reclaim", "Lease reclaimed by the reaper"
+        PROMOTE = "promote", "Promoted to ready"
+        RETRY = "retry", "Scheduled for retry"
+        DEAD = "dead", "Exhausted retries"
+        SKIP = "skip", "Branch skipped"
+        TRANSITION = "transition", "State transition"
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    task_run = models.ForeignKey(TaskRun, on_delete=models.CASCADE, related_name="events")
+    kind = models.CharField(max_length=20, choices=Kind.choices)
+    from_state = models.CharField(max_length=20, null=True, blank=True)
+    to_state = models.CharField(max_length=20)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        """Order by time, and index the per-run history query."""
+
+        ordering = ["created_at", "id"]
+        indexes = [
+            models.Index(
+                fields=["task_run", "created_at"],
+                name="idx_event_taskrun_created",
+            ),
+        ]
+
+    def __str__(self) -> str:
+        """Readable label for the admin and logs."""
+        return f"event {self.id}: {self.task_run_id} {self.from_state} -> {self.to_state}"

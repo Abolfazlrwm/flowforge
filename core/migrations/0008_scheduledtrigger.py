@@ -6,25 +6,38 @@ from django.db import migrations, models
 
 
 class Migration(migrations.Migration):
-
     dependencies = [
-        ('core', '0007_task_join_task_when'),
+        ("core", "0007_task_join_task_when"),
     ]
 
     operations = [
         migrations.CreateModel(
-            name='ScheduledTrigger',
+            name="ScheduledTrigger",
             fields=[
-                ('id', models.UUIDField(default=uuid.uuid4, editable=False, primary_key=True, serialize=False)),
-                ('cron_expression', models.CharField(max_length=100)),
-                ('enabled', models.BooleanField(default=True)),
-                ('next_run_at', models.DateTimeField(db_index=True)),
-                ('last_run_at', models.DateTimeField(blank=True, null=True)),
-                ('created_at', models.DateTimeField(auto_now_add=True)),
-                ('workflow', models.ForeignKey(on_delete=django.db.models.deletion.CASCADE, related_name='scheduled_triggers', to='core.workflow')),
+                (
+                    "id",
+                    models.UUIDField(
+                        default=uuid.uuid4, editable=False, primary_key=True, serialize=False
+                    ),
+                ),
+                ("cron_expression", models.CharField(max_length=100)),
+                ("enabled", models.BooleanField(default=True)),
+                ("next_run_at", models.DateTimeField(db_index=True)),
+                ("last_run_at", models.DateTimeField(blank=True, null=True)),
+                ("created_at", models.DateTimeField(auto_now_add=True)),
+                (
+                    "workflow",
+                    models.ForeignKey(
+                        on_delete=django.db.models.deletion.CASCADE,
+                        related_name="scheduled_triggers",
+                        to="core.workflow",
+                    ),
+                ),
             ],
             options={
-                'indexes': [models.Index(fields=['enabled', 'next_run_at'], name='idx_trigger_due')],
+                "indexes": [
+                    models.Index(fields=["enabled", "next_run_at"], name="idx_trigger_due")
+                ],
             },
         ),
     ]

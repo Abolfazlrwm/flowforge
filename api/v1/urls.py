@@ -16,6 +16,7 @@ from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView
 from api.views import (
     MeView,
     RunDetailView,
+    RunEventsView,
     RunListCreateView,
     WorkflowDetailView,
     WorkflowListCreateView,
@@ -39,6 +40,7 @@ urlpatterns: list[URLPattern] = [
     # --- runs ---------------------------------------------------------------
     path("runs/", RunListCreateView.as_view(), name="run-list"),
     path("runs/<uuid:pk>/", RunDetailView.as_view(), name="run-detail"),
+    path("runs/<uuid:pk>/events/", RunEventsView.as_view(), name="run-events"),
     # --- schema -------------------------------------------------------------
     # The schema is committed to `docs/api/openapi.yaml` and CI fails if it has
     # drifted. Serving it here is for humans reading the docs site.
