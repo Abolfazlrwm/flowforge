@@ -26,7 +26,7 @@ classifiers = [
 ]
 dependencies = [
     "django>=5.2,<5.3",
-    "djangorestframework>=3.17,<3.18",
+    "djangorestframework>=3.17,<3.19",
     "django-filter>=24.2",
     "psycopg[binary]>=3.2,<4",
     "redis>=5.0,<6",
