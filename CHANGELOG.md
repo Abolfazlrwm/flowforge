@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.2] - 2026-10-22
+
+Resilience verification for the v0.7.1 reconnection work: every process is now
+proven, individually, to survive a broker restart *and* a PostgreSQL restart
+with no process restart.
+
 ### Changed
 
 - **Resilience verification tightened.** The `docker` CI job now proves, per process,
