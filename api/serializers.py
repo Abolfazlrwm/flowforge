@@ -198,6 +198,7 @@ class TaskDocSerializer(serializers.Serializer[Any]):
     config = serializers.DictField(required=False)
     when = serializers.CharField(required=False, allow_null=True)
     join = serializers.ChoiceField(choices=["all", "any"], required=False)
+    compensate_for = serializers.CharField(required=False, allow_null=True)
 
 
 class WorkflowDefinitionDoc(serializers.Serializer[Any]):

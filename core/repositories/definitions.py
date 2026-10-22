@@ -101,6 +101,7 @@ def publish_definition(definition: WorkflowDefinition) -> tuple[Workflow, bool]:
                     config=dict(task.config),
                     when=task.when,
                     join=task.join,
+                    compensate_for=task.compensate_for,
                 )
                 for task in definition.tasks
             ]
@@ -142,6 +143,7 @@ def load_definition(workflow: Workflow) -> WorkflowDefinition:
                 config=task.config or {},
                 when=task.when or None,
                 join=task.join,
+                compensate_for=task.compensate_for,
             )
         )
     definition = WorkflowDefinition(

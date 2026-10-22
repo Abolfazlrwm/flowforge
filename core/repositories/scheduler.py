@@ -19,7 +19,13 @@ from core.domain.definition import TaskDefinition, WorkflowDefinition
 from core.domain.expressions import evaluate_condition
 from core.domain.services import derive_workflow_run_state
 from core.domain.states import TaskRunState, WorkflowRunState
-from core.models import ScheduledTrigger, Task, TaskRun, WorkflowRun
+from core.models import (
+    TASK_RUN_TERMINAL,
+    ScheduledTrigger,
+    Task,
+    TaskRun,
+    WorkflowRun,
+)
 from core.repositories.definitions import load_definition
 from core.repositories.outbox import create_dispatch
 from core.repositories.transitions import (
@@ -108,6 +114,91 @@ def enqueue_ready_tasks(run: WorkflowRun) -> int:
             ):
                 enqueued += 1
     return enqueued
+
+
+def _compensation_plan(
+    definition: WorkflowDefinition, succeeded: set[str]
+) -> list[tuple[str, str]]:
+    """Ordered ``(target, compensator)`` pairs for succeeded tasks that have one.
+
+    Reverse dependency order: the forward topological order puts every dependency
+    before its dependants, so reversing it undoes dependents first — a task is
+    compensated only after everything that depended on it has been compensated,
+    which is what makes the rollback mirror the forward execution.
+    """
+    compensator_of = {
+        spec.compensate_for: spec.key
+        for spec in definition.tasks
+        if spec.compensate_for is not None
+    }
+    return [
+        (key, compensator_of[key])
+        for key in reversed(definition.graph.topological_order())
+        if key in succeeded and key in compensator_of
+    ]
+
+
+def _start_compensation(run: WorkflowRun, compensator_key: str) -> TaskRun:
+    """Create the ``READY`` task run for one compensation and return it.
+
+    A compensation task declares no dependencies (enforced at parse time), so it
+    is eligible the moment it exists; the caller's ``enqueue_ready_tasks``
+    dispatches it.
+    """
+    task = Task.objects.get(workflow=run.workflow, key=compensator_key)
+    return TaskRun.objects.create(workflow_run=run, task=task, state=TaskRunState.READY.value)
+
+
+def _advance_compensation(*, run: WorkflowRun, definition: WorkflowDefinition) -> bool:
+    """Drive the saga rollback one step, returning whether it has settled.
+
+    Compensations run strictly one at a time, in reverse dependency order: the
+    next compensator is only started once the previous one has *succeeded*, so
+    the undo sequence is ordered without a stored plan. A compensator that fails
+    or dies halts the rollback (logged), because continuing to undo later work
+    after an earlier undo failed would leave the saga half-applied.
+
+    Returns:
+        ``True`` when the saga is settled — every planned compensator has
+        resolved, there was nothing to compensate, or a compensator failed — so
+        the caller may finalise the run to ``FAILED``. ``False`` while a
+        compensator is still in flight or waiting its turn.
+    """
+    task_runs = {
+        task_run.task.key: task_run
+        for task_run in TaskRun.objects.filter(workflow_run=run).select_related("task")
+    }
+    succeeded = {key for key, tr in task_runs.items() if tr.state == TaskRunState.SUCCEEDED.value}
+    plan = _compensation_plan(definition, succeeded)
+    if not plan:
+        return True
+
+    for index, (_target, compensator) in enumerate(plan):
+        existing = task_runs.get(compensator)
+        if existing is None:
+            previous = plan[index - 1][1] if index > 0 else None
+            if previous is None or task_runs[previous].state == TaskRunState.SUCCEEDED.value:
+                _start_compensation(run, compensator)
+                logger.info(
+                    "compensation_started",
+                    run_id=str(run.id),
+                    compensator=compensator,
+                )
+            return False
+        if existing.state not in TASK_RUN_TERMINAL:
+            return False  # still in flight (pending/ready/running/retrying/failed)
+        if existing.state != TaskRunState.SUCCEEDED.value:
+            # A compensator failed or died: stop the rollback rather than undo
+            # later work on top of an incomplete earlier undo.
+            logger.warning(
+                "compensation_halted",
+                run_id=str(run.id),
+                compensator=compensator,
+                state=existing.state,
+            )
+            return True
+        # This compensator succeeded; fall through to the next in the plan.
+    return True
 
 
 def advance_workflow_run(run: WorkflowRun) -> tuple[int, int]:
@@ -199,34 +290,54 @@ def advance_workflow_run(run: WorkflowRun) -> tuple[int, int]:
             # must see RUNNING or it would skip a run that just started.
             run.refresh_from_db()
 
+        # Complete the run when its *forward* tasks have resolved. The scheduler
+        # owns the run's lifecycle; a worker only owns one task run. The
+        # precedence lives in `derive_workflow_run_state`, so it is not
+        # re-implemented here. Compensation task runs are excluded: the run's
+        # forward outcome is what decides failure, and compensations are cleanup
+        # that runs afterward rather than tasks that change the outcome.
+        forward_derived = derive_workflow_run_state(
+            TaskRunState(task_run.state)
+            for task_run in TaskRun.objects.filter(workflow_run=run).select_related("task")
+            if task_run.task.compensate_for is None
+        )
+
+        # Saga rollback. A failed forward run triggers the compensations of the
+        # tasks that had succeeded, in reverse dependency order, before the run is
+        # allowed to finish. Done before the dispatch below so a freshly started
+        # compensator (created READY) is enqueued in this same pass.
+        settled = True
+        if (
+            run.state == WorkflowRunState.RUNNING.value
+            and forward_derived is WorkflowRunState.FAILED
+        ):
+            settled = _advance_compensation(run=run, definition=definition)
+
         enqueued = enqueue_ready_tasks(run)
 
-        # Complete the run when its tasks have resolved. The scheduler owns the
-        # run's lifecycle; a worker only owns one task run. The precedence lives
-        # in `derive_workflow_run_state`, so it is not re-implemented here.
-        derived = derive_workflow_run_state(
-            TaskRunState(task_run.state) for task_run in TaskRun.objects.filter(workflow_run=run)
-        )
         if run.state == WorkflowRunState.RUNNING.value:
-            if derived is WorkflowRunState.SUCCEEDED:
+            if forward_derived is WorkflowRunState.SUCCEEDED:
                 transition_workflow_run(
                     run_id=run.id,
                     expected=WorkflowRunState.RUNNING,
                     target=WorkflowRunState.SUCCEEDED,
                 )
-            elif derived is WorkflowRunState.FAILED:
+            elif forward_derived is WorkflowRunState.FAILED and settled:
                 transition_workflow_run(
                     run_id=run.id,
                     expected=WorkflowRunState.RUNNING,
                     target=WorkflowRunState.FAILED,
                 )
-            elif derived is WorkflowRunState.CANCELLED:
+            elif forward_derived is WorkflowRunState.CANCELLED:
                 transition_workflow_run(
                     run_id=run.id,
                     expected=WorkflowRunState.RUNNING,
                     target=WorkflowRunState.CANCELLED,
                 )
-        elif run.state == WorkflowRunState.PENDING.value and derived is WorkflowRunState.CANCELLED:
+        elif (
+            run.state == WorkflowRunState.PENDING.value
+            and forward_derived is WorkflowRunState.CANCELLED
+        ):
             transition_workflow_run(
                 run_id=run.id,
                 expected=WorkflowRunState.PENDING,
