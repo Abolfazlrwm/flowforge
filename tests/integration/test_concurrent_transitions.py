@@ -26,6 +26,7 @@ from core.repositories.transitions import (
     finish_task_run,
     reap_expired_leases,
     reclaim_task_run,
+    requeue_failed_task_run,
     transition_task_run,
     transition_workflow_run,
 )
@@ -294,3 +295,26 @@ def test_cancellation_and_completion_cannot_both_win(task_run: TaskRun) -> None:
         assert task_run.state == TaskRunState.CANCELLED.value
         assert task_run.result is None
     assert task_run.lease_expires_at is None
+
+
+def test_two_operators_cannot_both_requeue_the_same_failed_task(task_run: TaskRun) -> None:
+    """Two operators re-running one FAILED task: exactly one requeue lands.
+
+    `requeue_failed_task_run` claims the row with `SELECT FOR UPDATE`, so the
+    second operator blocks, then sees the row already reset (no longer FAILED) and
+    is a no-op. The task is re-dispatched once, not twice — the same row-level
+    arbitration as every other transition here.
+    """
+    require_postgres()
+    task_run_id = task_run.id
+    TaskRun.objects.filter(pk=task_run_id).update(state=TaskRunState.FAILED.value, attempt=3)
+
+    results = run_concurrently(
+        THREADS,
+        lambda _index: requeue_failed_task_run(task_run_id=task_run_id),
+    )
+
+    assert sum(1 for value in results if value is True) == 1
+    task_run.refresh_from_db()
+    assert task_run.state == TaskRunState.PENDING.value
+    assert task_run.attempt == 1

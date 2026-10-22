@@ -393,6 +393,36 @@ paths:
                 items:
                   $ref: '#/components/schemas/TaskRunEvent'
           description: ''
+  /api/v1/task-runs/{id}/requeue/:
+    post:
+      operationId: task_runs_requeue_create
+      description: Requeue the task run and return its refreshed state.
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: string
+          format: uuid
+        required: true
+      tags:
+      - task runs
+      security:
+      - jwtAuth: []
+      - tokenAuth: []
+      - cookieAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TaskRun'
+          description: ''
+        '409':
+          description: The task run is not FAILED.
+        '401':
+          description: Missing or invalid credentials.
+        '404':
+          description: No such task run, or not visible to the caller.
 components:
   schemas:
     AuthToken:
