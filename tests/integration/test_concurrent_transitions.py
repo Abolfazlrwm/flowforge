@@ -270,7 +270,7 @@ def test_cancellation_and_completion_cannot_both_win(task_run: TaskRun) -> None:
     token = claim_task_run(task_run_id=task_run.id, worker_id="worker-1", lease_seconds=30, now=NOW)
     assert token is not None
 
-    results = run_concurrently_with_losers(
+    results, errors = run_concurrently_with_losers(
         THREADS,
         lambda index: (
             finish_task_run(
@@ -287,6 +287,9 @@ def test_cancellation_and_completion_cannot_both_win(task_run: TaskRun) -> None:
 
     winners = [value for value in results if value is True]
     assert len(winners) == 1, f"expected exactly one winner, got {winners}"
+    # A lost conditional UPDATE returns False; it does not raise. So a clean race
+    # has no errors, and anything here is a defect rather than a tolerated loss.
+    assert not errors, f"threads raised: {errors!r}"
 
     task_run.refresh_from_db()
     if task_run.state == TaskRunState.SUCCEEDED.value:
