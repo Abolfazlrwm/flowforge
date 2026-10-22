@@ -26,7 +26,7 @@ from __future__ import annotations
 from typing import Any
 
 from core.domain.schema import parse_workflow_definition
-from core.models import Workflow, WorkflowRun
+from core.models import TaskRunEvent, Workflow, WorkflowRun
 from core.repositories.definitions import publish_definition
 from core.services import runs as run_service
 from django.db.models import Count, QuerySet
@@ -42,6 +42,7 @@ from api.filters import WorkflowFilter, WorkflowRunFilter
 from api.pagination import StandardCursorPagination
 from api.permissions import IsAuthenticatedAndActive, IsOwnerOrStaff, IsStaffOrReadOnly
 from api.serializers import (
+    TaskRunEventSerializer,
     TriggerSerializer,
     UserSerializer,
     WorkflowDefinitionDoc,
@@ -226,6 +227,36 @@ class RunDetailView(RetrieveAPIView[WorkflowRun]):
     def get_queryset(self) -> QuerySet[WorkflowRun]:
         """Runs with everything the serializer reads, in one query."""
         return WorkflowRun.objects.select_related("workflow").prefetch_related("task_runs__task")
+
+
+class RunEventsView(ListAPIView[TaskRunEvent]):
+    """The append-only event log for one run, in the order it happened.
+
+    A run belonging to somebody else is a 404, not a 403 — the same visibility
+    rule as :class:`RunDetailView`, so a caller cannot learn that another user's
+    run exists by probing for its events. The list is returned as a plain array,
+    oldest first: the default cursor pagination orders newest-first, which is the
+    wrong direction for a chronological log, and the per-run event count is
+    bounded by the number of tasks and their attempts.
+    """
+
+    permission_classes = [IsAuthenticatedAndActive]
+    serializer_class = TaskRunEventSerializer
+    throttle_scope = "read"
+    pagination_class = None
+    # A base queryset for schema introspection; `get_queryset` below is what runs.
+    queryset = TaskRunEvent.objects.none()
+
+    def get_queryset(self) -> QuerySet[TaskRunEvent]:
+        """Events for the run, oldest first, with each task's key prefetched."""
+        run = get_object_or_404(
+            run_service.runs_visible_to(self.request.user), pk=self.kwargs["pk"]
+        )
+        return (
+            TaskRunEvent.objects.filter(task_run__workflow_run=run)
+            .select_related("task_run__task")
+            .order_by("created_at", "id")
+        )
 
 
 def _with_tasks(workflow: Workflow) -> Workflow:

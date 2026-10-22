@@ -19,7 +19,7 @@ from __future__ import annotations
 
 from typing import Any, ClassVar
 
-from core.models import Task, TaskRun, Workflow, WorkflowRun
+from core.models import Task, TaskRun, TaskRunEvent, Workflow, WorkflowRun
 from rest_framework import serializers
 
 
@@ -154,6 +154,27 @@ class WorkflowRunSummarySerializer(serializers.ModelSerializer[WorkflowRun]):
             "created_at",
             "started_at",
             "finished_at",
+        ]
+        read_only_fields: ClassVar[list[str]] = fields
+
+
+class TaskRunEventSerializer(serializers.ModelSerializer[TaskRunEvent]):
+    """One entry in a task run's append-only event log."""
+
+    task_key = serializers.CharField(source="task_run.task.key", read_only=True)
+
+    class Meta:
+        """Field mapping."""
+
+        model = TaskRunEvent
+        fields: ClassVar[list[str]] = [
+            "id",
+            "task_run",
+            "task_key",
+            "kind",
+            "from_state",
+            "to_state",
+            "created_at",
         ]
         read_only_fields: ClassVar[list[str]] = fields
 
