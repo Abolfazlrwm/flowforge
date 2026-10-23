@@ -27,6 +27,7 @@ import uuid
 from typing import cast
 
 from core.models import Membership, Organization
+from core.observability.context import bind_request_context
 from rest_framework.exceptions import PermissionDenied
 
 #: The header a multi-organization caller uses to choose the active tenant.
@@ -84,6 +85,10 @@ def resolve_membership(request: object) -> Membership | None:
                     membership = candidates[0]
 
     setattr(request, _CACHE_ATTR, membership)
+    if membership is not None:
+        # Every log line for this request carries the tenant, so a request log
+        # can be filtered by organization without a second lookup.
+        bind_request_context(organization_id=membership.organization_id)
     return membership
 
 

@@ -21,6 +21,8 @@ from django.db import DatabaseError
 
 from core.db import reset_connections
 from core.domain.retry import CONNECTION_BACKOFF, calculate_backoff
+from core.observability import metrics as obs_metrics
+from core.observability import tracing
 from core.repositories.scheduler import schedule_once
 
 
@@ -42,6 +44,12 @@ class Command(BaseCommand):
             action="store_true",
             help="Run a single pass and exit, instead of looping forever.",
         )
+        parser.add_argument(
+            "--metrics-port",
+            type=int,
+            default=9101,
+            help="Port for this process's Prometheus endpoint (default: 9101).",
+        )
 
     def handle(self, *_args: object, **options: object) -> None:
         """Run the loop, or a single pass when ``--once`` is given."""
@@ -54,6 +62,8 @@ class Command(BaseCommand):
             )
             return
 
+        tracing.configure_tracing("scheduler")
+        obs_metrics.start_metrics_server(int(opts["metrics_port"]))
         stop = threading.Event()
         signal.signal(signal.SIGTERM, lambda *_: stop.set())
         signal.signal(signal.SIGINT, lambda *_: stop.set())

@@ -19,6 +19,8 @@ import pytest
 from core.broker_rabbit import QueueTypeMismatchError
 from core.domain.states import TaskRunState
 from core.models import TaskRun, WorkflowRun
+from core.observability import context as obs_context
+from core.observability import tracing
 from core.repositories.transitions import (
     claim_task_run,
     finish_task_run,
@@ -28,6 +30,7 @@ from core.repositories.transitions import (
 from core.worker.consumer import Worker
 from core.worker.registry import handlers, register, resolve
 from django.db import DatabaseError
+from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 
 from tests.conftest import NOW
 
@@ -563,3 +566,26 @@ def test_a_dns_failure_is_retried_like_any_other_outage() -> None:
         worker.run()
 
     assert len(attempts) == 2
+
+
+def test_worker_binds_correlation_and_continues_trace(task_run: TaskRun) -> None:
+    """A dispatch carrying a correlation id and traceparent is attributed to them."""
+    exporter = InMemorySpanExporter()
+    tracing.configure_tracing(service_name="worker", exporter=exporter)
+    try:
+        payload = _payload(task_run, task_type="test.record", config={"tag": "x"})
+        payload["correlation_id"] = "corr-1"
+        payload["traceparent"] = "00-abcdef0123456789abcdef0123456789-abcdef0123456789-01"
+        payload["organization_id"] = str(task_run.organization_id)
+
+        _worker().process(payload, ack=lambda: None, nack=lambda _requeue: None)
+
+        # The handler ran, so the process reached the trace span.
+        assert _CALLS == ["x"]
+        spans = exporter.get_finished_spans()
+        assert any(s.name == "task.execute" for s in spans)
+        # The log context was bound to the incoming correlation id.
+        assert obs_context.current_correlation_id() == "corr-1"
+    finally:
+        obs_context.clear_request_context()
+        tracing.shutdown_tracing()
