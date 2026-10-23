@@ -1,0 +1,81 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "flowforge-client"
+version = "0.11.0"
+description = "A dependency-free Python client and CLI for the FlowForge REST API."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [{ name = "FlowForge contributors" }]
+keywords = ["workflow", "orchestration", "client", "cli"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Typing :: Typed",
+]
+# No runtime dependencies on purpose. A client library is installed beside an
+# application whose dependency set it must not constrain; `urllib.request` is
+# enough for JSON over HTTP. See `flowforge_client/_transport.py`.
+dependencies = []
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8,<10",
+    "ruff>=0.9,<1",
+    "mypy>=1.11",
+]
+
+[project.scripts]
+flowforge = "flowforge_client.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/Abolfazlrwm/flowforge"
+Documentation = "https://Abolfazlrwm.github.io/flowforge"
+Repository = "https://github.com/Abolfazlrwm/flowforge"
+
+[tool.hatch.build.targets.wheel]
+packages = ["flowforge_client"]
+
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+src = ["flowforge_client", "tests"]
+
+[tool.ruff.lint]
+select = [
+    "E", "W", "F", "I", "N", "D", "UP", "B", "C4", "SIM", "PL", "RUF", "S", "T20",
+]
+ignore = [
+    # `print` is the CLI's output mechanism, not a debugging leftover.
+    "T201",
+]
+
+[tool.ruff.lint.per-file-ignores]
+# A test here is named as the sentence it asserts —
+# `test_a_trigger_without_a_key_is_not_retried` — so a docstring that restates
+# the name is noise, and one that does not is the exception rather than the rule.
+# Classes still carry a docstring saying what the group protects, and the tests
+# that need to explain *why* have one. Literals are the point of an assertion,
+# and a fixture parameter is a dependency declaration the body need not read.
+"tests/**" = [
+    "S101", "S105", "S106", "PLR2004", "D102", "D103", "D401", "ARG001", "ARG002",
+]
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+warn_return_any = true
+warn_unused_ignores = true
+warn_redundant_casts = true
+exclude = ["venv", ".venv"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-v --tb=short --strict-markers"
