@@ -313,6 +313,39 @@ See [`execution-model.md`](execution-model.md) for the full protocol.
 
 ---
 
+## Tenancy and security
+
+Multi-tenancy is a **shared schema**: every tenant row carries `organization_id`,
+and `OrganizationScopedManager.for_organization(org)` is the only sanctioned read
+path (ADR-014). A caller's active organization comes from an API key (fixed by the
+key) or from a membership (an explicit `X-Organization` header, or the sole
+membership).
+
+| Table | Tenant column | Notes |
+| --- | --- | --- |
+| `core_organization` | — | The tenant itself. |
+| `core_membership` | `organization_id` | Unique `(organization, user)`; `role` is `owner` / `admin` / `member` / `viewer`. |
+| `core_workflow` | `organization_id` | Unique `(organization, name, version)`. |
+| `core_workflowrun` | `organization_id` | |
+| `core_taskrun` | `organization_id` | Denormalized so the scheduler filters without a join. |
+| `core_taskrunevent` | `organization_id` | Append-only. |
+| `core_scheduledtrigger` | `organization_id` | The tick passes the workflow's organization to `trigger`. |
+| `core_outboxmessage` | `organization_id` | The dispatch payload also carries it, for attributable worker logs. |
+| `core_idempotencykey` | `organization_id` | Unique `(organization, user, key)`. |
+| `core_apikey` | `organization_id` | `prefix` is unique; `hashed_key` is a password hash, never the secret. |
+| `core_auditlog` | `organization_id` | Append-only; a trigger rejects `UPDATE` and `DELETE`. |
+
+`organization_id` is nullable on these tables **only** so the backfill migration
+is reversible; the application always populates it. A `NULL` row is pre-backfill
+data, visible only to staff, and the data migration (`core.0012`) closes the
+window.
+
+The audit log's append-only guarantee is a database trigger (`core.0015`), not an
+application convention: `QuerySet.update()` and `.delete()` raise, which is what
+`tests/unit/test_audit_log.py` asserts.
+
+---
+
 ## Migration policy
 
 - `makemigrations --check --dry-run` runs in CI, so a model change without its
