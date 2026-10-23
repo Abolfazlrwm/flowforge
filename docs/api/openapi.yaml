@@ -330,9 +330,11 @@ paths:
       description: |-
         One run and the state of each of its tasks.
 
-        A run belonging to somebody else is a 403, not a 404: the row exists and the
-        caller is simply not allowed to read it. Hiding it would be a second,
-        contradictory policy layered on the first.
+        A run belonging to another tenant is a 404, not a 403: the queryset is
+        scoped to the caller's organization, so the row is invisible by construction.
+        That is the whole point of resolving visibility in the queryset rather than
+        in an object-level permission — a caller cannot learn that another tenant's
+        run exists by probing for its id.
       parameters:
       - in: path
         name: id
@@ -796,7 +798,6 @@ components:
         version:
           type: integer
           readOnly: true
-          default: 1
         description:
           type: string
           readOnly: true
@@ -945,7 +946,6 @@ components:
         version:
           type: integer
           readOnly: true
-          default: 1
         description:
           type: string
           readOnly: true
