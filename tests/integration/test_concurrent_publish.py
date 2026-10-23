@@ -5,11 +5,12 @@ that is atomic can still leave the database holding *someone's* definition when
 two callers disagreed about what that definition was. The guarantee that matters
 for traceability is narrower:
 
-    Under any interleaving, a ``(name, version)`` ends up holding exactly one
-    caller's content — never a mixture of two, and never neither.
+    Under any interleaving, an ``(organization, name, version)`` ends up holding
+    exactly one caller's content — never a mixture of two, and never neither.
 
 That is what makes "etl v3" mean something six months later, when the definition
-that produced a run has to be reconstructed exactly.
+that produced a run has to be reconstructed exactly. Uniqueness is per
+organization (ADR-014), so the race is run inside one tenant.
 
 Two races are covered:
 
@@ -23,9 +24,9 @@ Two races are covered:
 Unlike the transition races in ``test_concurrent_transitions.py``, losers here
 *are* expected to raise: a ``select_for_update()`` cannot lock a row that does
 not exist yet, so on PostgreSQL two concurrent first-publishers both see "not
-there" and both try to insert. The unique constraint on ``(name, version)``
-picks the winner and the loser's transaction — workflow and tasks together —
-rolls back. Which exception the loser sees depends on the interleaving, so both
+there" and both try to insert. The unique constraint on ``(organization, name,
+version)`` picks the winner and the loser's transaction — workflow and tasks
+together — rolls back. Which exception the loser sees depends on the interleaving, so both
 acceptable outcomes are enumerated explicitly and anything else fails.
 
 See ``tests/integration/conftest.py`` for the barrier, the per-thread connection
@@ -36,7 +37,7 @@ from __future__ import annotations
 
 import pytest
 from core.domain.definition import TaskDefinition, WorkflowDefinition
-from core.models import Task, Workflow
+from core.models import Organization, Task, Workflow
 from core.repositories.definitions import (
     DefinitionConflictError,
     definition_exists,
@@ -76,6 +77,11 @@ def _identical() -> WorkflowDefinition:
     )
 
 
+def _organization() -> Organization:
+    """The tenant every caller in a race publishes into."""
+    return Organization.objects.create(name="Acme", slug="acme")
+
+
 def _candidate(index: int) -> WorkflowDefinition:
     """A one-task definition that is traceable back to its caller.
 
@@ -93,9 +99,10 @@ def test_publishing_identical_content_concurrently_yields_one_workflow() -> None
     """Every caller is shown the same row, and only one row exists."""
     require_postgres()
 
+    organization = _organization()
     definitions, losers = run_concurrently_with_losers(
         THREADS,
-        lambda _index: publish_definition(_identical()),
+        lambda _index: publish_definition(_identical(), organization=organization),
     )
 
     # Nobody may fail for a reason other than losing the race.
@@ -133,9 +140,10 @@ def test_publishing_different_content_concurrently_holds_one_definition() -> Non
     """A ``(name, version)`` means exactly one caller's content, under a race."""
     require_postgres()
 
+    organization = _organization()
     publishers, losers = run_concurrently_with_losers(
         THREADS,
-        lambda index: publish_definition(_candidate(index)),
+        lambda index: publish_definition(_candidate(index), organization=organization),
     )
 
     for error in losers:
@@ -168,12 +176,13 @@ def test_definition_exists_is_true_for_the_different_content_race() -> None:
     """The cheap existence check agrees with what the race actually stored."""
     require_postgres()
 
+    organization = _organization()
     run_concurrently_with_losers(
         THREADS,
-        lambda index: publish_definition(_candidate(index)),
+        lambda index: publish_definition(_candidate(index), organization=organization),
     )
 
-    assert definition_exists(name="etl", version=1) is True
-    assert definition_exists(name="etl", version=2) is False
+    assert definition_exists(name="etl", version=1, organization=organization) is True
+    assert definition_exists(name="etl", version=2, organization=organization) is False
     assert Workflow.objects.count() == 1
     assert Task.objects.count() == 1

@@ -35,13 +35,15 @@ from django.shortcuts import get_object_or_404
 from drf_spectacular.utils import OpenApiParameter, OpenApiResponse, extend_schema
 from rest_framework import status
 from rest_framework.generics import ListAPIView, RetrieveAPIView
+from rest_framework.permissions import SAFE_METHODS
 from rest_framework.request import Request
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from api import tenancy
 from api.filters import WorkflowFilter, WorkflowRunFilter
 from api.pagination import StandardCursorPagination
-from api.permissions import IsAuthenticatedAndActive, IsOwnerOrStaff, IsStaffOrReadOnly
+from api.permissions import IsAdmin, IsAuthenticatedAndActive, IsMember, IsViewer
 from api.serializers import (
     TaskRunEventSerializer,
     TaskRunSerializer,
@@ -76,10 +78,16 @@ class MeView(APIView):
 class WorkflowListCreateView(ListAPIView[Workflow]):
     """List published definitions, or publish a new one."""
 
-    permission_classes = [IsStaffOrReadOnly]
+    permission_classes = [IsViewer]
     pagination_class = StandardCursorPagination
     filterset_class = WorkflowFilter
     ordering = ["-created_at"]
+
+    def get_permissions(self) -> list[Any]:
+        """Reading needs membership; publishing needs the admin role."""
+        if self.request.method in SAFE_METHODS:
+            return [IsViewer()]
+        return [IsAdmin()]
 
     def get_throttles(self) -> list[Any]:
         """Reads and publishes are throttled at different rates."""
@@ -87,8 +95,12 @@ class WorkflowListCreateView(ListAPIView[Workflow]):
         return super().get_throttles()
 
     def get_queryset(self) -> QuerySet[Workflow]:
-        """Definitions with their task count, newest first."""
-        return Workflow.objects.annotate(task_count=Count("tasks")).order_by("-created_at", "-id")
+        """This organization's definitions with their task count, newest first."""
+        return (
+            _workflow_queryset(self.request)
+            .annotate(task_count=Count("tasks"))
+            .order_by("-created_at", "-id")
+        )
 
     def get_serializer_class(self) -> type[WorkflowSummarySerializer]:
         """List only; publishing does not go through a serializer."""
@@ -111,7 +123,9 @@ class WorkflowListCreateView(ListAPIView[Workflow]):
         round trip use, and a second validator here would drift from it.
         """
         definition = parse_workflow_definition(request.data)
-        workflow, created = publish_definition(definition)
+        workflow, created = publish_definition(
+            definition, organization=tenancy.require_active_organization(request)
+        )
         payload = WorkflowSerializer(_with_tasks(workflow)).data
         return Response(payload, status=status.HTTP_201_CREATED if created else status.HTTP_200_OK)
 
@@ -125,14 +139,14 @@ class WorkflowDetailView(RetrieveAPIView[Workflow]):
     round trip for nothing.
     """
 
-    permission_classes = [IsStaffOrReadOnly]
+    permission_classes = [IsViewer]
     serializer_class = WorkflowSerializer
     throttle_scope = "read"
     lookup_field = "name"
 
     def get_queryset(self) -> QuerySet[Workflow]:
-        """Definitions with their tasks prefetched, to avoid N+1 on render."""
-        return Workflow.objects.prefetch_related("tasks")
+        """This organization's definitions, tasks prefetched to avoid N+1."""
+        return _workflow_queryset(self.request).prefetch_related("tasks")
 
     def get_object(self) -> Workflow:
         """Resolve `(name, version)` from the URL."""
@@ -146,10 +160,16 @@ class WorkflowDetailView(RetrieveAPIView[Workflow]):
 class RunListCreateView(ListAPIView[WorkflowRun]):
     """List the caller's runs, or trigger a new one."""
 
-    permission_classes = [IsAuthenticatedAndActive]
+    permission_classes = [IsViewer]
     pagination_class = StandardCursorPagination
     filterset_class = WorkflowRunFilter
     ordering = ["-created_at"]
+
+    def get_permissions(self) -> list[Any]:
+        """Reading needs membership; triggering needs the member role."""
+        if self.request.method in SAFE_METHODS:
+            return [IsViewer()]
+        return [IsMember()]
 
     def get_throttles(self) -> list[Any]:
         """Triggering is expensive; listing is not."""
@@ -157,8 +177,8 @@ class RunListCreateView(ListAPIView[WorkflowRun]):
         return super().get_throttles()
 
     def get_queryset(self) -> QuerySet[WorkflowRun]:
-        """Only the caller's runs, unless they are staff."""
-        return run_service.runs_visible_to(self.request.user)
+        """This organization's runs, unless the caller is staff."""
+        return _run_queryset(self.request)
 
     def get_serializer_class(self) -> type[WorkflowRunSummarySerializer]:
         """List only; triggering returns the full run."""
@@ -193,8 +213,10 @@ class RunListCreateView(ListAPIView[WorkflowRun]):
         """
         trigger = TriggerSerializer(data=request.data)
         trigger.is_valid(raise_exception=True)
+        # Scoped to the caller's organization: another tenant's definition of the
+        # same name and version is not visible, so it is a 404 rather than a run.
         workflow = get_object_or_404(
-            Workflow,
+            _workflow_queryset(request),
             name=trigger.validated_data["name"],
             version=trigger.validated_data["version"],
         )
@@ -203,6 +225,7 @@ class RunListCreateView(ListAPIView[WorkflowRun]):
         run, created = run_service.trigger(
             workflow,
             requested_by_id=request.user.pk,
+            organization=workflow.organization,
             idempotency_key=key,
             fingerprint=run_service.request_fingerprint(trigger.validated_data),
         )
@@ -217,18 +240,20 @@ class RunListCreateView(ListAPIView[WorkflowRun]):
 class RunDetailView(RetrieveAPIView[WorkflowRun]):
     """One run and the state of each of its tasks.
 
-    A run belonging to somebody else is a 403, not a 404: the row exists and the
-    caller is simply not allowed to read it. Hiding it would be a second,
-    contradictory policy layered on the first.
+    A run belonging to another tenant is a 404, not a 403: the queryset is
+    scoped to the caller's organization, so the row is invisible by construction.
+    That is the whole point of resolving visibility in the queryset rather than
+    in an object-level permission — a caller cannot learn that another tenant's
+    run exists by probing for its id.
     """
 
-    permission_classes = [IsAuthenticatedAndActive, IsOwnerOrStaff]
+    permission_classes = [IsViewer]
     serializer_class = WorkflowRunSerializer
     throttle_scope = "read"
 
     def get_queryset(self) -> QuerySet[WorkflowRun]:
-        """Runs with everything the serializer reads, in one query."""
-        return WorkflowRun.objects.select_related("workflow").prefetch_related("task_runs__task")
+        """This organization's runs, with everything the serializer reads."""
+        return _run_queryset(self.request).prefetch_related("task_runs__task")
 
 
 class RunEventsView(ListAPIView[TaskRunEvent]):
@@ -242,7 +267,7 @@ class RunEventsView(ListAPIView[TaskRunEvent]):
     bounded by the number of tasks and their attempts.
     """
 
-    permission_classes = [IsAuthenticatedAndActive]
+    permission_classes = [IsViewer]
     serializer_class = TaskRunEventSerializer
     throttle_scope = "read"
     pagination_class = None
@@ -251,9 +276,7 @@ class RunEventsView(ListAPIView[TaskRunEvent]):
 
     def get_queryset(self) -> QuerySet[TaskRunEvent]:
         """Events for the run, oldest first, with each task's key prefetched."""
-        run = get_object_or_404(
-            run_service.runs_visible_to(self.request.user), pk=self.kwargs["pk"]
-        )
+        run = get_object_or_404(_run_queryset(self.request), pk=self.kwargs["pk"])
         return (
             TaskRunEvent.objects.filter(task_run__workflow_run=run)
             .select_related("task_run__task")
@@ -270,7 +293,7 @@ class TaskRunRequeueView(APIView):
     as everywhere else, enforced by scoping the lookup to the caller's runs.
     """
 
-    permission_classes = [IsAuthenticatedAndActive]
+    permission_classes = [IsMember]
     throttle_scope = "trigger"
 
     @extend_schema(
@@ -285,8 +308,10 @@ class TaskRunRequeueView(APIView):
     )
     def post(self, request: Request, pk: Any) -> Response:
         """Requeue the task run and return its refreshed state."""
+        # Scoped to the caller's organization, so another tenant's task run is a
+        # 404 rather than a 403 or a cross-tenant write.
         task_run = get_object_or_404(
-            TaskRun.objects.filter(workflow_run__in=run_service.runs_visible_to(request.user)),
+            TaskRun.objects.filter(workflow_run__in=_run_queryset(request)),
             pk=pk,
         )
         if not requeue_failed_task_run(task_run_id=task_run.id):
@@ -296,6 +321,33 @@ class TaskRunRequeueView(APIView):
             )
         task_run.refresh_from_db()
         return Response(TaskRunSerializer(task_run).data, status=status.HTTP_200_OK)
+
+
+def _workflow_queryset(request: Request) -> QuerySet[Workflow]:
+    """The definitions this caller may see.
+
+    Tenant scoping is done here, once, so every workflow view — list, detail and
+    the trigger lookup — inherits it. Staff are the only exception, and it is
+    deliberate: they are platform operators, not members of a tenant. An
+    ordinary caller with no resolvable organization gets an empty queryset rather
+    than a cross-tenant one.
+    """
+    if request.user.is_staff:
+        return Workflow.objects.all()
+    organization = tenancy.get_active_organization(request)
+    if organization is None:
+        return Workflow.objects.none()
+    return Workflow.objects.for_organization(organization)
+
+
+def _run_queryset(request: Request) -> QuerySet[WorkflowRun]:
+    """The runs this caller may see, scoped to their organization."""
+    if request.user.is_staff:
+        return WorkflowRun.objects.select_related("workflow").order_by("-created_at", "-id")
+    organization = tenancy.get_active_organization(request)
+    if organization is None:
+        return WorkflowRun.objects.none()
+    return run_service.runs_visible_to(organization)
 
 
 def _with_tasks(workflow: Workflow) -> Workflow:
