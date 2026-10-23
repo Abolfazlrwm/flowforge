@@ -33,6 +33,7 @@ import contextlib
 import json
 import logging
 import threading
+import time
 from collections.abc import Callable, Iterator, Mapping
 from contextlib import contextmanager
 from typing import Any
@@ -46,6 +47,9 @@ from core.db import reset_connections
 from core.domain.retry import CONNECTION_BACKOFF, calculate_backoff
 from core.domain.states import TaskRunState
 from core.models import TaskRun
+from core.observability import context as obs_context
+from core.observability import metrics as obs_metrics
+from core.observability import tracing
 from core.repositories.transitions import claim_task_run, finish_task_run, renew_lease
 from core.worker.registry import resolve
 
@@ -251,6 +255,16 @@ class Worker:
         nack: Callable[[bool], None],
     ) -> None:
         """Handle one dispatch. Separated from pika so it is unit-testable."""
+        # One message, one log context. Cleared first so a previous message's
+        # run id cannot leak into this one on a long-lived worker.
+        obs_context.clear_request_context()
+        obs_context.bind_request_context(
+            correlation_id=payload.get("correlation_id") or None,
+            organization_id=payload.get("organization_id"),
+            dispatch_id=payload.get("dispatch_id"),
+            task_run_id=payload.get("task_run_id"),
+            workflow_run_id=payload.get("workflow_run_id"),
+        )
         task_type = payload.get("task_type")
         if not task_type:
             nack(False)
@@ -295,7 +309,23 @@ class Worker:
                 )
                 return
 
-        with self._heartbeat(task_run_id, token):
+        # Continue the trace the API started, across the outbox and the
+        # broker. The payload's traceparent is the scheduler's dispatch span,
+        # which is itself a child of the run's trigger span.
+        with (
+            self._heartbeat(task_run_id, token),
+            tracing.start_span(
+                "task.execute",
+                context=tracing.context_from_traceparent(payload.get("traceparent")),
+                attributes={
+                    "flowforge.organization_id": str(payload.get("organization_id") or ""),
+                    "flowforge.task_run_id": str(task_run_id),
+                    "flowforge.task_key": str(payload.get("task_key") or ""),
+                    "flowforge.attempt": int(payload.get("attempt") or 1),
+                },
+            ),
+        ):
+            started = time.perf_counter()
             try:
                 result = handler(payload.get("config", {}))
             except Exception:
@@ -303,6 +333,8 @@ class Worker:
                 result = None
             else:
                 target = TaskRunState.SUCCEEDED
+            finally:
+                obs_metrics.TASK_LATENCY.observe(time.perf_counter() - started)
         self._finish(task_run_id, target, token, result=result, ack=ack, nack=nack)
 
     def _prior_result(self, *, idempotency_key: str, task_run_id: UUID) -> object | None:

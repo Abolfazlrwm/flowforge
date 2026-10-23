@@ -26,6 +26,11 @@ from core.models import (
     TaskRun,
     WorkflowRun,
 )
+from core.observability.tracing import (
+    context_from_traceparent,
+    current_traceparent,
+    start_span,
+)
 from core.repositories.definitions import load_definition
 from core.repositories.outbox import create_dispatch
 from core.repositories.transitions import (
@@ -103,15 +108,30 @@ def enqueue_ready_tasks(run: WorkflowRun) -> int:
             .select_related("task")
         )
         for task_run in ready:
-            if (
-                create_dispatch(
+            # The dispatch span is a child of the run's stored trace context, so
+            # the scheduler's work is attributed to the request that started the
+            # run even though that request's process is long gone.
+            with start_span(
+                "task.dispatch",
+                context=context_from_traceparent(run.traceparent),
+                attributes={
+                    "flowforge.organization_id": str(run.organization_id or ""),
+                    "flowforge.workflow_run_id": str(run.id),
+                    "flowforge.task_run_id": str(task_run.id),
+                    "flowforge.task_key": task_run.task.key,
+                },
+            ):
+                dispatch = create_dispatch(
                     task_run=task_run,
                     workflow_run=run,
                     fencing_token_snapshot=task_run.fencing_token,
                     attempt_snapshot=task_run.attempt,
+                    correlation_id=run.correlation_id,
+                    # Fall back to the run's context when tracing is disabled, so
+                    # the worker still inherits the API trace.
+                    traceparent=current_traceparent() or run.traceparent,
                 )
-                is not None
-            ):
+            if dispatch is not None:
                 enqueued += 1
     return enqueued
 
