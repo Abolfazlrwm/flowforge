@@ -2,13 +2,17 @@
 
 ## Current Phase
 
-**Phase 9 — Observability & Performance: RELEASED (v0.10.0).** Merged from
-`feat/phase9-observability` (PR #41). One correlation id and one trace follow a
-run from the HTTP request through the outbox, the broker and the worker;
-Prometheus metrics are exposed per process; Grafana dashboards and a compose
-`observability` profile are code; a Locust load test with committed raw results
-gives the first measured benchmark; and one profiled bottleneck was fixed with
-before/after numbers.
+**Phase 10 — SDK, CLI and Documentation: RELEASED (v0.11.0).** Merged from
+`feat/phase10-sdk-cli` (PR #42). `flowforge-client` — a dependency-free Python
+client and the `flowforge` command — plus four runnable examples and three new
+documentation pages (SDK guide, CLI reference, complete API reference).
+
+**Phase 9 — Observability & Performance: RELEASED (v0.10.0).** Merged as
+`6a58fdc` (PR #41). One correlation id and one trace follow a run from the HTTP
+request through the outbox, the broker and the worker; Prometheus metrics are
+exposed per process; Grafana dashboards and a compose `observability` profile are
+code; a Locust load test with committed raw results gives the first measured
+benchmark; and one profiled bottleneck was fixed with before/after numbers.
 
 **Phase 8 — Security & Multi-Tenancy: RELEASED (v0.9.0).** Merged as `4febc05`
 (PR #38) and tagged `v0.9.0`. Organizations and memberships with
@@ -23,7 +27,8 @@ and `bandit` + `pip-audit` in CI.
 `PATCH/DELETE /members/<id>/`) with the owner/admin rules, tenant-isolation tests
 and audit entries; rewrote this record; and added `make test-pg`.
 
-**Phase 10** is next.
+**Phase 11 — Production Hardening (v1.0.0)** is next, and **`v1.0.0` needs the
+owner's explicit approval before it is tagged** ([DECISIONS.md](DECISIONS.md)).
 
 ## Resume point
 
@@ -31,21 +36,22 @@ If this session is resumed cold, read this section first.
 
 | Question | Answer |
 |----------|--------|
-| Where is the work | `main` is at `v0.10.0`. Phase 10 has not started. |
-| What is released | `v0.1.0` … `v0.10.0`, including the `v0.5.1`, `v0.6.1`, `v0.7.1`, `v0.7.2`, `v0.8.1` and `v0.9.1` gap releases. |
+| Where is the work | `main` is at `v0.11.0`. Phase 11 has not started. |
+| What is released | `v0.1.0` … `v0.11.0`, including the `v0.5.1`, `v0.6.1`, `v0.7.1`, `v0.7.2`, `v0.8.1` and `v0.9.1` gap releases. |
 | Framework | **Django 5.2 LTS** ([ADR-010](../adr/ADR-010-django-5-2-lts.md)) and **DRF 3.18.3**. Python 3.13 in CI/Docker; the package requires >= 3.11. |
 | Message broker | **RabbitMQ via pika** ([ADR-011](../adr/ADR-011-custom-scheduler-and-transactional-outbox.md)). The dispatch queue is a **quorum** queue; the worker reconnects through broker outages. |
 | Tenancy | **Shared schema, per-organization scoping** ([ADR-014](../adr/ADR-014-multi-tenancy-shared-schema.md)). Every tenant read goes through `OrganizationScopedManager.for_organization`; another tenant's id is a 404. |
 | Observability | `core/observability/` — correlation ids in `context.py`, one registry per process in `metrics.py`, module-local OTel provider in `tracing.py`. See [`deployment/observability.md`](../deployment/observability.md). |
-| What is next | Phase 10. |
-| What blocks Phase 10 | **Nothing.** |
-| What else is open | Nothing pending an owner decision. Release tags are automatic on green CI; only `v1.0.0` needs owner approval ([DECISIONS.md](DECISIONS.md)). |
+| Client | **`sdk/`** — `flowforge-client`, a separate distribution with no runtime dependencies, exposing the `flowforge` CLI. See [`sdk/index.md`](../sdk/index.md) and [`cli.md`](../cli.md). |
+| What is next | Phase 11 — Production Hardening (v1.0.0). |
+| What blocks Phase 11 | **Nothing.** |
+| What else is open | `v1.0.0` needs the owner's explicit approval before it is tagged; every other release tag is automatic on green CI. |
 
 ## Status
 
 | Item | State |
 |------|-------|
-| Branch | `main` at `v0.10.0` |
+| Branch | `main` at `v0.11.0` |
 | Phase 0 | **MERGED** as `97c17bf` (PR #1), tagged `v0.1.0` |
 | Phase 1 | **MERGED** as `869720f`, tagged `v0.2.0` |
 | Phase 2 | **MERGED** as `d31abf3`, tagged `v0.3.0` |
@@ -57,12 +63,13 @@ If this session is resumed cold, read this section first.
 | Phase 7 | **MERGED** (PR #36), tagged `v0.8.0` (`89eb600`); gap `v0.8.1` (PR #37, `ed25c15`) |
 | Phase 8 | **MERGED** (PR #38) as `4febc05`, tagged `v0.9.0` |
 | `v0.9.1` follow-ups | **MERGED** (PR #40) as `a00e267`, tagged `v0.9.1` |
-| Phase 9 | **MERGED** (PR #41), tagged `v0.10.0` |
-| CI jobs | `lint` (ruff, ruff format, mypy, **bandit**, **pip-audit**), `test`, `schema`, `docs`, `docker`, **`loadtest`** |
+| Phase 9 | **MERGED** (PR #41) as `6a58fdc`, tagged `v0.10.0` |
+| Phase 10 | **MERGED** (PR #42), tagged `v0.11.0` |
+| CI jobs | `lint` (ruff, ruff format, mypy, **bandit**, **pip-audit**), `test`, `schema`, `docs`, `docker`, `loadtest`, **`sdk`** |
 | Test database in CI | **PostgreSQL 16** for the unit and integration suites; Redis 7 and RabbitMQ 3.13 services for integration |
 | Docker | Verified in CI (build, compose up, health probes, e2e, failure injection, **observability profile**); owner decision 2026-10-19 |
-| Tags | `v0.1.0` … `v0.10.0`, annotated |
-| GitHub Releases | Published for `v0.1.0` … `v0.10.0` |
+| Tags | `v0.1.0` … `v0.11.0`, annotated |
+| GitHub Releases | Published for `v0.1.0` … `v0.11.0` |
 | Branch protection | `main`: `lint`, `test`, `docker` required, strict, no force push, `enforce_admins` |
 | Django | **5.2 LTS** ([ADR-010](../adr/ADR-010-django-5-2-lts.md)) |
 | DRF | **3.18.3** (fixes CVE-2026-114136/114137/114138) |
@@ -73,6 +80,7 @@ If this session is resumed cold, read this section first.
 | Prometheus client | `prometheus-client` 0.26.0 |
 | OpenTelemetry | `opentelemetry-api`/`sdk` 1.45.1, OTLP/HTTP exporter 1.45.1 |
 | Locust | 2.47.0 (dev extra) |
+| Client | `flowforge-client` 0.11.0, **no runtime dependencies** |
 
 ## Completed
 
@@ -253,6 +261,41 @@ If this session is resumed cold, read this section first.
   `SCHEDULER_INTERVAL` are now configurable; the shipped defaults are unchanged
   and asserted by a test.
 
+### Phase 10 — SDK, CLI and documentation
+
+- **`flowforge-client`** (`sdk/`): a separate distribution with **no runtime
+  dependencies**, because the server package drags in Django and a client library
+  must not constrain its host's resolution. It imports nothing from `core` or
+  `api`.
+  - Frozen dataclasses (`Run`, `TaskRun`, `Workflow`, `Event`, `Page`) parsed by
+    explicit `from_payload` classmethods, so a field the server adds is ignored
+    and a field it removes fails at parse time rather than three layers down.
+  - Typed errors parsed from the API's `error.code`: `NotFoundError`,
+    `ConflictError`, `ThrottledError` (with `retry_after`), `ValidationError`,
+    `AuthenticationError`, `ForbiddenError`, `ServerError`. A 5xx never becomes a
+    4xx type even when the body claims a 4xx code.
+  - `trigger(..., idempotency_key=...)` refuses to retry without a key, because a
+    retried POST would start a second run; with one, a retry replays.
+  - `wait()` polls with a doubling interval and raises `TimeoutError` naming the
+    last state. `wait_for_success()` additionally raises when the run ended badly.
+  - Retries are 429/5xx only, with exponential backoff and jitter, honouring
+    `Retry-After`.
+  - The transport refuses any scheme but `http`/`https`; `urlopen` also accepts
+    `file:`, and a caller-supplied base URL that could point at a local path is a
+    credential-disclosure bug.
+- **`flowforge` CLI**: one subcommand per client call, so it cannot do what the
+  SDK cannot. `FLOWFORGE_URL`/`FLOWFORGE_TOKEN` first, flags second. Exit codes
+  0/1/2, and `trigger` exits 1 when the run did not succeed.
+- **Examples** (`examples/`): publish-and-run, watch-the-event-log,
+  requeue-failed (dry-run by default), and a CLI walkthrough asserting an exit
+  code at every step.
+- **Documentation**: `docs/sdk/index.md` (guide), `docs/cli.md` (reference),
+  `docs/api/reference.md` (every endpoint with its request and response body).
+  The API overview's endpoint table now covers the whole surface.
+- **CI gains an `sdk` job**: its own lock file, ruff, ruff format, mypy, pytest,
+  an assertion that the runtime dependency list is still empty, and a wheel build
+  that checks the `flowforge` console script is declared.
+
 ## Verification
 
 ### In CI (authoritative)
@@ -377,6 +420,23 @@ benchmark numbers in [`BENCHMARKS.md`](BENCHMARKS.md) come from that run.
     faster than `dependency_depth × interval`. The default 5 s means a four-task
     diamond takes ~20 s even when the engine is idle.
 
+### Client
+
+27. **`flowforge-client` is not published to PyPI.** The package builds and its
+    wheel is checked in CI, but publishing is a release decision that has not been
+    taken. Install it from the repository (`pip install ./sdk`) until it is.
+28. **The SDK has no async client.** The interesting latency is the pipeline's,
+    not the HTTP call's; a second implementation would have to be kept in step for
+    no measured benefit.
+29. **The SDK does not validate definitions locally.** The server owns the
+    schema; validating twice would create two sources of truth that can disagree.
+30. **The client has no cancellation call**, because the API has no cancellation
+    endpoint. `request_cancellation` exists in the service layer and is not
+    exposed over HTTP yet.
+31. **The CLI has no `publish` subcommand.** A workflow definition is a structured
+    document, not a flag; publishing from a shell heredoc is worse than from
+    Python or the API.
+
 ## Dependency decisions
 
 | Package | Version | Decision |
@@ -395,6 +455,7 @@ benchmark numbers in [`BENCHMARKS.md`](BENCHMARKS.md) come from that run.
 | locust | 2.47.0 | Load tests (dev extra only; not in the image) |
 | Python | 3.13 in CI/Docker; `>= 3.11` | 3.14 deferred (limitation 18) |
 | bandit + pip-audit | dev extra | Required `lint` checks |
+| flowforge-client | 0.11.0, `sdk/` | Separate distribution, **zero runtime dependencies** (limitation 27) |
 
 ## Blockers
 
@@ -402,7 +463,12 @@ None.
 
 ## Next step
 
-Phase 10 — per [`ROADMAP.md`](ROADMAP.md).
+Phase 11 — Production Hardening (v1.0.0), per [`ROADMAP.md`](ROADMAP.md):
+security review, migration review, deployment documentation, backup and recovery,
+Kubernetes deployment, end-to-end testing, release preparation.
+
+**`v1.0.0` needs the owner's explicit approval before it is tagged.** Every other
+release tag is automatic on green CI.
 
 ## Ordering note
 
