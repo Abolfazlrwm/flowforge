@@ -534,6 +534,111 @@ paths:
               schema:
                 $ref: '#/components/schemas/ApiKey'
           description: ''
+  /api/v1/members/:
+    get:
+      operationId: members_list
+      description: List the active organization's members.
+      tags:
+      - members
+      security:
+      - ApiKeyAuth: []
+      - jwtAuth: []
+      - tokenAuth: []
+      - cookieAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Membership'
+          description: ''
+    post:
+      operationId: members_create
+      description: Add an existing user to the organization with a role.
+      tags:
+      - members
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MembershipCreateRequest'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/MembershipCreateRequest'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/MembershipCreateRequest'
+        required: true
+      security:
+      - ApiKeyAuth: []
+      - jwtAuth: []
+      - tokenAuth: []
+      - cookieAuth: []
+      responses:
+        '201':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Membership'
+          description: ''
+  /api/v1/members/{id}/:
+    patch:
+      operationId: members_partial_update
+      description: Change the member's role.
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: string
+          format: uuid
+        required: true
+      tags:
+      - members
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PatchedMembershipRoleRequest'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/PatchedMembershipRoleRequest'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/PatchedMembershipRoleRequest'
+      security:
+      - ApiKeyAuth: []
+      - jwtAuth: []
+      - tokenAuth: []
+      - cookieAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Membership'
+          description: ''
+    delete:
+      operationId: members_destroy
+      description: Remove the member from the organization.
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: string
+          format: uuid
+        required: true
+      tags:
+      - members
+      security:
+      - ApiKeyAuth: []
+      - jwtAuth: []
+      - tokenAuth: []
+      - cookieAuth: []
+      responses:
+        '204':
+          description: The member was removed.
 components:
   schemas:
     ApiKey:
@@ -707,6 +812,57 @@ components:
         * `dead` - Exhausted retries
         * `skip` - Branch skipped
         * `transition` - State transition
+    Membership:
+      type: object
+      description: A member of the active organization, with the user's identity.
+      properties:
+        id:
+          type: string
+          format: uuid
+          readOnly: true
+        user_id:
+          type: integer
+          readOnly: true
+        username:
+          type: string
+          readOnly: true
+        email:
+          type: string
+          format: email
+          readOnly: true
+        role:
+          allOf:
+          - $ref: '#/components/schemas/RoleEnum'
+          readOnly: true
+        created_at:
+          type: string
+          format: date-time
+          readOnly: true
+      required:
+      - created_at
+      - email
+      - id
+      - role
+      - user_id
+      - username
+    MembershipCreateRequest:
+      type: object
+      description: |-
+        The body of an add-member request.
+
+        The target is named by username rather than by id: a caller adding a
+        colleague knows the username, not the numeric primary key.
+      properties:
+        username:
+          type: string
+          minLength: 1
+          maxLength: 150
+        role:
+          allOf:
+          - $ref: '#/components/schemas/RoleEnum'
+          default: member
+      required:
+      - username
     PaginatedWorkflowRunSummaryList:
       type: object
       required:
@@ -745,6 +901,24 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/WorkflowSummary'
+    PatchedMembershipRoleRequest:
+      type: object
+      description: The body of a role-change request.
+      properties:
+        role:
+          $ref: '#/components/schemas/RoleEnum'
+    RoleEnum:
+      enum:
+      - owner
+      - admin
+      - member
+      - viewer
+      type: string
+      description: |-
+        * `owner` - Owner
+        * `admin` - Admin
+        * `member` - Member
+        * `viewer` - Viewer
     ScopesEnum:
       enum:
       - read

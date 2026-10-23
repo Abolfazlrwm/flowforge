@@ -26,12 +26,15 @@ from __future__ import annotations
 from typing import Any
 
 from core.domain.schema import parse_workflow_definition
-from core.models import ApiKey, TaskRun, TaskRunEvent, Workflow, WorkflowRun
+from core.models import ApiKey, Membership, TaskRun, TaskRunEvent, Workflow, WorkflowRun
 from core.repositories.definitions import publish_definition
 from core.repositories.transitions import requeue_failed_task_run
 from core.services import api_keys as api_key_service
 from core.services import audit as audit_service
+from core.services import memberships as membership_service
 from core.services import runs as run_service
+from django.contrib.auth.models import User
+from django.db import transaction
 from django.db.models import Count, QuerySet
 from django.shortcuts import get_object_or_404
 from drf_spectacular.utils import OpenApiParameter, OpenApiResponse, extend_schema
@@ -57,6 +60,9 @@ from api.serializers import (
     ApiKeyCreatedSerializer,
     ApiKeyCreateSerializer,
     ApiKeySerializer,
+    MembershipCreateSerializer,
+    MembershipRoleSerializer,
+    MembershipSerializer,
     TaskRunEventSerializer,
     TaskRunSerializer,
     TriggerSerializer,
@@ -474,6 +480,155 @@ class ApiKeyRevokeView(APIView):
         )
         api_key.refresh_from_db()
         return Response(ApiKeySerializer(api_key).data, status=status.HTTP_200_OK)
+
+
+class MemberListCreateView(APIView):
+    """List the organization's members, or add one.
+
+    Listing exposes usernames and e-mail addresses, so it needs the admin role.
+    Adding a member is a role change too, and the service enforces that only an
+    owner may grant the owner role.
+    """
+
+    permission_classes = [IsAdmin, HasApiKeyScope]
+    required_scope = "admin"
+    throttle_scope = "read"
+
+    def get_throttles(self) -> list[Any]:
+        """Listing is a read; adding a member is a write."""
+        self.throttle_scope = "read" if self.request.method in SAFE_METHODS else "trigger"
+        return super().get_throttles()
+
+    @extend_schema(responses={200: MembershipSerializer(many=True)}, tags=["members"])
+    def get(self, request: Request) -> Response:
+        """List the active organization's members."""
+        members = _membership_queryset(request).select_related("user").order_by("user__username")
+        return Response(MembershipSerializer(members, many=True).data)
+
+    @extend_schema(
+        request=MembershipCreateSerializer,
+        responses={201: MembershipSerializer},
+        tags=["members"],
+    )
+    def post(self, request: Request) -> Response:
+        """Add an existing user to the organization with a role."""
+        body = MembershipCreateSerializer(data=request.data)
+        body.is_valid(raise_exception=True)
+        organization = tenancy.require_active_organization(request)
+        target = get_object_or_404(User, username=body.validated_data["username"], is_active=True)
+        actor_role = _actor_role(request)
+        # The change and its audit entry commit together: an audit trail that can
+        # disagree with the membership table is not an audit trail.
+        with transaction.atomic():
+            membership = membership_service.add_member(
+                organization=organization,
+                target_user=target,
+                role=body.validated_data["role"],
+                actor_role=actor_role,
+            )
+            audit_service.record(
+                organization=organization,
+                action="member.added",
+                target_type="membership",
+                target_id=membership.pk,
+                actor=request.user,
+                metadata={"username": target.username, "role": membership.role},
+            )
+        return Response(MembershipSerializer(membership).data, status=status.HTTP_201_CREATED)
+
+
+class MemberDetailView(APIView):
+    """Change a member's role, or remove the member.
+
+    The rules (only an owner may touch an owner; the last owner is permanent) are
+    enforced in ``core.services.memberships``, not here, so the same rules apply
+    to any future caller.
+    """
+
+    permission_classes = [IsAdmin, HasApiKeyScope]
+    required_scope = "admin"
+    throttle_scope = "trigger"
+
+    @extend_schema(
+        request=MembershipRoleSerializer,
+        responses={200: MembershipSerializer},
+        tags=["members"],
+    )
+    def patch(self, request: Request, pk: Any) -> Response:
+        """Change the member's role."""
+        membership = get_object_or_404(_membership_queryset(request).select_related("user"), pk=pk)
+        body = MembershipRoleSerializer(data=request.data)
+        body.is_valid(raise_exception=True)
+        actor_role = _actor_role(request)
+        previous = membership.role
+        with transaction.atomic():
+            membership = membership_service.change_role(
+                membership=membership,
+                role=body.validated_data["role"],
+                actor_role=actor_role,
+            )
+            if membership.role != previous:
+                audit_service.record(
+                    organization=membership.organization,
+                    action="member.role_changed",
+                    target_type="membership",
+                    target_id=membership.pk,
+                    actor=request.user,
+                    metadata={
+                        "username": membership.user.username,
+                        "from": previous,
+                        "to": membership.role,
+                    },
+                )
+        return Response(MembershipSerializer(membership).data)
+
+    @extend_schema(
+        request=None,
+        responses={204: OpenApiResponse(description="The member was removed.")},
+        tags=["members"],
+    )
+    def delete(self, request: Request, pk: Any) -> Response:
+        """Remove the member from the organization."""
+        membership = get_object_or_404(_membership_queryset(request).select_related("user"), pk=pk)
+        actor_role = _actor_role(request)
+        # Snapshot before delete(): Django clears the instance's pk afterwards.
+        membership_id = membership.pk
+        organization = membership.organization
+        username = membership.user.username
+        role = membership.role
+        with transaction.atomic():
+            membership_service.remove_member(membership=membership, actor_role=actor_role)
+            audit_service.record(
+                organization=organization,
+                action="member.removed",
+                target_type="membership",
+                target_id=membership_id,
+                actor=request.user,
+                metadata={"username": username, "role": role},
+            )
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+def _actor_role(request: Request) -> str:
+    """The role the caller is acting with in the active organization.
+
+    Staff bypass the role check, so they act as an owner. An API key acts as its
+    creator, whose membership ``resolve_membership`` returns.
+    """
+    if _is_staff_bypass(request):
+        return Membership.Role.OWNER.value
+    membership = tenancy.resolve_membership(request)
+    return membership.role if membership is not None else Membership.Role.VIEWER.value
+
+
+def _membership_queryset(request: Request) -> QuerySet[Membership]:
+    """The memberships this caller may manage, scoped to their organization."""
+    if _is_staff_bypass(request):
+        return Membership.objects.all()
+    organization = tenancy.get_active_organization(request)
+    if organization is None:
+        return Membership.objects.none()
+    return Membership.objects.filter(organization=organization)
 
 
 def _is_staff_bypass(request: Request) -> bool:
