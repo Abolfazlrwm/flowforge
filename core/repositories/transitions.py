@@ -255,6 +255,7 @@ def schedule_retries(*, now: datetime | None = None, limit: int = 1000) -> int:
                     target=TaskRunState.RETRYING,
                     now=moment,
                     scheduled_at=scheduled_at,
+                    organization_id=task_run.organization_id,
                 ):
                     obs_metrics.TASK_RETRIES.inc()
                     moved += 1
@@ -263,6 +264,7 @@ def schedule_retries(*, now: datetime | None = None, limit: int = 1000) -> int:
                 expected=TaskRunState.FAILED,
                 target=TaskRunState.DEAD,
                 now=moment,
+                organization_id=task_run.organization_id,
             ):
                 moved += 1
     return moved
@@ -294,6 +296,7 @@ def promote_due_retries(*, now: datetime | None = None, limit: int = 1000) -> in
                 expected=TaskRunState.RETRYING,
                 target=TaskRunState.READY,
                 now=moment,
+                organization_id=task_run.organization_id,
             ):
                 promoted += 1
     return promoted
@@ -468,13 +471,14 @@ def requeue_failed_task_run(*, task_run_id: UUID, now: datetime | None = None) -
         return True
 
 
-def transition_task_run(
+def transition_task_run(  # noqa: PLR0913 - one keyword per transition field
     *,
     task_run_id: UUID,
     expected: TaskRunState,
     target: TaskRunState,
     now: datetime | None = None,
     scheduled_at: datetime | None = None,
+    organization_id: UUID | None = None,
 ) -> bool:
     """Move a task run between non-lease states, if it is still in ``expected``.
 
@@ -482,6 +486,17 @@ def transition_task_run(
     (those go through :func:`finish_task_run`, which proves ownership with a
     fencing token) nor the reaper edges out of ``RUNNING`` (those go through
     :func:`reclaim_task_run`, which clears the lease and bumps the token).
+
+    Args:
+        task_run_id: The row to move.
+        expected: The state the row must still be in for the move to apply.
+        target: The state to move it to.
+        now: Override the transition timestamp; defaults to the current time.
+        scheduled_at: When a ``RETRYING`` row may next run. Ignored otherwise.
+        organization_id: The row's tenant, when the caller already holds it.
+            Passing it avoids a ``SELECT`` per transition: the scheduler promotes
+            a whole fan-out in one pass and already has every row in memory, so
+            without this the event log costs one extra query per task.
 
     Returns:
         ``True`` if this call performed the transition, ``False`` otherwise.
@@ -544,6 +559,7 @@ def transition_task_run(
             kind=_TRANSITION_EVENT_KIND.get((expected, target), TaskRunEvent.Kind.TRANSITION.value),
             from_state=expected.value,
             to_state=target.value,
+            organization_id=organization_id,
         )
     return updated
 

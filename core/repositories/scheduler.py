@@ -281,6 +281,9 @@ def advance_workflow_run(run: WorkflowRun) -> tuple[int, int]:
                     task_run_id=task_run.id,
                     expected=TaskRunState.PENDING,
                     target=TaskRunState.SKIPPED,
+                    # The row is already in memory; passing its tenant avoids a
+                    # SELECT per transition (see `transition_task_run`).
+                    organization_id=task_run.organization_id,
                 )
                 skipped.add(key)
                 continue
@@ -288,6 +291,7 @@ def advance_workflow_run(run: WorkflowRun) -> tuple[int, int]:
                 task_run_id=task_run.id,
                 expected=TaskRunState.PENDING,
                 target=TaskRunState.READY,
+                organization_id=task_run.organization_id,
             ):
                 promoted += 1
 
