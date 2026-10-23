@@ -48,9 +48,12 @@ class Command(BaseCommand):
         )
         parser.add_argument(
             "--metrics-port",
-            type=int,
+            type=obs_metrics.metrics_port_argument,
             default=0,
-            help="Port for this process's Prometheus endpoint (0 disables it).",
+            # The custom type treats an empty string as "disabled": compose
+            # interpolates an unset variable to an empty string, and a bare
+            # `int("")` would kill the process before it ever started.
+            help="Port for this process's Prometheus endpoint (0 or empty disables it).",
         )
 
     def handle(self, *_args: object, **options: object) -> None:

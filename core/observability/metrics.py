@@ -120,6 +120,18 @@ class DatabaseCollector:
 REGISTRY.register(DatabaseCollector())
 
 
+def metrics_port_argument(value: str) -> int:
+    """An argparse ``type`` for ``--metrics-port``.
+
+    An empty string means "disabled", not "invalid". Docker Compose interpolates
+    an unset variable to an empty string, so a container that inherits
+    ``--metrics-port ""`` from the compose file would otherwise die on
+    ``int("")`` before the process ever starts. A genuinely malformed value
+    still raises, which argparse turns into a usage error.
+    """
+    return int(value.strip() or 0)
+
+
 def render_metrics() -> bytes:
     """Render the registry in the Prometheus text exposition format."""
     return generate_latest(REGISTRY)

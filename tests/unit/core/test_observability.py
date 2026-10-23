@@ -221,3 +221,35 @@ class TestTracePropagationIntegration:
         assert message is not None
         assert message.correlation_id == "cid"
         assert message.traceparent == "tp"
+
+
+class TestMetricsPortArgument:
+    """The argparse type for ``--metrics-port``.
+
+    A compose file that references an unset variable interpolates it to an empty
+    string, so the process receives ``--metrics-port ""``. That must mean
+    "disabled", not a ValueError that kills the process at startup — which is
+    exactly how the scheduler died in the first CI run of the observability
+    stack.
+    """
+
+    def test_empty_string_disables_the_endpoint(self) -> None:
+        """An empty value means the endpoint is off, not an error."""
+        assert obs_metrics.metrics_port_argument("") == 0
+
+    def test_whitespace_disables_the_endpoint(self) -> None:
+        """Whitespace is treated the same as empty."""
+        assert obs_metrics.metrics_port_argument("   ") == 0
+
+    def test_zero_disables_the_endpoint(self) -> None:
+        """Zero is the explicit form of "disabled"."""
+        assert obs_metrics.metrics_port_argument("0") == 0
+
+    def test_a_real_port_is_parsed(self) -> None:
+        """A real port is parsed to its integer."""
+        assert obs_metrics.metrics_port_argument("9101") == 9101
+
+    def test_a_malformed_value_still_raises(self) -> None:
+        """A malformed value is still an error, so a typo is not silently ignored."""
+        with pytest.raises(ValueError):
+            obs_metrics.metrics_port_argument("not-a-port")
