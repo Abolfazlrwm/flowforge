@@ -142,9 +142,12 @@ services:
         condition: service_healthy
     volumes:
       - .:/app
-    # Shell form, not a list: the port comes from this service's environment,
-    # and compose only interpolates `${...}` in a list command from the host.
-    command: python manage.py scheduler --metrics-port "$SCHEDULER_METRICS_PORT"
+    # Shell form, and `$$` escapes the variable so *compose* leaves it alone and
+    # the container's shell expands it from this service's `environment:` block.
+    # A single `$` would make compose interpolate it at parse time, and with no
+    # host-side value it would become an empty string — which is how the
+    # scheduler once died on `int("")`.
+    command: python manage.py scheduler --metrics-port "$$SCHEDULER_METRICS_PORT"
     healthcheck: *app-healthcheck
 
   publisher:
@@ -163,7 +166,7 @@ services:
         condition: service_healthy
     volumes:
       - .:/app
-    command: python manage.py publisher --metrics-port "$PUBLISHER_METRICS_PORT"
+    command: python manage.py publisher --metrics-port "$$PUBLISHER_METRICS_PORT"
     healthcheck: *app-healthcheck
 
   worker:
@@ -182,7 +185,7 @@ services:
         condition: service_healthy
     volumes:
       - .:/app
-    command: python manage.py worker --metrics-port "$WORKER_METRICS_PORT"
+    command: python manage.py worker --metrics-port "$$WORKER_METRICS_PORT"
     healthcheck: *app-healthcheck
 
   # --- observability profile -------------------------------------------------
