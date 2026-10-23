@@ -7,6 +7,54 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.0] - 2026-10-23
+
+Phase 10 — SDK, CLI and documentation.
+
+### Added
+
+- **`flowforge-client`**, a Python client in `sdk/` as a **separate
+  distribution** with **no runtime dependencies** — it uses `urllib.request`, so
+  installing it cannot constrain an application's dependency set. It imports
+  nothing from the server; it talks HTTP.
+  - Frozen dataclasses for `Run`, `TaskRun`, `Workflow`, `Event` and `Page`, so a
+    typo is an `AttributeError` rather than a `KeyError` three layers down, and a
+    field the server adds is ignored rather than breaking the parse.
+  - Typed errors from the API's `error.code`: `NotFoundError`, `ConflictError`,
+    `ThrottledError` (with `retry_after`), `ValidationError`,
+    `AuthenticationError`, `ForbiddenError`, `ServerError`. A 5xx never becomes a
+    4xx type even when the body claims a 4xx code.
+  - `trigger(..., idempotency_key=...)` refuses to retry a POST without a key;
+    with one, a retry replays instead of starting a second run.
+  - `wait()` polls with a doubling interval and raises `TimeoutError` naming the
+    last state; `wait_for_success()` also raises when the run ended badly.
+  - Retries are 429/5xx only, with exponential backoff and jitter, honouring
+    `Retry-After`.
+  - The transport opens `http`/`https` only — `urlopen` also accepts `file:`, and
+    a caller-supplied base URL that could point at a local path is a
+    credential-disclosure bug.
+- **The `flowforge` CLI**: `health`, `workflows`, `show`, `trigger`, `runs`,
+  `status`, `events`, `requeue`. Configuration from `FLOWFORGE_URL` /
+  `FLOWFORGE_TOKEN` first and flags second; exit codes 0 (ok), 1 (failed),
+  2 (usage); `trigger` exits 1 when the run did not succeed.
+- **`examples/`**: publish-and-run, watch-the-event-log, requeue-failed (dry-run
+  by default), and a CLI walkthrough that asserts an exit code at every step.
+- **`docs/sdk/index.md`**, **`docs/cli.md`** and **`docs/api/reference.md`** —
+  every endpoint with its request and response body, both state machines, the
+  error envelope with the stable code for each status, and the health probes.
+- **A `sdk` CI job**: its own lock file, ruff, ruff format, mypy, pytest, an
+  assertion that the runtime dependency list is still empty, and a wheel build
+  that checks the console script is declared.
+
+### Changed
+
+- `docs/api/overview.md`'s endpoint table now covers the whole surface
+  (task-run requeue, events, members, API keys, metrics) and links to the
+  reference for the bodies.
+- The server distribution still declares no console script: the `flowforge`
+  command belongs to `flowforge-client`, because a CLI that installs Django into
+  a client environment would be the wrong trade.
+
 ## [0.10.0] - 2026-10-23
 
 Phase 9 — Observability and Performance.
