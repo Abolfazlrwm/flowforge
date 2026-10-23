@@ -569,7 +569,25 @@ jobs:
       - name: Observability — profile starts and scrapes the live stack
         run: |
           set -euo pipefail
-          docker compose --profile observability up -d prometheus grafana otel-collector
+          # Retry the bring-up: the runner's Docker daemon occasionally returns a
+          # 500 mid-pull ("received unexpected HTTP status: 500 Internal Server
+          # Error", with the containers reported Interrupted), which has nothing
+          # to do with this repository. Retrying does not soften a single
+          # assertion below — every target still has to come up UP and every
+          # endpoint still has to answer.
+          #
+          # No teardown between attempts: `docker compose down` would take the
+          # application stack with it, and `up -d` is already idempotent.
+          ready=""
+          for attempt in $(seq 1 3); do
+            if docker compose --profile observability up -d prometheus grafana otel-collector; then
+              ready="yes"
+              break
+            fi
+            echo "profile bring-up failed (attempt $attempt); retrying"
+            sleep 10
+          done
+          test "$ready" = "yes" || { echo "the observability profile never came up"; exit 1; }
 
           # Prometheus: ready, then every FlowForge target UP. A target that is
           # DOWN means the scrape config does not match the stack, which is the
