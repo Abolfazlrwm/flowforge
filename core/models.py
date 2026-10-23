@@ -202,6 +202,57 @@ class ApiKey(models.Model):
         return f"api key {self.prefix} ({self.name})"
 
 
+class AuditLog(models.Model):
+    """An append-only record of a security-relevant action.
+
+    Rows are never updated or deleted — enforced in the database by a trigger
+    (migration ``0015``), not merely by convention. ``actor_label`` snapshots the
+    actor's display name so the entry still reads correctly after the user row is
+    gone; ``metadata`` is redacted before it is written, so a secret never lands
+    in the audit trail.
+    """
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    organization = models.ForeignKey(
+        Organization,
+        null=True,
+        blank=True,
+        on_delete=models.PROTECT,
+        related_name="audit_log",
+    )
+    actor = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="audit_log",
+    )
+    #: Snapshot of the actor's label, so deletion of the user does not erase who did it.
+    actor_label = models.CharField(max_length=200, blank=True, default="")
+    #: Dotted action name, e.g. ``workflow.published`` or ``api_key.revoked``.
+    action = models.CharField(max_length=100)
+    target_type = models.CharField(max_length=100)
+    target_id = models.CharField(max_length=100)
+    #: Redacted, JSON-shaped context. Never contains a secret.
+    metadata = models.JSONField(default=dict, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    objects = OrganizationScopedManager()
+
+    class Meta:
+        """Newest first, with indexes for the tenant list and target history."""
+
+        ordering = ["-created_at", "-id"]
+        indexes = [
+            models.Index(fields=["organization", "created_at"], name="idx_audit_org_created"),
+            models.Index(fields=["target_type", "target_id"], name="idx_audit_target"),
+        ]
+
+    def __str__(self) -> str:
+        """Readable label for the admin and logs."""
+        return f"{self.action} on {self.target_type}:{self.target_id}"
+
+
 class Workflow(models.Model):
     """A versioned workflow definition.
 

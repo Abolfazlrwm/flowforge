@@ -771,7 +771,13 @@ components:
         * `cancelled` - Cancelled
     Task:
       type: object
-      description: One task of a published definition.
+      description: |-
+        One task of a published definition.
+
+        ``config`` is redacted on the way out: a task may legitimately carry a
+        password or a token to execute, but a client reading the definition must not
+        receive it. The worker still gets the real config in its dispatch payload;
+        redaction applies to what humans and clients read, not to execution.
       properties:
         key:
           type: string
