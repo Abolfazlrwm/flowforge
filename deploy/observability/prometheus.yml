@@ -16,7 +16,13 @@ global:
   scrape_timeout: 10s
 
 scrape_configs:
+  # The web process serves the same registry at `/api/v1/metrics/` rather than the
+  # conventional `/metrics`, because it is a Django route and lives under the API
+  # prefix. Prometheus defaults to `/metrics`, so this path has to be explicit —
+  # without it the target comes up and every scrape 404s, which reads as a DOWN
+  # target rather than a wrong URL.
   - job_name: flowforge-web
+    metrics_path: /api/v1/metrics/
     static_configs:
       - targets: ["web:8000"]
         labels:
