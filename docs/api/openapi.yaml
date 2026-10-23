@@ -639,6 +639,17 @@ paths:
       responses:
         '204':
           description: The member was removed.
+  /api/v1/metrics/:
+    get:
+      operationId: metrics_retrieve
+      description: Render the registry in the Prometheus text format.
+      tags:
+      - observability
+      security:
+      - {}
+      responses:
+        '200':
+          description: Prometheus text exposition format.
 components:
   schemas:
     ApiKey:
