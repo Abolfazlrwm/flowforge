@@ -41,6 +41,7 @@ nav:
       - Decisions: development/DECISIONS.md
       - Naming Analysis: development/NAMING_ANALYSIS.md
       - Audit Report: development/AUDIT_REPORT.md
+      - Load Testing: development/load-testing.md
   - Deployment:
       - Docker: deployment/docker.md
       - Observability: deployment/observability.md
