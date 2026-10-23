@@ -266,11 +266,14 @@ v0.9.1 run: https://github.com/Abolfazlrwm/flowforge/actions/runs/39924920840
 (661 unit tests on PostgreSQL + 29 integration tests green; `lint`, `schema`,
 `docs` and `docker` green)
 
-Phase 9 run: see the `v0.10.0` Release notes for the exact run URL. The `docker`
-job additionally asserts that all four FlowForge Prometheus targets are UP, that
-the Grafana dashboard is provisioned under its uid, and that the OTel collector
-accepts an OTLP/HTTP export; the `loadtest` job runs the benchmark and uploads
-its raw output.
+Phase 9 run: https://github.com/Abolfazlrwm/flowforge/actions/runs/39962017430
+(681 unit tests on PostgreSQL + 29 integration tests green; `lint`, `schema`,
+`docs` and `docker` green). The `docker` job additionally asserted that all four
+FlowForge Prometheus targets were UP (`flowforge targets up: 4`), that the
+scheduler/publisher/worker metrics endpoints answered on 9101/9102/9103, that the
+Grafana dashboard was provisioned under its uid, and that the OTel collector
+accepted an OTLP/HTTP export. The `loadtest` job ran the benchmark and uploaded
+its raw output, which is what [`BENCHMARKS.md`](BENCHMARKS.md) is built from.
 
 ### Locally (Windows, Python 3.13.14)
 
@@ -403,7 +406,5 @@ Phase 10 — per [`ROADMAP.md`](ROADMAP.md).
 
 ## Ordering note
 
-A CI URL is added only after the run is green. The v0.9.0 and v0.9.1 URLs above
-are the runs that merged as `4febc05` and `a00e267`. The Phase 9 URL lives in the
-`v0.10.0` Release notes rather than here, because the release is published from
-the merge commit and that is the point at which the run is final.
+A CI URL is added only after the run is green. Each URL above is the run that
+produced the cited counts; the merge commit is the one that follows it.
