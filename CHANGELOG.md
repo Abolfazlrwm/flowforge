@@ -7,6 +7,56 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-10-23
+
+Phase 8 — Security & Multi-Tenancy.
+
+### Added
+
+- **Organizations and memberships.** `Organization` and `Membership` with
+  `owner > admin > member > viewer` roles. Every tenant model (`Workflow`,
+  `WorkflowRun`, `TaskRun`, `TaskRunEvent`, `ScheduledTrigger`, `OutboxMessage`,
+  `IdempotencyKey`, `ApiKey`, `AuditLog`) carries an `organization` FK, and
+  `OrganizationScopedManager.for_organization` is the sanctioned read path
+  (ADR-014).
+- **API keys.** `ff_<hex-prefix>_<hex-secret>`, stored only as a
+  `make_password` hash, with a clear prefix for lookup, scopes
+  (`read < write < admin`), expiry, rotation, revocation, and a one-time
+  plaintext response. `ApiKeyAuthentication` accepts `Authorization: Api-Key`
+  or `X-API-Key` and fixes the active tenant to the key's.
+- **Append-only audit log.** `AuditLog` plus a database trigger that rejects
+  `UPDATE` and `DELETE`; entries for publish, trigger, requeue and API-key
+  create/rotate/revoke. Metadata is redacted before it is written.
+- **Secret redaction.** `core.security.redact_mapping` redacts by key name and
+  by an explicit `secret: true` marker; applied to task `config` in API
+  responses and to audit metadata.
+- **Tenant-isolation suite.** Every cross-tenant id is a 404, not a 403; a
+  role-permission matrix covers every role; API-key lifecycle (expired, revoked,
+  wrong scope, rotated, orphaned) is tested.
+- **STRIDE threat model** ([`docs/security/threat-model.md`](docs/security/threat-model.md))
+  and **ADR-014** ([`docs/adr/ADR-014-multi-tenancy-shared-schema.md`](docs/adr/ADR-014-multi-tenancy-shared-schema.md)).
+- **`bandit` and `pip-audit`** as required CI checks.
+
+### Changed
+
+- **Authorization is per organization, not per user.** A run is visible to every
+  member of its tenant; another tenant receives a 404. Staff remain a narrow
+  operational read bypass, and an API key never inherits it.
+- Definitions are unique on `(organization, name, version)`; idempotency claims
+  are unique on `(organization, user, key)`, so two tenants may reuse a name or a
+  key without colliding and a replay cannot cross tenants.
+- The dispatch payload carries `organization_id` for attributable worker logs.
+- `djangorestframework` 3.17.2 → 3.18.3 (CVE-2026-114136/114137/114138) and
+  `certifi` 2026.10.18 → 2026.10.19, forced by `pip-audit`.
+
+### Migrations
+
+- `core.0011` — schema: organizations, memberships, and the `organization` FK.
+- `core.0012` — data: default-organization backfill, reversible.
+- `core.0013` — API keys.
+- `core.0014` — audit log.
+- `core.0015` — the append-only trigger.
+
 ## [0.8.1] - 2026-10-22
 
 Closes the two Phase 7 end-to-end gaps and makes the event log transactional.

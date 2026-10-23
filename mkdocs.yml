@@ -32,6 +32,8 @@ nav:
       - Failure Model: architecture/failure-model.md
   - API:
       - Overview: api/overview.md
+  - Security:
+      - Threat Model: security/threat-model.md
   - Development:
       - Setup: development/setup.md
       - Roadmap: development/ROADMAP.md
@@ -49,6 +51,7 @@ nav:
       - Custom scheduler and transactional outbox: adr/ADR-011-custom-scheduler-and-transactional-outbox.md
       - Retry policy and dead-letter semantics: adr/ADR-012-retry-policy-and-dead-letter-semantics.md
       - The event log is transactional: adr/ADR-013-event-log-is-transactional.md
+      - Multi-tenancy (shared schema): adr/ADR-014-multi-tenancy-shared-schema.md
 
 plugins:
   - search
