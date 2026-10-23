@@ -9,6 +9,20 @@ repos:
       - id: check-merge-conflict
       - id: detect-private-key
 
+  # The gitleaks BINARY hook, not `gitleaks/gitleaks-action` — the action is
+  # distributed under a proprietary EULA that requires a paid license key for
+  # Organization-owned repositories and forbids redistribution as part of a
+  # product. The binary is MIT. See the `secrets` CI job for the same decision.
+  #
+  # This scans the working tree only: pre-commit runs per commit, and a
+  # full-history scan belongs in CI where it is cheap and blocking. The config
+  # allowlists two reviewed false positives by commit, file, rule and line, and
+  # disables no rule and excludes no path.
+  - repo: https://github.com/gitleaks/gitleaks
+    rev: v8.24.3
+    hooks:
+      - id: gitleaks
+
   - repo: https://github.com/astral-sh/ruff-pre-commit
     rev: v0.6.9
     hooks:

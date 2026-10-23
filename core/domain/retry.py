@@ -106,5 +106,7 @@ def calculate_backoff(
         return raw
     # Jitter only needs to be unpredictable enough to spread retries out; it is
     # not a security control, so a non-cryptographic PRNG is the right tool.
-    rng = rng or random.Random()  # noqa: S311  # nosec B311 - jitter, not a security control
+    # (The annotation says only the test id: bandit reads a trailing comment as
+    # more test names and warns about each word it does not recognise.)
+    rng = rng or random.Random()  # noqa: S311  # nosec B311
     return rng.uniform(0.0, raw)
