@@ -198,6 +198,89 @@ jobs:
           token: ${{ secrets.CODECOV_TOKEN }}
           fail_ci_if_error: true
 
+  sdk:
+    # `flowforge-client` is a separate distribution with its own lock file, so it
+    # gets its own job: a change to the client cannot be validated by the server's
+    # suite, and a change to the API's response shape that breaks the client must
+    # fail here rather than in a user's application.
+    #
+    # The client has no runtime dependencies by design, so `uv sync` here installs
+    # only the dev tools — which is also a check that the claim stays true.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884  # v10.3.0
+        with:
+          version: ${{ env.UV_VERSION }}
+          enable-cache: true
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
+        with:
+          python-version: "3.13"
+      - name: Verify the lock file is current
+        run: uv lock --check
+        working-directory: sdk
+      - name: Install from the lock file
+        run: uv sync --locked --extra dev
+        working-directory: sdk
+      - name: The client has no runtime dependencies
+        run: |
+          set -euo pipefail
+          # `requires()` returns the extras too, and an extra is only installed on
+          # request, so the check counts the requirements whose marker is not an
+          # `extra == ...` guard. That is the set `pip install flowforge-client`
+          # would pull in, which is the claim being protected.
+          uv run python - <<'PY'
+          import importlib.metadata as md
+
+          base = [
+              req
+              for req in (md.requires("flowforge-client") or [])
+              if "extra ==" not in req
+          ]
+          print(f"runtime requirements: {len(base)}")
+          for requirement in base:
+              print(f"  {requirement}")
+          raise SystemExit(0 if not base else 1)
+          PY
+        working-directory: sdk
+      - name: Ruff check
+        run: uv run ruff check .
+        working-directory: sdk
+      - name: Ruff format check
+        run: uv run ruff format --check .
+        working-directory: sdk
+      - name: mypy
+        run: uv run mypy flowforge_client
+        working-directory: sdk
+      - name: pytest
+        run: uv run pytest -q
+        working-directory: sdk
+      # The examples live at the repository root because that is where someone
+      # looks for them, but they import the client, so they are checked here
+      # where it is installed. Run from `sdk/` so this project's mypy config
+      # applies, not the server's (which loads the Django plugin).
+      - name: Examples — ruff
+        run: uv run ruff check ../examples
+        working-directory: sdk
+      - name: Examples — mypy
+        run: uv run mypy ../examples
+        working-directory: sdk
+      - name: Build the wheel and check the console script is declared
+        run: |
+          set -euo pipefail
+          uv build --wheel
+          wheel="$(ls dist/*.whl)"
+          echo "$wheel"
+          uv run python -c \
+            "import sys, zipfile; \
+             names = zipfile.ZipFile(sys.argv[1]).namelist(); \
+             entry = [n for n in names if n.endswith('entry_points.txt')]; \
+             assert entry, 'no entry_points.txt in the wheel'; \
+             text = zipfile.ZipFile(sys.argv[1]).read(entry[0]).decode(); \
+             assert 'flowforge = flowforge_client.cli:main' in text, text; \
+             print('console script declared')" "$wheel"
+        working-directory: sdk
+
   docker:
     runs-on: ubuntu-latest
     timeout-minutes: 25

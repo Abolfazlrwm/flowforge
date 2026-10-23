@@ -65,8 +65,19 @@ contradictory policy layered on the first.
 | `/runs/` | GET | 200 | 401 |
 | `/runs/` | POST | 202 | 400, 401, 404, 422, 429 |
 | `/runs/{id}/` | GET | 200 | 401, 403, 404 |
+| `/runs/{id}/events/` | GET | 200 | 401, 404 |
+| `/task-runs/{id}/requeue/` | POST | 200 | 401, 404, 409 |
+| `/members/` | GET, POST | 200, 201 | 401, 403, 409 |
+| `/members/{id}/` | PATCH, DELETE | 200, 204 | 401, 403, 404, 409 |
+| `/api-keys/` | GET, POST | 200, 201 | 401, 403 |
+| `/api-keys/{id}/rotate/` | POST | 200 | 401, 403, 404 |
+| `/api-keys/{id}/revoke/` | POST | 204 | 401, 403, 404 |
+| `/metrics/` | GET | 200 | — (unauthenticated, aggregate only) |
 | `/schema/` | GET | 200 | — |
 | `/docs/` | GET | 200 | — |
+
+The request and response body of every one of these is in the
+[API reference](reference.md); this page covers the conventions they share.
 
 ### Publishing a definition
 
