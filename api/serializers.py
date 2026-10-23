@@ -19,7 +19,7 @@ from __future__ import annotations
 
 from typing import Any, ClassVar
 
-from core.models import ApiKey, Task, TaskRun, TaskRunEvent, Workflow, WorkflowRun
+from core.models import ApiKey, Membership, Task, TaskRun, TaskRunEvent, Workflow, WorkflowRun
 from core.security import redact_mapping
 from rest_framework import serializers
 
@@ -241,6 +241,45 @@ class ApiKeyCreateSerializer(serializers.Serializer[Any]):
         default=["read"],
     )
     expires_at = serializers.DateTimeField(required=False, allow_null=True)
+
+
+class MembershipSerializer(serializers.ModelSerializer[Membership]):
+    """A member of the active organization, with the user's identity."""
+
+    user_id = serializers.IntegerField(source="user.id", read_only=True)
+    username = serializers.CharField(source="user.username", read_only=True)
+    email = serializers.EmailField(source="user.email", read_only=True)
+
+    class Meta:
+        """Field mapping."""
+
+        model = Membership
+        fields: ClassVar[list[str]] = [
+            "id",
+            "user_id",
+            "username",
+            "email",
+            "role",
+            "created_at",
+        ]
+        read_only_fields: ClassVar[list[str]] = fields
+
+
+class MembershipCreateSerializer(serializers.Serializer[Any]):
+    """The body of an add-member request.
+
+    The target is named by username rather than by id: a caller adding a
+    colleague knows the username, not the numeric primary key.
+    """
+
+    username = serializers.CharField(max_length=150)
+    role = serializers.ChoiceField(choices=Membership.Role.choices, default=Membership.Role.MEMBER)
+
+
+class MembershipRoleSerializer(serializers.Serializer[Any]):
+    """The body of a role-change request."""
+
+    role = serializers.ChoiceField(choices=Membership.Role.choices)
 
 
 class TriggerSerializer(serializers.Serializer[Any]):

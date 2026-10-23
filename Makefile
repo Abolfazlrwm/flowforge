@@ -1,5 +1,5 @@
 .DEFAULT_GOAL := help
-.PHONY: help install lint format typecheck test check migrate run demo compose-up compose-down clean
+.PHONY: help install lint format typecheck test test-pg db-up check migrate run demo compose-up compose-down clean
 
 help:  ## Show this help
 	@grep -hE '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-14s\033[0m %s\n", $$1, $$2}'
@@ -16,8 +16,22 @@ format:  ## Format with ruff
 typecheck:  ## Type-check with mypy (strict)
 	uv run mypy flowforge core api --ignore-missing-imports
 
-test:  ## Run unit tests with coverage
+test:  ## Run unit tests with coverage (SQLite by default)
 	uv run pytest tests/unit -v --cov
+
+# The authoritative local run for PostgreSQL semantics. SQLite ignores
+# `FOR UPDATE`, `TRUNCATE` trigger behaviour and row ordering, so a suite that
+# only ever runs on SQLite can pass while CI's PostgreSQL run fails. This target
+# uses the compose database on localhost:5432 and runs the *full* unit suite.
+db-up:  ## Start the PostgreSQL service and wait until it is ready
+	docker compose up -d db
+	@until docker compose exec -T db pg_isready -U flowforge -d flowforge >/dev/null 2>&1; do sleep 1; done
+	@echo "PostgreSQL ready on localhost:5432"
+
+test-pg: db-up  ## Run the full unit suite on PostgreSQL (compose db)
+	DATABASE_URL=postgres://flowforge:flowforge@localhost:5432/flowforge \
+	REQUIRE_POSTGRES=1 \
+	uv run pytest tests/unit -v
 
 check: lint typecheck test  ## Run every check CI runs (except Docker)
 
