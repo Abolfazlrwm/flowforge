@@ -41,7 +41,7 @@ If this session is resumed cold, read this section first.
 | Broker/DB resilience | **MERGED** as `0d05e42` (PR #33), tagged `v0.7.1` |
 | Resilience verification | **MERGED** as `47ca4f4` (PR #34), tagged `v0.7.2` |
 | Phase 7 | **MERGED** (PR #36), tagged `v0.8.0` |
-| Phase 8 | **COMPLETE** on `feat/phase8-security-multitenancy`; merge pending green CI |
+| Phase 8 | **MERGED** (PR #38) as `4febc05`, tagged `v0.9.0` |
 | CI | Green on `main`: `lint` (now incl. `bandit` + `pip-audit`), `test`, `schema`, `docs`, `docker` |
 | Docker | **Verified in CI** (build + compose up + health probes + e2e + failure injection). Accepted by owner decision 2026-10-19 — no local check is required |
 | Tags | `v0.1.0` … `v0.9.0`, annotated. |
@@ -342,6 +342,11 @@ If this session is resumed cold, read this section first.
 ## Verification
 
 ### In CI (authoritative)
+
+Phase 8 run: https://github.com/Abolfazlrwm/flowforge/actions/runs/39921080486
+(v0.9.0 — 645 unit tests on PostgreSQL + 29 integration tests green; `lint` now
+includes `bandit` and `pip-audit`; the docker job drove the cron and saga e2e
+through the real stack)
 
 Phase 5 run: https://github.com/Abolfazlrwm/flowforge/actions/runs/39506564517
 (v0.6.0 — worker; 389 unit + 20 integration green; docker e2e reached `SUCCEEDED`)
