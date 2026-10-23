@@ -7,6 +7,60 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+Phase 11 — Production hardening. The operational surface that turns a correct
+engine into something that can be run: a security review, safe migrations,
+Kubernetes, backups, high availability, an end-to-end suite, and a signed,
+SBOM'd supply chain.
+
+### Added
+
+- **Security review.** gitleaks over the full git history with push protection;
+  `bandit` and `pip-audit` wired as CI gates; container image scanning with
+  Trivy (a `CRITICAL` fails the build, the full HIGH residual published to the
+  Security tab); and a STRIDE threat model at `docs/security/threat-model.md`.
+- **Migration safety.** `tests/unit/test_migrations.py` applies every migration
+  forward from empty **and** upgrades from the `v0.9.0` schema with data present,
+  on PostgreSQL, asserting row counts and non-NULL back-fills survive.
+  `docs/deployment/migrations.md` classifies every migration (safe online /
+  backfill / vendor DDL) and gives the zero-downtime upgrade and rollback
+  procedure.
+- **Kubernetes.** A Helm chart (`deployment/kubernetes/helm/flowforge`) and a
+  rendered `manifests/flowforge.yaml` for web/scheduler/publisher/worker, with
+  liveness/readiness probes, resource requests and limits, a worker HPA and
+  PodDisruptionBudget, a default-deny NetworkPolicy, a non-root
+  securityContext, and a one-shot migrate Job. A `k8s` CI job runs `helm lint`
+  and `kubeconform -strict` and fails if the committed manifest drifts; a
+  kind-based smoke test is available on demand (`scripts/kind-e2e.sh`).
+- **Backup and restore.** `docs/deployment/backup-restore.md` (pg_dump, PITR,
+  RabbitMQ definitions) and a **restore drill in CI**: dump the live database,
+  wipe it, restore it, assert row counts are identical, and run a full workflow
+  end to end against the restored data.
+- **High availability.** `docs/deployment/ha.md` states which processes scale out
+  by construction (all four — the database is the mutex) and where the real
+  failure domains are, honestly separating what the code guarantees from what CI
+  exercises from what is operator-validated.
+- **End-to-end suite.** `tests/e2e/` drives a live deployment over the REST API,
+  the Python SDK and the CLI (publish → trigger → complete → event log), and runs
+  in the `docker` CI job against the Compose stack.
+- **Supply chain.** A CycloneDX SBOM is generated in CI and attached to each
+  release by `.github/workflows/release.yml`; the image is signed keylessly with
+  cosign (recorded in Rekor) with a build-provenance attestation; the base image
+  is pinned by digest.
+- **Documentation site.** `.github/workflows/pages.yml` builds the MkDocs site
+  (`--strict`) and publishes it to GitHub Pages from `main`.
+- **`SECURITY.md`** overhauled: a supported-versions table, a private disclosure
+  process via GitHub Security Advisories, an explicit in/out-of-scope, the
+  security practices in place, and how to verify a signed release image.
+
+### Changed
+
+- **`README.md`** overhauled: current phase status, the implemented-feature table
+  corrected (multi-tenancy, observability and the SDK/CLI are no longer "not
+  implemented"), measured benchmarks instead of "none yet", and a Deploying
+  section.
+- The Kubernetes deployment guide moved to `docs/deployment/kubernetes.md` as the
+  canonical home; the chart directory README points to it.
+
 ## [0.11.0] - 2026-10-23
 
 Phase 10 — SDK, CLI and documentation.
