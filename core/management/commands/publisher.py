@@ -24,6 +24,8 @@ from django.core.management.base import BaseCommand
 from core.broker import build_publisher, publish_once
 from core.db import reset_connections
 from core.domain.retry import CONNECTION_BACKOFF, calculate_backoff
+from core.observability import metrics as obs_metrics
+from core.observability import tracing
 
 
 class Command(BaseCommand):
@@ -44,6 +46,15 @@ class Command(BaseCommand):
             action="store_true",
             help="Run a single sweep and exit, instead of looping forever.",
         )
+        parser.add_argument(
+            "--metrics-port",
+            type=obs_metrics.metrics_port_argument,
+            default=0,
+            # The custom type treats an empty string as "disabled": compose
+            # interpolates an unset variable to an empty string, and a bare
+            # `int("")` would kill the process before it ever started.
+            help="Port for this process's Prometheus endpoint (0 or empty disables it).",
+        )
 
     def handle(self, *_args: object, **options: object) -> None:
         """Run the loop, or a single sweep when ``--once`` is given."""
@@ -56,6 +67,10 @@ class Command(BaseCommand):
                 self.stdout.write(f"Published one sweep: {published} message(s) delivered.")
                 return
 
+            tracing.configure_tracing("publisher")
+            metrics_port = int(opts["metrics_port"])
+            if metrics_port:
+                obs_metrics.start_metrics_server(metrics_port)
             stop = threading.Event()
             signal.signal(signal.SIGTERM, lambda *_: stop.set())
             signal.signal(signal.SIGINT, lambda *_: stop.set())

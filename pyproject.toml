@@ -44,6 +44,13 @@ dependencies = [
     "drf-spectacular>=0.27,<1",
     "pika>=1.3,<2",
     "croniter>=5.0,<6",
+    # Phase 9 (Observability). Prometheus metrics are exposed per process;
+    # OpenTelemetry carries one trace from the API through the outbox and the
+    # broker to the worker.
+    "prometheus-client>=0.21,<1",
+    "opentelemetry-api>=1.29,<2",
+    "opentelemetry-sdk>=1.29,<2",
+    "opentelemetry-exporter-otlp-proto-http>=1.29,<2",
 ]
 
 [project.optional-dependencies]
@@ -79,6 +86,9 @@ dev = [
     "mkdocs-material>=9.5,<10",
     "pymdown-extensions>=10.11",
     "django-filter-stubs>=0.1.0",
+    # Load tests (Phase 9). Locust drives the REST API; the report records the
+    # machine it ran on, so a laptop number is never presented as production.
+    "locust>=2.32,<3",
 ]
 
 # NOTE: the `flowforge` console script is intentionally absent until the CLI

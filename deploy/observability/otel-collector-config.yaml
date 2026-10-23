@@ -1,0 +1,36 @@
+# OpenTelemetry Collector configuration for the FlowForge stack.
+#
+# The collector receives OTLP/HTTP from every FlowForge process and exports it
+# to the debug sink by default. Point `otlp` at a real backend (Tempo,
+# Jaeger, a vendor) by overriding the endpoint; the pipeline in between stays
+# the same.
+#
+# Receiving traces is what makes the cross-process chain visible: the API's
+# root span, the scheduler's dispatch span and the worker's `task.execute`
+# span arrive as separate requests that share one trace id.
+
+receivers:
+  otlp:
+    protocols:
+      http:
+        endpoint: 0.0.0.0:4318
+
+processors:
+  batch:
+    timeout: 5s
+    send_batch_size: 512
+
+exporters:
+  debug:
+    verbosity: detailed
+  otlp:
+    endpoint: tempo:4317
+    tls:
+      insecure: true
+
+service:
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [debug]

@@ -147,6 +147,16 @@ class RabbitPublisher:
         if confirmed is False:
             raise PublisherError("broker did not confirm message delivery")
 
+    def queue_depth(self, queue: str) -> int:
+        """Return the queue's message count via a passive declare.
+
+        Passive, so it never creates the queue; a missing queue raises
+        ``ChannelClosedByBroker``, which the caller treats as "no reading".
+        """
+        channel = self._get_channel()
+        declared = channel.queue_declare(queue=queue, passive=True)
+        return int(declared.method.message_count)
+
     def close(self) -> None:
         """Close the channel and connection if open."""
         if self._connection is not None and self._connection.is_open:

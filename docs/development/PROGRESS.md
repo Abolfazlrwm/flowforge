@@ -2,6 +2,14 @@
 
 ## Current Phase
 
+**Phase 9 — Observability & Performance: RELEASED (v0.10.0).** Merged from
+`feat/phase9-observability` (PR #41). One correlation id and one trace follow a
+run from the HTTP request through the outbox, the broker and the worker;
+Prometheus metrics are exposed per process; Grafana dashboards and a compose
+`observability` profile are code; a Locust load test with committed raw results
+gives the first measured benchmark; and one profiled bottleneck was fixed with
+before/after numbers.
+
 **Phase 8 — Security & Multi-Tenancy: RELEASED (v0.9.0).** Merged as `4febc05`
 (PR #38) and tagged `v0.9.0`. Organizations and memberships with
 `owner/admin/member/viewer` roles; per-organization scoping by construction
@@ -11,12 +19,11 @@ audit log enforced by a database trigger; secret redaction; a tenant-isolation
 suite; a STRIDE threat model ([`docs/security/threat-model.md`](../security/threat-model.md));
 and `bandit` + `pip-audit` in CI.
 
-**`v0.9.1` (in progress on `chore/phase8-followups`)** adds membership
-management (`GET/POST /members/`, `PATCH/DELETE /members/<id>/`) with the
-owner/admin rules, tenant-isolation tests and audit entries; rewrites this
-record; and adds `make test-pg`.
+**`v0.9.1`** added membership management (`GET/POST /members/`,
+`PATCH/DELETE /members/<id>/`) with the owner/admin rules, tenant-isolation tests
+and audit entries; rewrote this record; and added `make test-pg`.
 
-**Phase 9 — Observability & Performance (v0.10.0)** is next.
+**Phase 10** is next.
 
 ## Resume point
 
@@ -24,20 +31,21 @@ If this session is resumed cold, read this section first.
 
 | Question | Answer |
 |----------|--------|
-| Where is the work | `main` is at `v0.9.0` (`4febc05`). `chore/phase8-followups` is open for `v0.9.1`. |
-| What is released | `v0.1.0` … `v0.9.0`, including the `v0.5.1`, `v0.6.1`, `v0.7.1` and `v0.7.2` gap releases. |
+| Where is the work | `main` is at `v0.10.0`. Phase 10 has not started. |
+| What is released | `v0.1.0` … `v0.10.0`, including the `v0.5.1`, `v0.6.1`, `v0.7.1`, `v0.7.2`, `v0.8.1` and `v0.9.1` gap releases. |
 | Framework | **Django 5.2 LTS** ([ADR-010](../adr/ADR-010-django-5-2-lts.md)) and **DRF 3.18.3**. Python 3.13 in CI/Docker; the package requires >= 3.11. |
 | Message broker | **RabbitMQ via pika** ([ADR-011](../adr/ADR-011-custom-scheduler-and-transactional-outbox.md)). The dispatch queue is a **quorum** queue; the worker reconnects through broker outages. |
 | Tenancy | **Shared schema, per-organization scoping** ([ADR-014](../adr/ADR-014-multi-tenancy-shared-schema.md)). Every tenant read goes through `OrganizationScopedManager.for_organization`; another tenant's id is a 404. |
-| What is next | Phase 9 — Observability & Performance (v0.10.0). |
-| What blocks Phase 9 | **Nothing.** |
+| Observability | `core/observability/` — correlation ids in `context.py`, one registry per process in `metrics.py`, module-local OTel provider in `tracing.py`. See [`deployment/observability.md`](../deployment/observability.md). |
+| What is next | Phase 10. |
+| What blocks Phase 10 | **Nothing.** |
 | What else is open | Nothing pending an owner decision. Release tags are automatic on green CI; only `v1.0.0` needs owner approval ([DECISIONS.md](DECISIONS.md)). |
 
 ## Status
 
 | Item | State |
 |------|-------|
-| Branch | `main` at `v0.9.0`; `chore/phase8-followups` for `v0.9.1` |
+| Branch | `main` at `v0.10.0` |
 | Phase 0 | **MERGED** as `97c17bf` (PR #1), tagged `v0.1.0` |
 | Phase 1 | **MERGED** as `869720f`, tagged `v0.2.0` |
 | Phase 2 | **MERGED** as `d31abf3`, tagged `v0.3.0` |
@@ -48,12 +56,13 @@ If this session is resumed cold, read this section first.
 | Resilience gap releases | `v0.7.1` (PR #33: reconnection, quorum queue) and `v0.7.2` (PR #34: restart-survival proof) |
 | Phase 7 | **MERGED** (PR #36), tagged `v0.8.0` (`89eb600`); gap `v0.8.1` (PR #37, `ed25c15`) |
 | Phase 8 | **MERGED** (PR #38) as `4febc05`, tagged `v0.9.0` |
-| `v0.9.1` follow-ups | `chore/phase8-followups`: membership API, this rewrite, `make test-pg` |
-| CI jobs | `lint` (ruff, ruff format, mypy, **bandit**, **pip-audit**), `test`, `schema`, `docs`, `docker` |
+| `v0.9.1` follow-ups | **MERGED** (PR #40) as `a00e267`, tagged `v0.9.1` |
+| Phase 9 | **MERGED** (PR #41), tagged `v0.10.0` |
+| CI jobs | `lint` (ruff, ruff format, mypy, **bandit**, **pip-audit**), `test`, `schema`, `docs`, `docker`, **`loadtest`** |
 | Test database in CI | **PostgreSQL 16** for the unit and integration suites; Redis 7 and RabbitMQ 3.13 services for integration |
-| Docker | Verified in CI (build, compose up, health probes, e2e, failure injection); owner decision 2026-10-19 |
-| Tags | `v0.1.0` … `v0.9.0`, annotated |
-| GitHub Releases | Published for `v0.1.0` … `v0.9.0` |
+| Docker | Verified in CI (build, compose up, health probes, e2e, failure injection, **observability profile**); owner decision 2026-10-19 |
+| Tags | `v0.1.0` … `v0.10.0`, annotated |
+| GitHub Releases | Published for `v0.1.0` … `v0.10.0` |
 | Branch protection | `main`: `lint`, `test`, `docker` required, strict, no force push, `enforce_admins` |
 | Django | **5.2 LTS** ([ADR-010](../adr/ADR-010-django-5-2-lts.md)) |
 | DRF | **3.18.3** (fixes CVE-2026-114136/114137/114138) |
@@ -61,6 +70,9 @@ If this session is resumed cold, read this section first.
 | PostgreSQL | 16 (CI service and compose) |
 | Redis | 7 (CI service and compose); client `redis>=5,<6` |
 | RabbitMQ | 3.13 (CI service and compose); quorum dispatch queue |
+| Prometheus client | `prometheus-client` 0.26.0 |
+| OpenTelemetry | `opentelemetry-api`/`sdk` 1.45.1, OTLP/HTTP exporter 1.45.1 |
+| Locust | 2.47.0 (dev extra) |
 
 ## Completed
 
@@ -192,6 +204,55 @@ If this session is resumed cold, read this section first.
   `make db-up` starts it. `docs/development/setup.md` explains why SQLite is not
   the authority for locking, ordering or trigger semantics.
 
+### Phase 9 — Observability & Performance
+
+- **Correlation ids.** `core.observability.context` wraps structlog's
+  contextvars. The API binds `request_id` (or generates one); the id is stored in
+  `WorkflowRun.correlation_id` and `OutboxMessage.correlation_id` (migration
+  `0016`) and repeated in the dispatch payload; the worker clears and rebinds the
+  context per message. JSON logs carry it on every line.
+- **Prometheus metrics.** One registry per process. Process-local counters and
+  histograms (`flowforge_task_latency_seconds`, `flowforge_task_retries_total`,
+  `flowforge_lease_expirations_total`); durable-state gauges computed at scrape
+  time so they cannot drift (`flowforge_workflow_runs`, `flowforge_task_runs`,
+  `flowforge_outbox_pending`, `flowforge_outbox_lag_seconds`,
+  `flowforge_dead_tasks`, `flowforge_scheduled_triggers_due`).
+  - `GET /api/v1/metrics/` on the web process (unauthenticated, aggregate only).
+  - `--metrics-port` on the scheduler, publisher and worker; `0` or empty
+    disables it. The compose stack sets 9101/9102/9103, published on loopback.
+- **OpenTelemetry tracing.** Module-local provider (so a test can install an
+  in-memory exporter without the once-only global). W3C `traceparent` is
+  persisted on the run and the outbox row because the outbox crosses a process
+  boundary with no live span; the worker continues it as `task.execute`. Chain:
+  `run.trigger` → `task.dispatch` → `task.execute`.
+- **Dashboards as code + compose profile.** `deploy/observability/` holds the
+  Prometheus scrape config, the OTel collector pipeline, the Grafana datasource
+  and a read-only provisioned dashboard. `docker compose --profile observability
+  up` adds Prometheus (9090), Grafana (3000) and an OTel collector (4318/4317).
+  The `docker` CI job asserts all four FlowForge targets are UP, the dashboard is
+  provisioned and the collector accepts an OTLP export.
+- **Load test + benchmark.** `loadtests/locustfile.py` drives the whole pipeline
+  (trigger → poll to terminal), records `trigger` and `run end-to-end` as custom
+  events, and sends a unique `Idempotency-Key` per attempt. `manage.py
+  loadtest_user` creates the fixture account. The `loadtest` CI job runs a fixed
+  10-user/60-second shape and uploads the raw CSVs.
+  - Measured: 160 runs / 640 task runs, zero failures, 2.54 runs/s, end-to-end
+    median 3 500 ms (p95 4 100 ms) at `SCHEDULER_INTERVAL=0.25`.
+  - At the default 5 s interval the same test gives a 20 000 ms median, which is
+    `4 dependency levels × 5 s` — the cadence, not the engine.
+  - [`BENCHMARKS.md`](BENCHMARKS.md) states the hardware, the configuration and
+    what the numbers are not.
+- **Profiled bottleneck fixed.** `_record_task_run_event` fetched the task run's
+  `organization_id` with a separate `SELECT` whenever the caller did not pass it,
+  and no caller ever did — although all five already held the row. On a 14-task
+  diamond that is 13 wasted round trips per run, every pass.
+  - 5.00 → 4.00 queries per transition (−20%); 1 672 → 1 542 queries over 140
+    scheduler passes (−7.8%).
+  - Reproduce with `scripts/profile_scheduler.py --micro`.
+- `THROTTLE_AUTH_RATE` / `THROTTLE_TRIGGER_RATE` / `THROTTLE_READ_RATE` and
+  `SCHEDULER_INTERVAL` are now configurable; the shipped defaults are unchanged
+  and asserted by a test.
+
 ## Verification
 
 ### In CI (authoritative)
@@ -201,9 +262,18 @@ Phase 8 run: https://github.com/Abolfazlrwm/flowforge/actions/runs/39921080486
 includes `bandit` and `pip-audit`; the docker job drove the cron and saga e2e
 through the real stack)
 
-v0.9.1 run: https://github.com/Abolfazlrwm/flowforge/actions/runs/39924397804
+v0.9.1 run: https://github.com/Abolfazlrwm/flowforge/actions/runs/39924920840
 (661 unit tests on PostgreSQL + 29 integration tests green; `lint`, `schema`,
 `docs` and `docker` green)
+
+Phase 9 run: https://github.com/Abolfazlrwm/flowforge/actions/runs/39962017430
+(681 unit tests on PostgreSQL + 29 integration tests green; `lint`, `schema`,
+`docs` and `docker` green). The `docker` job additionally asserted that all four
+FlowForge Prometheus targets were UP (`flowforge targets up: 4`), that the
+scheduler/publisher/worker metrics endpoints answered on 9101/9102/9103, that the
+Grafana dashboard was provisioned under its uid, and that the OTel collector
+accepted an OTLP/HTTP export. The `loadtest` job ran the benchmark and uploaded
+its raw output, which is what [`BENCHMARKS.md`](BENCHMARKS.md) is built from.
 
 ### Locally (Windows, Python 3.13.14)
 
@@ -211,8 +281,8 @@ v0.9.1 run: https://github.com/Abolfazlrwm/flowforge/actions/runs/39924397804
 |-------|--------|
 | `uv run ruff check .` | PASS |
 | `uv run ruff format --check .` | PASS |
-| `uv run mypy flowforge core api --ignore-missing-imports` | PASS (68 files) |
-| `uv run pytest tests/unit` | 661 passed (SQLite) |
+| `uv run mypy flowforge core api --ignore-missing-imports` | PASS (73 files) |
+| `uv run pytest tests/unit` | 681 passed (SQLite) |
 | `manage.py makemigrations --check --dry-run` | No changes detected |
 | `uv run mkdocs build --strict` | PASS |
 | `uv run bandit -r core api flowforge -c pyproject.toml` | 0 issues |
@@ -221,6 +291,10 @@ v0.9.1 run: https://github.com/Abolfazlrwm/flowforge/actions/runs/39924397804
 `make test-pg` is the local PostgreSQL run and needs Docker. CI already runs the
 full unit suite on PostgreSQL, so a machine without Docker is not unverified —
 it is the same suite against the same engine in CI.
+
+The load test and the compose observability profile cannot run locally (no
+Docker daemon, owner decision 2026-10-19); both are verified in CI, and the
+benchmark numbers in [`BENCHMARKS.md`](BENCHMARKS.md) come from that run.
 
 ## Known limitations
 
@@ -279,6 +353,30 @@ it is the same suite against the same engine in CI.
 19. **redis-py stays below 6.** The cache backend is verified against 5.x before a
     major bump.
 
+### Observability
+
+20. **No alerting rules.** The compose profile ships a dashboard, not an
+    Alertmanager configuration. Alert thresholds depend on what a deployment
+    considers normal, which is an operator decision.
+21. **Trace export needs one environment variable.** `OTEL_EXPORTER_OTLP_ENDPOINT`
+    is empty by default; an endpoint that is always set makes the plain stack log
+    a failed export every batch interval against a collector that is not running.
+22. **The collector exports to its debug sink.** Point the `otlp` exporter in
+    `deploy/observability/otel-collector-config.yaml` at a real backend to keep
+    spans.
+23. **Histogram buckets are fixed in code.** A quantile between two bucket
+    boundaries is interpolated by Prometheus, not measured.
+24. **The load-test numbers come from CI hardware.** Load generator, database,
+    broker and workers share one 4-vCPU VM, and the web process is Django's
+    `runserver`. The figures in [`BENCHMARKS.md`](BENCHMARKS.md) are a floor.
+25. **`load_definition` is still re-queried on every scheduler pass.** It is ~19%
+    of `schedule_once` in a profile. Caching it would remove a deliberate
+    re-validation of the stored rows, so it was left alone; this is a known,
+    measured cost rather than an oversight.
+26. **`SCHEDULER_INTERVAL` sets a floor on run latency.** A run cannot finish
+    faster than `dependency_depth × interval`. The default 5 s means a four-task
+    diamond takes ~20 s even when the engine is idle.
+
 ## Dependency decisions
 
 | Package | Version | Decision |
@@ -290,7 +388,11 @@ it is the same suite against the same engine in CI.
 | pika | 1.3.x | RabbitMQ client ([ADR-011](../adr/ADR-011-custom-scheduler-and-transactional-outbox.md)) |
 | redis | >= 5, < 6 | Cache backend compatibility |
 | croniter | 5.x | Cron expression parsing |
-| structlog + django-structlog | 24.x / 9.x | Structured logging |
+| structlog + django-structlog | 26.1.0 / 10.1.0 | Structured logging; JSON renderer |
+| prometheus-client | 0.26.0 | Metrics registry and exposition |
+| opentelemetry-api / sdk | 1.45.1 | Tracing; module-local provider |
+| opentelemetry-exporter-otlp-proto-http | 1.45.1 | Span export when an endpoint is set |
+| locust | 2.47.0 | Load tests (dev extra only; not in the image) |
 | Python | 3.13 in CI/Docker; `>= 3.11` | 3.14 deferred (limitation 18) |
 | bandit + pip-audit | dev extra | Required `lint` checks |
 
@@ -300,24 +402,9 @@ None.
 
 ## Next step
 
-Phase 9 — **Observability and Performance (v0.10.0)**, per
-[`ROADMAP.md`](ROADMAP.md):
-
-- structured JSON logging with correlation IDs propagated API → outbox → broker
-  → worker;
-- a Prometheus metrics endpoint (queue depth, outbox lag, task latency, retries,
-  lease expirations, DEAD count) per process;
-- OpenTelemetry tracing API → scheduler → publisher → worker, with a
-  trace-propagation test;
-- Grafana dashboards as code and a compose `observability` profile (Prometheus,
-  Grafana, OTel collector);
-- load tests with a documented reproducible command and a real measured
-  benchmark report;
-- profile and fix at least one measured bottleneck, with before/after numbers.
+Phase 10 — per [`ROADMAP.md`](ROADMAP.md).
 
 ## Ordering note
 
-A CI URL is added only after the run is green. The v0.9.0 URL above is the run
-that merged as `4febc05`; the v0.9.1 URL is added in a follow-up commit on the
-same pull request once its run passes, because committing a URL before the run
-exists would be a claim rather than a verification.
+A CI URL is added only after the run is green. Each URL above is the run that
+produced the cited counts; the merge commit is the one that follows it.

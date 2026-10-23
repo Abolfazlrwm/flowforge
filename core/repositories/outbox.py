@@ -18,12 +18,14 @@ from django.utils import timezone
 from core.models import OutboxMessage, TaskRun, WorkflowRun
 
 
-def build_dispatch_payload(
+def build_dispatch_payload(  # noqa: PLR0913 - one keyword per payload field
     *,
     dispatch_id: UUID,
     task_run: TaskRun,
     fencing_token_snapshot: int,
     attempt_snapshot: int,
+    correlation_id: str = "",
+    traceparent: str = "",
 ) -> dict[str, Any]:
     """The message body a worker receives for this dispatch.
 
@@ -43,6 +45,11 @@ def build_dispatch_payload(
         # so a log line can be attributed without a second lookup. It does not
         # change execution — the task run already belongs to exactly one tenant.
         "organization_id": str(task_run.organization_id) if task_run.organization_id else None,
+        # The worker continues this trace and logs this correlation id. Both are
+        # repeated in the payload so a message is self-describing: a worker that
+        # only has the message can still attribute the execution.
+        "correlation_id": correlation_id,
+        "traceparent": traceparent,
         "task_run_id": str(task_run.id),
         "workflow_run_id": str(task_run.workflow_run_id),
         "task_key": task.key,
@@ -57,12 +64,14 @@ def build_dispatch_payload(
     }
 
 
-def create_dispatch(
+def create_dispatch(  # noqa: PLR0913 - one keyword per dispatch field
     *,
     task_run: TaskRun,
     workflow_run: WorkflowRun,
     fencing_token_snapshot: int,
     attempt_snapshot: int,
+    correlation_id: str = "",
+    traceparent: str = "",
 ) -> OutboxMessage | None:
     """Record one dispatch generation for ``task_run``, idempotently.
 
@@ -90,6 +99,8 @@ def create_dispatch(
         task_run=task_run,
         fencing_token_snapshot=fencing_token_snapshot,
         attempt_snapshot=attempt_snapshot,
+        correlation_id=correlation_id,
+        traceparent=traceparent,
     )
     try:
         with transaction.atomic():
@@ -102,6 +113,8 @@ def create_dispatch(
                 workflow_run=workflow_run,
                 fencing_token_snapshot=fencing_token_snapshot,
                 attempt_snapshot=attempt_snapshot,
+                correlation_id=correlation_id,
+                traceparent=traceparent,
                 payload=payload,
             )
     except IntegrityError:

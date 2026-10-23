@@ -41,8 +41,11 @@ nav:
       - Decisions: development/DECISIONS.md
       - Naming Analysis: development/NAMING_ANALYSIS.md
       - Audit Report: development/AUDIT_REPORT.md
+      - Load Testing: development/load-testing.md
+      - Benchmarks: development/BENCHMARKS.md
   - Deployment:
       - Docker: deployment/docker.md
+      - Observability: deployment/observability.md
   - ADRs:
       - Index: adr/index.md
       - Celery as interim task infrastructure: adr/ADR-007-celery-as-interim-task-infrastructure.md

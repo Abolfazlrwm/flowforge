@@ -1,0 +1,53 @@
+# Prometheus scrape configuration for the FlowForge stack.
+#
+# Five targets, one per process. The scheduler, publisher and worker each run
+# their own metrics HTTP server (defaults 9101/9102/9103) because they have no
+# web server of their own; the web process serves the same registry at
+# /api/v1/metrics/ on port 8000. RabbitMQ's own plugin target is included
+# because queue depth is only half the story without the broker's view.
+#
+# `honor_labels` is left at its default: FlowForge emits no labels that would
+# collide with the ones Prometheus adds, and the process-local counters are
+# summed by the queries in the dashboard, not by relabelling here.
+
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+  scrape_timeout: 10s
+
+scrape_configs:
+  # The web process serves the same registry at `/api/v1/metrics/` rather than the
+  # conventional `/metrics`, because it is a Django route and lives under the API
+  # prefix. Prometheus defaults to `/metrics`, so this path has to be explicit —
+  # without it the target comes up and every scrape 404s, which reads as a DOWN
+  # target rather than a wrong URL.
+  - job_name: flowforge-web
+    metrics_path: /api/v1/metrics/
+    static_configs:
+      - targets: ["web:8000"]
+        labels:
+          service: web
+
+  - job_name: flowforge-scheduler
+    static_configs:
+      - targets: ["scheduler:9101"]
+        labels:
+          service: scheduler
+
+  - job_name: flowforge-publisher
+    static_configs:
+      - targets: ["publisher:9102"]
+        labels:
+          service: publisher
+
+  - job_name: flowforge-worker
+    static_configs:
+      - targets: ["worker:9103"]
+        labels:
+          service: worker
+
+  - job_name: rabbitmq
+    static_configs:
+      - targets: ["rabbitmq:15692"]
+        labels:
+          service: rabbitmq
