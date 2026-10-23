@@ -22,6 +22,15 @@ x-app-environment: &app-environment
   # A dedicated user, not `guest`, because RabbitMQ restricts guest to loopback
   # and the app containers connect over the compose network.
   RABBITMQ_URL: amqp://flowforge:flowforge@rabbitmq:5672/
+  # Observability. The processes that run no web server expose their own metrics
+  # endpoint when given a port; zero disables it. The web process serves the same
+  # registry at /api/v1/metrics/ on port 8000 and needs no extra port.
+  SCHEDULER_METRICS_PORT: ${SCHEDULER_METRICS_PORT:-9101}
+  PUBLISHER_METRICS_PORT: ${PUBLISHER_METRICS_PORT:-9102}
+  WORKER_METRICS_PORT: ${WORKER_METRICS_PORT:-9103}
+  # Empty by default so the plain stack does not try to export spans to a
+  # collector that is not running. See the observability profile below.
+  OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
 
 # Shared healthcheck for the processes that run no HTTP server. The Dockerfile's
 # port-8000 check would always fail for them; `manage.py healthcheck` verifies the
@@ -119,6 +128,11 @@ services:
       context: .
       target: production
     environment: *app-environment
+    ports:
+      # Loopback only: Prometheus scrapes `scheduler:9101` over the compose
+      # network, so this mapping exists purely so a developer can curl the
+      # endpoint from the host.
+      - "127.0.0.1:9101:9101"
     depends_on:
       migrate:
         condition: service_completed_successfully
@@ -128,7 +142,9 @@ services:
         condition: service_healthy
     volumes:
       - .:/app
-    command: ["python", "manage.py", "scheduler"]
+    # Shell form, not a list: the port comes from this service's environment,
+    # and compose only interpolates `${...}` in a list command from the host.
+    command: python manage.py scheduler --metrics-port "$SCHEDULER_METRICS_PORT"
     healthcheck: *app-healthcheck
 
   publisher:
@@ -136,6 +152,8 @@ services:
       context: .
       target: production
     environment: *app-environment
+    ports:
+      - "127.0.0.1:9102:9102"
     depends_on:
       migrate:
         condition: service_completed_successfully
@@ -145,7 +163,7 @@ services:
         condition: service_healthy
     volumes:
       - .:/app
-    command: ["python", "manage.py", "publisher"]
+    command: python manage.py publisher --metrics-port "$PUBLISHER_METRICS_PORT"
     healthcheck: *app-healthcheck
 
   worker:
@@ -153,6 +171,8 @@ services:
       context: .
       target: production
     environment: *app-environment
+    ports:
+      - "127.0.0.1:9103:9103"
     depends_on:
       migrate:
         condition: service_completed_successfully
@@ -162,8 +182,67 @@ services:
         condition: service_healthy
     volumes:
       - .:/app
-    command: ["python", "manage.py", "worker"]
+    command: python manage.py worker --metrics-port "$WORKER_METRICS_PORT"
     healthcheck: *app-healthcheck
+
+  # --- observability profile -------------------------------------------------
+  #
+  # `docker compose --profile observability up` adds a complete local
+  # observability stack. The application services above are unchanged: their
+  # metrics endpoints and their log format are always on, so the only thing
+  # this profile buys is somewhere to scrape and look at them.
+  #
+  # Traces need one more variable, because an OTLP endpoint that is always set
+  # would make the default stack log export failures against a collector that
+  # is not running:
+  #
+  #   OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318 \
+  #     docker compose --profile observability up
+  #
+  # Metrics and dashboards work with no extra configuration.
+
+  prometheus:
+    image: prom/prometheus:v2.54.1
+    profiles: ["observability"]
+    volumes:
+      - ./deploy/observability/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    ports:
+      - "9090:9090"
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+
+  grafana:
+    image: grafana/grafana:11.3.1
+    profiles: ["observability"]
+    environment:
+      # Anonymous admin access is deliberate for a local dev stack; the
+      # dashboard is read-only and the port is bound to the host only.
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Admin
+      GF_AUTH_DISABLE_LOGIN_FORM: "true"
+      GF_USERS_DEFAULT_THEME: light
+    volumes:
+      - ./deploy/observability/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./deploy/observability/grafana/dashboards:/etc/grafana/dashboards:ro
+      - grafana_data:/var/lib/grafana
+    ports:
+      - "3000:3000"
+    depends_on:
+      - prometheus
+
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.114.0
+    profiles: ["observability"]
+    command: ["--config=/etc/otel/config.yaml"]
+    volumes:
+      - ./deploy/observability/otel-collector-config.yaml:/etc/otel/config.yaml:ro
+    ports:
+      - "4318:4318"
+      - "4317:4317"
 
 volumes:
   postgres_data:
+  prometheus_data:
+  grafana_data:
