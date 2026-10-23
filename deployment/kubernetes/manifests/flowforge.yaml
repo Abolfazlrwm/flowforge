@@ -1,0 +1,719 @@
+---
+# Source: flowforge/templates/namespace.yaml
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: flowforge
+  labels:
+    helm.sh/chart: flowforge-0.1.0
+    app.kubernetes.io/name: flowforge
+    app.kubernetes.io/instance: ff
+    app.kubernetes.io/version: "0.11.0"
+    app.kubernetes.io/managed-by: Helm
+---
+# Source: flowforge/templates/networkpolicy.yaml
+# Default-deny all ingress to the namespace. Egress is left at the cluster
+# default (allowed) because PostgreSQL, RabbitMQ and Redis are reached over the
+# network and their addresses are deployment-specific; tighten egress to your
+# database/broker subnets in production.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: ff-default-deny-ingress
+  namespace: flowforge
+  labels:
+    helm.sh/chart: flowforge-0.1.0
+    app.kubernetes.io/name: flowforge
+    app.kubernetes.io/instance: ff
+    app.kubernetes.io/version: "0.11.0"
+    app.kubernetes.io/managed-by: Helm
+spec:
+  podSelector: {}
+  policyTypes: ["Ingress"]
+---
+# Source: flowforge/templates/networkpolicy.yaml
+# Allow ingress to the web pods only (the API). Everything else (scheduler,
+# publisher, worker) is reached only via PostgreSQL/RabbitMQ/Redis, never
+# directly over the network.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: ff-web-ingress
+  namespace: flowforge
+  labels:
+    helm.sh/chart: flowforge-0.1.0
+    app.kubernetes.io/name: flowforge
+    app.kubernetes.io/instance: ff
+    app.kubernetes.io/version: "0.11.0"
+    app.kubernetes.io/managed-by: Helm
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/component: web
+  policyTypes: ["Ingress"]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: "ingress-nginx"
+      ports:
+        - port: 8000
+          protocol: TCP
+---
+# Source: flowforge/templates/worker-deployment.yaml
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: ff-worker
+  namespace: flowforge
+  labels:
+    helm.sh/chart: flowforge-0.1.0
+    app.kubernetes.io/name: flowforge
+    app.kubernetes.io/instance: ff
+    app.kubernetes.io/version: "0.11.0"
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/component: worker
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: flowforge
+      app.kubernetes.io/instance: ff
+      app.kubernetes.io/component: worker
+---
+# Source: flowforge/templates/serviceaccount.yaml
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: ff-flowforge
+  namespace: flowforge
+  labels:
+    helm.sh/chart: flowforge-0.1.0
+    app.kubernetes.io/name: flowforge
+    app.kubernetes.io/instance: ff
+    app.kubernetes.io/version: "0.11.0"
+    app.kubernetes.io/managed-by: Helm
+---
+# Source: flowforge/templates/secret.yaml
+apiVersion: v1
+kind: Secret
+metadata:
+  name: ff-flowforge-secret
+  namespace: flowforge
+  labels:
+    helm.sh/chart: flowforge-0.1.0
+    app.kubernetes.io/name: flowforge
+    app.kubernetes.io/instance: ff
+    app.kubernetes.io/version: "0.11.0"
+    app.kubernetes.io/managed-by: Helm
+type: Opaque
+stringData:
+  django-secret-key: "CHANGE-ME-do-not-use-in-production"
+  database-url: "postgres://flowforge:CHANGE-ME@postgres:5432/flowforge"
+  rabbitmq-url: "amqp://flowforge:CHANGE-ME@rabbitmq:5672/"
+  redis-url: "redis://redis:6379/0"
+---
+# Source: flowforge/templates/configmap.yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ff-flowforge-config
+  namespace: flowforge
+  labels:
+    helm.sh/chart: flowforge-0.1.0
+    app.kubernetes.io/name: flowforge
+    app.kubernetes.io/instance: ff
+    app.kubernetes.io/version: "0.11.0"
+    app.kubernetes.io/managed-by: Helm
+data:
+  DJANGO_SETTINGS_MODULE: "flowforge.settings.prod"
+  DJANGO_ALLOWED_HOSTS: "*"
+  THROTTLE_AUTH_RATE: "10/min"
+  THROTTLE_TRIGGER_RATE: "60/min"
+  THROTTLE_READ_RATE: "300/min"
+  OTEL_EXPORTER_OTLP_ENDPOINT: ""
+---
+# Source: flowforge/templates/web-service.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: ff-web
+  namespace: flowforge
+  labels:
+    helm.sh/chart: flowforge-0.1.0
+    app.kubernetes.io/name: flowforge
+    app.kubernetes.io/instance: ff
+    app.kubernetes.io/version: "0.11.0"
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/component: web
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: flowforge
+    app.kubernetes.io/instance: ff
+    app.kubernetes.io/component: web
+  ports:
+    - name: http
+      port: 8000
+      targetPort: http
+---
+# Source: flowforge/templates/publisher-deployment.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ff-publisher
+  namespace: flowforge
+  labels:
+    helm.sh/chart: flowforge-0.1.0
+    app.kubernetes.io/name: flowforge
+    app.kubernetes.io/instance: ff
+    app.kubernetes.io/version: "0.11.0"
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/component: publisher
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: flowforge
+      app.kubernetes.io/instance: ff
+      app.kubernetes.io/component: publisher
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: flowforge
+        app.kubernetes.io/instance: ff
+        app.kubernetes.io/component: publisher
+    spec:
+      serviceAccountName: ff-flowforge
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      initContainers:
+        - name: migrate-check
+          image: ghcr.io/abolfazlrwm/flowforge:0.11.0
+          imagePullPolicy: IfNotPresent
+          command: ["python", "manage.py", "migrate", "--check", "--noinput"]
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+              - ALL
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            seccompProfile:
+              type: RuntimeDefault
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 256Mi
+      containers:
+        - name: publisher
+          image: ghcr.io/abolfazlrwm/flowforge:0.11.0
+          imagePullPolicy: IfNotPresent
+          command:
+            - python
+            - manage.py
+            - publisher
+            - --metrics-port
+            - "9102"
+          envFrom:
+            - configMapRef:
+                name: ff-flowforge-config
+            - secretRef:
+                name: ff-flowforge-secret
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+              - ALL
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            seccompProfile:
+              type: RuntimeDefault
+          startupProbe:
+            exec:
+              command: ["python", "manage.py", "healthcheck"]
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            failureThreshold: 30
+          livenessProbe:
+            exec:
+              command: ["python", "manage.py", "healthcheck"]
+            initialDelaySeconds: 15
+            periodSeconds: 30
+            failureThreshold: 3
+          readinessProbe:
+            exec:
+              command: ["python", "manage.py", "healthcheck"]
+            initialDelaySeconds: 10
+            periodSeconds: 15
+            failureThreshold: 3
+          resources:
+            limits:
+              cpu: 500m
+              memory: 256Mi
+            requests:
+              cpu: 100m
+              memory: 128Mi
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir: {}
+---
+# Source: flowforge/templates/scheduler-deployment.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ff-scheduler
+  namespace: flowforge
+  labels:
+    helm.sh/chart: flowforge-0.1.0
+    app.kubernetes.io/name: flowforge
+    app.kubernetes.io/instance: ff
+    app.kubernetes.io/version: "0.11.0"
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/component: scheduler
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: flowforge
+      app.kubernetes.io/instance: ff
+      app.kubernetes.io/component: scheduler
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: flowforge
+        app.kubernetes.io/instance: ff
+        app.kubernetes.io/component: scheduler
+    spec:
+      serviceAccountName: ff-flowforge
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      initContainers:
+        - name: migrate-check
+          image: ghcr.io/abolfazlrwm/flowforge:0.11.0
+          imagePullPolicy: IfNotPresent
+          command: ["python", "manage.py", "migrate", "--check", "--noinput"]
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+              - ALL
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            seccompProfile:
+              type: RuntimeDefault
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 256Mi
+      containers:
+        - name: scheduler
+          image: ghcr.io/abolfazlrwm/flowforge:0.11.0
+          imagePullPolicy: IfNotPresent
+          command:
+            - python
+            - manage.py
+            - scheduler
+            - --metrics-port
+            - "9101"
+            - --interval
+            - "5"
+          envFrom:
+            - configMapRef:
+                name: ff-flowforge-config
+            - secretRef:
+                name: ff-flowforge-secret
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+              - ALL
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            seccompProfile:
+              type: RuntimeDefault
+          startupProbe:
+            exec:
+              command: ["python", "manage.py", "healthcheck"]
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            failureThreshold: 30
+          livenessProbe:
+            exec:
+              command: ["python", "manage.py", "healthcheck"]
+            initialDelaySeconds: 15
+            periodSeconds: 30
+            failureThreshold: 3
+          readinessProbe:
+            exec:
+              command: ["python", "manage.py", "healthcheck"]
+            initialDelaySeconds: 10
+            periodSeconds: 15
+            failureThreshold: 3
+          resources:
+            limits:
+              cpu: 500m
+              memory: 256Mi
+            requests:
+              cpu: 100m
+              memory: 128Mi
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir: {}
+---
+# Source: flowforge/templates/web-deployment.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ff-web
+  namespace: flowforge
+  labels:
+    helm.sh/chart: flowforge-0.1.0
+    app.kubernetes.io/name: flowforge
+    app.kubernetes.io/instance: ff
+    app.kubernetes.io/version: "0.11.0"
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/component: web
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: flowforge
+      app.kubernetes.io/instance: ff
+      app.kubernetes.io/component: web
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: flowforge
+        app.kubernetes.io/instance: ff
+        app.kubernetes.io/component: web
+    spec:
+      serviceAccountName: ff-flowforge
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      initContainers:
+        - name: migrate-check
+          image: ghcr.io/abolfazlrwm/flowforge:0.11.0
+          imagePullPolicy: IfNotPresent
+          command: ["python", "manage.py", "migrate", "--check", "--noinput"]
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+              - ALL
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            seccompProfile:
+              type: RuntimeDefault
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 256Mi
+      containers:
+        - name: web
+          image: ghcr.io/abolfazlrwm/flowforge:0.11.0
+          imagePullPolicy: IfNotPresent
+          command:
+            - gunicorn
+            - flowforge.wsgi:application
+            - -b
+            - 0.0.0.0:"8000"
+            - -w
+            - "4"
+            - --timeout
+            - "60"
+            - --access-logfile
+            - "-"
+            - --error-logfile
+            - "-"
+          ports:
+            - name: http
+              containerPort: 8000
+          envFrom:
+            - configMapRef:
+                name: ff-flowforge-config
+            - secretRef:
+                name: ff-flowforge-secret
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+              - ALL
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            seccompProfile:
+              type: RuntimeDefault
+          startupProbe:
+            httpGet:
+              path: /health/live/
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            failureThreshold: 30
+          livenessProbe:
+            httpGet:
+              path: /health/live/
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 15
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /health/ready/
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            failureThreshold: 3
+          resources:
+            limits:
+              cpu: "1"
+              memory: 512Mi
+            requests:
+              cpu: 250m
+              memory: 256Mi
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir: {}
+---
+# Source: flowforge/templates/worker-deployment.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ff-worker
+  namespace: flowforge
+  labels:
+    helm.sh/chart: flowforge-0.1.0
+    app.kubernetes.io/name: flowforge
+    app.kubernetes.io/instance: ff
+    app.kubernetes.io/version: "0.11.0"
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/component: worker
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: flowforge
+      app.kubernetes.io/instance: ff
+      app.kubernetes.io/component: worker
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: flowforge
+        app.kubernetes.io/instance: ff
+        app.kubernetes.io/component: worker
+    spec:
+      serviceAccountName: ff-flowforge
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      initContainers:
+        - name: migrate-check
+          image: ghcr.io/abolfazlrwm/flowforge:0.11.0
+          imagePullPolicy: IfNotPresent
+          command: ["python", "manage.py", "migrate", "--check", "--noinput"]
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+              - ALL
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            seccompProfile:
+              type: RuntimeDefault
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 256Mi
+      containers:
+        - name: worker
+          image: ghcr.io/abolfazlrwm/flowforge:0.11.0
+          imagePullPolicy: IfNotPresent
+          command:
+            - python
+            - manage.py
+            - worker
+            - --metrics-port
+            - "9103"
+          envFrom:
+            - configMapRef:
+                name: ff-flowforge-config
+            - secretRef:
+                name: ff-flowforge-secret
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+              - ALL
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            seccompProfile:
+              type: RuntimeDefault
+          startupProbe:
+            exec:
+              command: ["python", "manage.py", "healthcheck"]
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            failureThreshold: 30
+          livenessProbe:
+            exec:
+              command: ["python", "manage.py", "healthcheck"]
+            initialDelaySeconds: 15
+            periodSeconds: 30
+            failureThreshold: 3
+          readinessProbe:
+            exec:
+              command: ["python", "manage.py", "healthcheck"]
+            initialDelaySeconds: 10
+            periodSeconds: 15
+            failureThreshold: 3
+          resources:
+            limits:
+              cpu: "1"
+              memory: 512Mi
+            requests:
+              cpu: 250m
+              memory: 256Mi
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir: {}
+---
+# Source: flowforge/templates/worker-deployment.yaml
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: ff-worker
+  namespace: flowforge
+  labels:
+    helm.sh/chart: flowforge-0.1.0
+    app.kubernetes.io/name: flowforge
+    app.kubernetes.io/instance: ff
+    app.kubernetes.io/version: "0.11.0"
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/component: worker
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: ff-worker
+  minReplicas: 2
+  maxReplicas: 10
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70
+---
+# Source: flowforge/templates/migrate-job.yaml
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: ff-migrate
+  namespace: flowforge
+  labels:
+    helm.sh/chart: flowforge-0.1.0
+    app.kubernetes.io/name: flowforge
+    app.kubernetes.io/instance: ff
+    app.kubernetes.io/version: "0.11.0"
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/component: migrate
+  annotations:
+    # Run on every install/upgrade, before the workloads come up.
+    "helm.sh/hook": pre-install,pre-upgrade
+    "helm.sh/hook-weight": "-5"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  ttlSecondsAfterFinished: 300
+  backoffLimit: 3
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: flowforge
+        app.kubernetes.io/instance: ff
+        app.kubernetes.io/component: migrate
+    spec:
+      restartPolicy: OnFailure
+      serviceAccountName: ff-flowforge
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      initContainers:
+        - name: wait
+          image: ghcr.io/abolfazlrwm/flowforge:0.11.0
+          imagePullPolicy: IfNotPresent
+          # Block until PostgreSQL and RabbitMQ are reachable.
+          command: ["python", "manage.py", "healthcheck"]
+          envFrom:
+            - configMapRef:
+                name: ff-flowforge-config
+            - secretRef:
+                name: ff-flowforge-secret
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+              - ALL
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            seccompProfile:
+              type: RuntimeDefault
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      containers:
+        - name: migrate
+          image: ghcr.io/abolfazlrwm/flowforge:0.11.0
+          imagePullPolicy: IfNotPresent
+          command: ["python", "manage.py", "migrate", "--noinput"]
+          envFrom:
+            - configMapRef:
+                name: ff-flowforge-config
+            - secretRef:
+                name: ff-flowforge-secret
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+              - ALL
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            seccompProfile:
+              type: RuntimeDefault
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir: {}

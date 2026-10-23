@@ -1065,3 +1065,47 @@ jobs:
           subject-name: ghcr.io/${{ github.repository }}
           subject-digest: ${{ steps.push-sign.outputs.digest }}
           push-to-registry: true
+
+  k8s:
+    # Validates the Kubernetes deliverables on every push/PR. It lints the Helm
+    # chart and renders it to manifests that it then checks with kubeconform in
+    # strict mode. helm and kubeconform are downloaded directly (the same pattern
+    # as the gitleaks binary in the `secrets` job) so no further pinned actions
+    # are introduced here.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install helm
+        run: |
+          set -euo pipefail
+          HELM_VERSION=3.16.3
+          curl -sSL "https://get.helm.sh/helm-v${HELM_VERSION}-linux-amd64.tar.gz" -o helm.tgz
+          tar -xzf helm.tgz
+          sudo mv linux-amd64/helm /usr/local/bin/helm
+          helm version --short
+
+      - name: Install kubeconform
+        run: |
+          set -euo pipefail
+          KC_VERSION=0.6.7
+          curl -sSL "https://github.com/yannh/kubeconform/releases/download/v${KC_VERSION}/kubeconform_${KC_VERSION}_linux-amd64.tar.gz" -o kc.tgz
+          tar -xzf kc.tgz
+          sudo mv kubeconform /usr/local/bin/kubeconform
+          kubeconform -v
+
+      - name: helm lint
+        run: helm lint deployment/kubernetes/helm/flowforge
+
+      - name: Render and validate with kubeconform
+        run: |
+          set -euo pipefail
+          helm template ff deployment/kubernetes/helm/flowforge --namespace flowforge > /tmp/ff.yaml
+          kubeconform -strict -summary /tmp/ff.yaml
+          # Keep the committed static manifests in sync with the chart.
+          helm template ff deployment/kubernetes/helm/flowforge --namespace flowforge > deployment/kubernetes/manifests/flowforge.yaml
+          if ! git diff --quiet deployment/kubernetes/manifests/flowforge.yaml; then
+            echo "::error::deployment/kubernetes/manifests/flowforge.yaml is out of sync with the chart; run 'helm template ff deployment/kubernetes/helm/flowforge --namespace flowforge > deployment/kubernetes/manifests/flowforge.yaml' and commit."
+            git diff --stat deployment/kubernetes/manifests/flowforge.yaml
+            exit 1
+          fi
