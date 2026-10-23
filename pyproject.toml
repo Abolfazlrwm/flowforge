@@ -129,7 +129,7 @@ convention = "google"
 # the test body legitimately uses neither. ARG cannot express that, and naming
 # the fixture with a leading underscore would stop pytest injecting it.
 "tests/**" = [
-    "S101", "S105", "S106", "PLR2004", "D103", "ARG001", "ARG002",
+    "S101", "S105", "S106", "S310", "PLR2004", "D103", "ARG001", "ARG002",
 ]
 "*/migrations/*" = ["ALL"]
 "manage.py" = ["PLC0415"]
@@ -191,6 +191,7 @@ markers = [
     "slow: marks tests as slow (deselect with '-m \"not slow\"')",
     "integration: marks tests as integration tests",
     "concurrency: marks tests that validate concurrent behavior",
+    "e2e: marks the end-to-end suite, which needs a live stack (tests/e2e)",
 ]
 
 [tool.coverage.run]
