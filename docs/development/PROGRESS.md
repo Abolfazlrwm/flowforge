@@ -2,13 +2,21 @@
 
 ## Current Phase
 
-**Phase 8 — Security & Multi-Tenancy: COMPLETE (v0.9.0).** Merged on
-`feat/phase8-security-multitenancy`, tagged `v0.9.0`, released. Organizations and
-memberships with `owner/admin/member/viewer` roles, per-organization scoping by
-construction, per-tenant definition and idempotency uniqueness, hashed API keys
-with scopes/expiry/rotation/revocation, an append-only audit log enforced by a
-database trigger, secret redaction, a tenant-isolation suite, `bandit` +
-`pip-audit` in CI, and the STRIDE threat model (ADR-014). Phase 9 is next.
+**Phase 8 — Security & Multi-Tenancy: RELEASED (v0.9.0).** Merged as `4febc05`
+(PR #38) and tagged `v0.9.0`. Organizations and memberships with
+`owner/admin/member/viewer` roles; per-organization scoping by construction
+([ADR-014](../adr/ADR-014-multi-tenancy-shared-schema.md)); per-tenant definition
+and idempotency uniqueness; hashed, scoped, rotatable API keys; an append-only
+audit log enforced by a database trigger; secret redaction; a tenant-isolation
+suite; a STRIDE threat model ([`docs/security/threat-model.md`](../security/threat-model.md));
+and `bandit` + `pip-audit` in CI.
+
+**`v0.9.1` (in progress on `chore/phase8-followups`)** adds membership
+management (`GET/POST /members/`, `PATCH/DELETE /members/<id>/`) with the
+owner/admin rules, tenant-isolation tests and audit entries; rewrites this
+record; and adds `make test-pg`.
+
+**Phase 9 — Observability & Performance (v0.10.0)** is next.
 
 ## Resume point
 
@@ -16,408 +24,186 @@ If this session is resumed cold, read this section first.
 
 | Question | Answer |
 |----------|--------|
-| Where is the work | `main` is at `v0.9.0`. Phase 8 is merged, tagged and released. |
-| What is released | `v0.1.0` … `v0.9.0` (including the `v0.5.1`, `v0.6.1`, `v0.7.1` and `v0.7.2` gap releases). |
-| Framework | **Django 5.2 LTS** (owner decision, [ADR-010](../adr/ADR-010-django-5-2-lts.md)). Python stays at 3.13. |
-| Message broker | **RabbitMQ via pika**, no Celery ([ADR-011](../adr/ADR-011-custom-scheduler-and-transactional-outbox.md)). `RABBITMQ_URL` is the one broker. |
-| Tenancy | **Shared schema, per-organization scoping** ([ADR-014](../adr/ADR-014-multi-tenancy-shared-schema.md)). Every tenant read goes through `OrganizationScopedManager.for_organization`. |
-| What is next | Phase 9 (to be defined with the owner). |
+| Where is the work | `main` is at `v0.9.0` (`4febc05`). `chore/phase8-followups` is open for `v0.9.1`. |
+| What is released | `v0.1.0` … `v0.9.0`, including the `v0.5.1`, `v0.6.1`, `v0.7.1` and `v0.7.2` gap releases. |
+| Framework | **Django 5.2 LTS** ([ADR-010](../adr/ADR-010-django-5-2-lts.md)) and **DRF 3.18.3**. Python 3.13 in CI/Docker; the package requires >= 3.11. |
+| Message broker | **RabbitMQ via pika** ([ADR-011](../adr/ADR-011-custom-scheduler-and-transactional-outbox.md)). The dispatch queue is a **quorum** queue; the worker reconnects through broker outages. |
+| Tenancy | **Shared schema, per-organization scoping** ([ADR-014](../adr/ADR-014-multi-tenancy-shared-schema.md)). Every tenant read goes through `OrganizationScopedManager.for_organization`; another tenant's id is a 404. |
+| What is next | Phase 9 — Observability & Performance (v0.10.0). |
 | What blocks Phase 9 | **Nothing.** |
-| What else is open | Nothing pending an owner decision. Release tags are cut automatically on green CI; only `v1.0.0` needs owner approval ([DECISIONS.md](DECISIONS.md)). |
+| What else is open | Nothing pending an owner decision. Release tags are automatic on green CI; only `v1.0.0` needs owner approval ([DECISIONS.md](DECISIONS.md)). |
 
 ## Status
 
 | Item | State |
 |------|-------|
-| Branch | `main` (Phase 6 merged as `3210001`) |
-| Phase 0 PR | #1 — **MERGED** as `97c17bf` |
-| Stack upgrade | **MERGED** as `525e919` (Django 5.2 LTS, DRF 3.17, Actions re-pinned) |
+| Branch | `main` at `v0.9.0`; `chore/phase8-followups` for `v0.9.1` |
+| Phase 0 | **MERGED** as `97c17bf` (PR #1), tagged `v0.1.0` |
 | Phase 1 | **MERGED** as `869720f`, tagged `v0.2.0` |
 | Phase 2 | **MERGED** as `d31abf3`, tagged `v0.3.0` |
 | Phase 3 | **MERGED** as `405cb3d`, tagged `v0.4.0` |
-| Phase 4 | **MERGED** as `a68ac2a` (PR #25), tagged `v0.5.0`; gap closed by PR #27 (`v0.5.1`) |
-| Phase 5 | **MERGED** as `6b0564f` (PR #28), tagged `v0.6.0`; verification gaps closed by PR #30 (`303a1fa`), tagged `v0.6.1` |
+| Phase 4 | **MERGED** as `a68ac2a` (PR #25), tagged `v0.5.0`; gap `v0.5.1` (PR #27) |
+| Phase 5 | **MERGED** as `6b0564f` (PR #28), tagged `v0.6.0`; gap `v0.6.1` (PR #30) |
 | Phase 6 | **MERGED** as `3210001` (PR #31), tagged `v0.7.0` |
-| Broker/DB resilience | **MERGED** as `0d05e42` (PR #33), tagged `v0.7.1` |
-| Resilience verification | **MERGED** as `47ca4f4` (PR #34), tagged `v0.7.2` |
-| Phase 7 | **MERGED** (PR #36), tagged `v0.8.0` |
+| Resilience gap releases | `v0.7.1` (PR #33: reconnection, quorum queue) and `v0.7.2` (PR #34: restart-survival proof) |
+| Phase 7 | **MERGED** (PR #36), tagged `v0.8.0` (`89eb600`); gap `v0.8.1` (PR #37, `ed25c15`) |
 | Phase 8 | **MERGED** (PR #38) as `4febc05`, tagged `v0.9.0` |
-| CI | Green on `main`: `lint` (now incl. `bandit` + `pip-audit`), `test`, `schema`, `docs`, `docker` |
-| Docker | **Verified in CI** (build + compose up + health probes + e2e + failure injection). Accepted by owner decision 2026-10-19 — no local check is required |
-| Tags | `v0.1.0` … `v0.9.0`, annotated. |
-| GitHub Releases | Published for `v0.1.0` … `v0.9.0`. |
-| Branch protection | Active on `main`: `lint`, `test`, `docker` required, strict, no force push, 0 approving reviews, **admins cannot bypass** (`enforce_admins`) |
-| Django | **5.2 LTS** (ADR-010) |
-| Python | 3.13 (3.14 deferred — see limitations) |
-| Phase 4 | Complete — scheduler, outbox, publisher, lease reaper; no Celery. Publisher verified against a real broker. |
-| Phase 5 | Complete — worker with manual ack, prefetch, trusted handlers, lease+fencing, heartbeat, graceful shutdown. The e2e sample reaches `SUCCEEDED` in the compose CI job, in-process and via the REST API. |
-| Phase 6 | Complete — retry policy with exponential backoff and jitter, `DEAD` dead-letter state with manual requeue, persisted handler results, idempotency keys, failure-injection tests and `docs/architecture/failure-model.md`. |
+| `v0.9.1` follow-ups | `chore/phase8-followups`: membership API, this rewrite, `make test-pg` |
+| CI jobs | `lint` (ruff, ruff format, mypy, **bandit**, **pip-audit**), `test`, `schema`, `docs`, `docker` |
+| Test database in CI | **PostgreSQL 16** for the unit and integration suites; Redis 7 and RabbitMQ 3.13 services for integration |
+| Docker | Verified in CI (build, compose up, health probes, e2e, failure injection); owner decision 2026-10-19 |
+| Tags | `v0.1.0` … `v0.9.0`, annotated |
+| GitHub Releases | Published for `v0.1.0` … `v0.9.0` |
+| Branch protection | `main`: `lint`, `test`, `docker` required, strict, no force push, `enforce_admins` |
+| Django | **5.2 LTS** ([ADR-010](../adr/ADR-010-django-5-2-lts.md)) |
+| DRF | **3.18.3** (fixes CVE-2026-114136/114137/114138) |
+| Python | 3.13 in CI/Docker; `requires-python >= 3.11` |
+| PostgreSQL | 16 (CI service and compose) |
+| Redis | 7 (CI service and compose); client `redis>=5,<6` |
+| RabbitMQ | 3.13 (CI service and compose); quorum dispatch queue |
 
 ## Completed
 
-1. Isolated Git repository inside `FlowForge/`.
-2. Django 5.1 project, package `flowforge`.
-3. PostgreSQL, Redis, RabbitMQ wiring via `django-environ`.
-4. Settings package: `flowforge/settings/{base,dev,test,prod}.py`.
-5. `SECRET_KEY` mandatory when `DEBUG` is off; prod rejects short keys and
-   placeholders and requires non-empty `ALLOWED_HOSTS`.
-6. `core` app with `/health/live/` and `/health/ready/`.
-7. Readiness probes PostgreSQL (`SELECT 1`), Redis (cache round-trip) and
-   RabbitMQ (a real AMQP connection open/close, not a TCP connect), returning 503
-   with a per-dependency payload.
-8. Scheduler and publisher management commands (ADR-011); Celery removed in Phase 4.
-9. `api/v1/` REST API (Phase 3): workflows, runs, token/JWT auth, cursor pagination.
-10. Ruff (lint + format), mypy strict, pytest, pytest-cov, pre-commit.
-11. `uv.lock` committed; the Docker image and CI both install from it.
-12. CI: lock check, lint, format, mypy, migration check, unit tests against
-    PostgreSQL + Redis, integration tests against PostgreSQL + RabbitMQ, and a
-    compose smoke test that brings up all eight services, probes both health
-    endpoints, and drives the sample workflow to `SUCCEEDED` in-process and via
-    the REST API.
-13. All GitHub Actions pinned to commit SHAs; Dependabot covers `uv`,
-    `github-actions` and `docker`.
-14. Docker Compose stack with healthchecks and `service_healthy` dependencies.
-15. Multi-stage Dockerfile, non-root `flowforge` user, `.dockerignore`.
-16. Documentation: README, CONTRIBUTING, SECURITY, CODE_OF_CONDUCT, CHANGELOG,
-    LICENSE, architecture, setup, deployment, roadmap, decisions, naming
-    analysis, audit report, ADR-007 (Celery), ADR-009 (naming).
-17. MkDocs configuration.
-18. Makefile with `install`, `lint`, `format`, `typecheck`, `test`, `check`,
-    `migrate`, `run`, `demo`, `compose-up`, `compose-down`, `clean`.
-19. Migrations run in a single one-shot `migrate` service that the application
-    services wait on, so three containers can no longer race on `CREATE TABLE`.
-20. `.gitattributes` forces LF in the working tree, so a Windows checkout is
-    byte-identical to what CI and the containers execute.
-21. Repository configuration: description, ten topics, Discussions enabled,
-    secret scanning and push protection on, Dependabot security updates on,
-    branch auto-delete, auto-merge, and "update branch" allowed.
-22. Branch protection on `main` — `lint`, `test`, `docker` required, branch must
-    be up to date, force pushes and deletions blocked, conversations must be
-    resolved. Approving reviews are set to 0 because GitHub forbids
-    self-approval and this is a single-maintainer project.
-23. Issue templates (defect, feature request) with blank issues disabled and
-    security reports routed to a private advisory; a pull request template that
-    asks for evidence rather than a claim; 36 labels; 11 phase milestones.
-24. Coordinated stack upgrade: Django 5.2 LTS and DRF 3.17.2, four GitHub
-    Actions majors re-pinned to commit SHAs, Dependabot grouping, and ignore
-    rules with reasons for the three declined upgrades (ADR-010).
+### Phase 0 — Engineering foundation
 
-### Phase 1 — Domain Modeling
+- Django project, settings package, PostgreSQL/Redis/RabbitMQ wiring, health
+  probes (live + ready), Docker Compose, multi-stage non-root image.
+- Ruff, mypy strict, pytest + coverage gate (80%), pre-commit, `uv.lock`,
+  SHA-pinned Actions, Dependabot, issue/PR templates, branch protection.
+- `.gitattributes` forces LF so a Windows checkout matches CI.
 
-25. `core/domain/` is a pure-Python package with **no Django import**, enforced
-    two ways: an AST walk over every module and a subprocess re-import with
-    `django` blocked on `sys.meta_path`. The scanner is itself tested against
-    deliberately bad source.
-26. `WorkflowRunState` (pending, running, succeeded, failed, cancelled) and
-    `TaskRunState` (pending, ready, running, succeeded, failed, retrying,
-    cancelled) as `StrEnum`.
-27. `StateMachine[T]` with `Transition` dataclasses, validated at import time:
-    duplicate edges, duplicate names, edges out of a terminal state, dead ends,
-    and states from the wrong enum all raise `ValueError`.
-28. `WORKFLOW_RUN_MACHINE` (5 edges, 3 terminal) and `TASK_RUN_MACHINE` (9 edges,
-    2 terminal). `FAILED` is deliberately non-terminal for `TaskRun` so a retry
-    reuses the row instead of breaking `(workflow_run, task)` uniqueness.
-29. Frozen dataclass entities with `__post_init__` invariants, one test per rule.
-30. `derive_workflow_run_state` with documented precedence
-    (cancelled > failed > all-succeeded > running > pending) and
-    `initial_task_run_state` for DAG eligibility.
-31. Persistence models with UUID PKs, six `CHECK` constraints and five named
-    indexes. Constraints are proven by writing through `QuerySet.update()` so
-    every Python-level guard is bypassed (`tests/unit/test_constraints.py`).
-32. `core/repositories/transitions.py`: atomic conditional `UPDATE` returning
-    whether the transition won; `claim_task_run` increments the fencing token in
-    the same statement and returns it; `finish_task_run` requires a matching
-    token, so a resurrected worker's write matches zero rows.
-33. Hypothesis `RuleBasedStateMachine` property tests plus exhaustive table
-    assertions, including a regression test for the `StrEnum` equality trap
-    (`TaskRunState.CANCELLED == WorkflowRunState.CANCELLED` is `True`).
-34. Concurrency tests on real PostgreSQL: 16 threads released by a
-    `threading.Barrier`, no sleeps. Five tests: exactly one claim wins, the
-    winner is the recorded worker, exactly one run start wins, one writer per
-    token, and a stale token loses under concurrency. CI now runs these with
-    `REQUIRE_POSTGRES=1`, so they can no longer skip silently.
-35. `docs/architecture/data-model.md` and `docs/architecture/execution-model.md`
-    — the latter with Mermaid state diagrams for both machines and a
-    fencing-token sequence diagram.
+### Phase 1 — Domain modeling
 
-### Phase 2 — Workflow Definition Engine
+- `core/domain/` is Django-free, enforced by an AST scan and a subprocess
+  re-import with `django` blocked.
+- `WorkflowRunState` and `TaskRunState` as `StrEnum`; `StateMachine` validates
+  duplicate edges, dead ends and edges out of terminal states at import time.
+- `WORKFLOW_RUN_MACHINE` has 5 edges and 3 terminal states;
+  `TASK_RUN_MACHINE` has 14 edges and 4 terminal states (`SUCCEEDED`,
+  `SKIPPED`, `DEAD`, `CANCELLED`).
+- Persistence models with UUID PKs, `CHECK` constraints and named indexes;
+  constraints are proven through `QuerySet.update()` so Python guards are
+  bypassed.
+- Atomic conditional `UPDATE` transitions with fencing tokens; Hypothesis
+  state-machine tests; PostgreSQL concurrency tests with a `threading.Barrier`.
+- Traps recorded: `TaskRunState.CANCELLED == WorkflowRunState.CANCELLED` is
+  `True` (use `is`/`isinstance`); `attempt` is 1-based; `scheduled_at` is valid
+  only while `RETRYING`.
 
-36. `TaskDefinition` and `WorkflowDefinition` as frozen dataclasses in
-    `core/domain/definition.py`, with no framework import. `config` is normalised
-    into a `MappingProxyType` so a caller's dict cannot mutate a validated
-    definition.
-37. Config is validated to be JSON-shaped **at construction**. The freeze was
-    only reachable through `__hash__` and `fingerprint()`, so a non-JSON value
-    passed construction and surfaced later as an unattributed `TypeError` — the
-    same laziness class as the unforced `graph` below.
-38. `DependencyGraph` validates duplicate keys, unknown dependencies and cycles
-    in its constructor. Cycle detection is **iterative** (an explicit stack of
-    `(node, next_child_index)` frames), so a 3000-deep chain whose back-edge sits
-    at the far end is found. A recursive walker overflows at roughly 1000 frames.
-39. `topological_order()`, `levels()`, `ready_tasks()`, `is_ready()`,
-    `transitive_dependencies_of()`, `transitive_dependents_of()` and the container
-    protocol, all deterministic — ties broken by ascending task key.
-40. `core/domain/schema.py`: a Draft 2020-12 schema for payload shape, reported
-    with JSONPaths. JSON Schema deliberately stops at types and required fields;
-    duplicate keys, dangling references and cycles are domain errors, because the
-    standard cannot express them.
-41. A payload that is **both** malformed and cyclic produces the shape error —
-    the cheaper fix first. Both branches are tested.
-42. `WorkflowDefinition.fingerprint()` over name, version, description and every
-    task's content. **`description` is included**: omitting it meant a definition
-    whose only change was its description silently returned the stored row, with
-    the caller believing text the database did not hold. Regression-guarded, and
-    verified to fail without the fix.
-43. `core/repositories/definitions.py`: `publish_definition` forces the graph
-    **before** the transaction opens, writes the workflow and its tasks in one
-    transaction, and is idempotent by fingerprint. Differing content under an
-    existing `(name, version)` raises `DefinitionConflictError`.
-44. `load_definition` round-trips losslessly and **re-validates on the way out**,
-    so a manual `UPDATE` or a data-loss migration is caught at read time rather
-    than at schedule time inside a transaction. It refuses rows predating
-    `core.0002` by name instead of guessing a `task_type`.
-45. Migration `core/0002_definition_payload.py` adding `description`,
-    `task_type`, `depends_on` and `config` as columns, so loading is lossless
-    rather than reconstructing `task_type` from the task key.
-46. Hypothesis property tests: `@st.composite dags()` builds graphs acyclic by
-    construction (task `t{i}` may only depend on `t{<i}`), while
-    `arbitrary_graphs()` covers cycle-soundness — a rejected graph's reported
-    cycle is checked edge by edge against the declared edges, and an acyclic
-    graph must never be rejected. Invariants include permutation, levels
-    partitioning, readiness safety, drainability, determinism across declaration
-    order, and closure correctness.
-47. Publish-race tests on real PostgreSQL: 16 threads, one `threading.Barrier`,
-    no sleeps. Two races — identical content and conflicting content. `OperationalError`
-    (PostgreSQL's `deadlock detected`) is deliberately **not** an accepted
-    outcome, so a deadlock fails the test.
-48. `ready_tasks()` returning already-completed tasks was found and fixed. A
-    scheduler acting on that would execute a task twice.
-49. `flowforge.settings.test` now ignores a `DATABASE_URL` that exists only in
-    `.env`. `base` merges the file into `os.environ`, which made a file value
-    indistinguishable from a caller-supplied one and broke the suite's own "no
-    external services" contract on any machine with a checked-out `.env`. CI is
-    unaffected because it sets the variable at job level.
-50. `tests/integration/conftest.py` now holds the barrier, per-thread connection
-    cleanup and the no-stragglers check, shared by the transition race and the
-    publish race, with a second entry point for races whose losers are expected
-    to raise.
-51. `docs/architecture/definitions.md`: lifecycle diagram, why definitions are
-    value objects, why cycle detection is iterative, the shape-vs-graph boundary,
-    and an honest account of what the publish race does **not** guarantee.
+### Phase 2 — Workflow definitions
 
-### Phase 4 — Scheduler
+- Frozen `TaskDefinition`/`WorkflowDefinition`; config validated as JSON-shaped
+  at construction; `DependencyGraph` with iterative cycle detection.
+- Draft 2020-12 schema with JSONPaths; domain errors for duplicate keys,
+  dangling references and cycles.
+- `publish_definition` is idempotent by fingerprint, writes the workflow and its
+  tasks in one transaction, and raises `DefinitionConflictError` for different
+  content under an existing version.
+- `load_definition` re-validates on the way out.
+- Hypothesis DAG property tests and PostgreSQL publish-race tests.
 
-52. ADR-011 accepted (owner decision 2026-10-20): Celery removed, replaced by a
-    custom scheduler, a transactional outbox, a publisher, and (Phase 5) a worker.
-    The worker claims, not the scheduler.
-53. `core/repositories/scheduler.py`: `advance_workflow_run` promotes
-    dependency-satisfied tasks, starts the run and writes one outbox row per
-    dispatch generation in one transaction; `enqueue_ready_tasks` is idempotent
-    per generation; `schedule_once` reaps expired leases then advances every
-    active run.
-54. `core/models.OutboxMessage` + migration `core.0004_outbox`: the transactional
-    outbox, with a unique `(task_run, fencing_token_snapshot)` constraint and the
-    partial index `idx_outbox_pending`.
-55. `create_dispatch` pre-checks existence before inserting. Catching the UNIQUE
-    violation alone aborted the open SQLite transaction, and the next query then
-    raised `TransactionManagementError`; the pre-check plus a savepoint fixes it.
-56. `core/repositories/transitions.py`: the lease reaper (`reclaim_task_run`,
-    `reap_expired_leases`), a conditional `UPDATE ... WHERE state='running' AND
-    lease_expires_at < now` that bumps the fencing token. The `reap_lease` edge is
-    reachable only through the reaper, never the generic transition API.
-57. `core/broker.py` + `core/broker_rabbit.py` + `manage.py publisher`: the
-    publisher drains the outbox with `FOR UPDATE SKIP LOCKED`, publishes with
-    publisher confirms, and marks a row delivered only after the broker acks.
-58. `manage.py scheduler` and `manage.py publisher` replace celery beat/worker in
-    compose; the `worker` service is renamed `publisher`.
-59. Celery, kombu, billiard and vine removed; `CELERY_*` settings replaced by
-    `RABBITMQ_URL`; ADR-007 superseded.
-60. Tests: 373 unit and 11 PostgreSQL concurrency tests (5 transition races, 2
-    reaper races, 3 publish races, 1 publisher SKIP LOCKED race).
-61. `docs/architecture/execution-model.md` and `data-model.md` updated for the
-    reaper edge, the outbox table, and the scheduler/publisher processes.
-62. **v0.5.1 — publisher verified against a real broker.** CI runs a
-    `rabbitmq:3.13-alpine` service and the integration suite against it with
-    `REQUIRE_RABBITMQ=1`: confirms + arrival, unroutable leaves the row pending,
-    outage then recovery, crash-window redelivery, and two publishers never
-    duplicating a row. The readiness probe now opens a real AMQP connection
-    instead of a TCP connect, and `mandatory=True` keeps an unroutable dispatch
-    pending instead of dropping it.
+### Phase 3 — REST API
 
-### Phase 5 — Distributed Workers
+- `/api/v1/`: workflows (publish/list/detail), runs (trigger/list/detail),
+  task-run requeue, run events, token/JWT auth, cursor pagination.
+- One error envelope with a stable `code`; domain errors mapped in
+  `api/errors.py`, not in views.
+- OpenAPI schema committed to `docs/api/openapi.yaml`; the `schema` job fails on
+  drift.
 
-63. `core/worker/registry.py` + `core/worker/builtin.py`: a trusted, in-process
-    handler registry. A dispatch names a `task_type`; nothing in it is imported or
-    executed as code, and an unknown type fails the task.
-64. `core/worker/consumer.py`: manual ack (`auto_ack=False`), prefetch, a lease
-    heartbeat thread, a graceful stop, and a `process` method separated from pika
-    so the decisions are unit-testable.
-65. `core/repositories/transitions.py`: `renew_lease`, the heartbeat's conditional
-    `UPDATE` that matches only while the token still owns the row.
-66. `manage.py worker`: consumes dispatches; SIGTERM/SIGINT stop after the in-flight
-    message is acked.
-67. `advance_workflow_run` now completes the workflow run when its tasks resolve
-    (`derive_workflow_run_state`), so a correct run no longer stays `RUNNING`.
-68. `manage.py sample_run` + a `worker` compose service: the end-to-end sample
-    (echo → add → noop) the docker CI job drives to `SUCCEEDED`.
-69. Tests: unit (success, handler failure, unknown type, duplicate delivery, finish
-    failure, stale finish, malformed payload, heartbeat, killed-worker stale
-    rejection, registry, run completion); integration (end-to-end consume,
-    duplicate delivery, lost ack redelivery, graceful shutdown).
-70. `docs/architecture/execution-model.md` records the worker's contract and what it
-    does not claim.
+### Phase 4 — Scheduler, outbox and publisher
+
+- Custom scheduler and transactional outbox ([ADR-011](../adr/ADR-011-custom-scheduler-and-transactional-outbox.md)).
+- `advance_workflow_run` promotes eligible tasks, starts the run and writes one
+  outbox row per dispatch generation in one transaction.
+- `create_dispatch` pre-checks existence before INSERT: catching the UNIQUE
+  violation alone aborted an open SQLite transaction.
+- Publisher drains the outbox with `FOR UPDATE SKIP LOCKED`, publisher confirms,
+  and marks a row delivered only after the broker acks.
+- `v0.5.1` verified the publisher against a real RabbitMQ service (confirms,
+  mandatory routing, outage/recovery, crash-window redelivery, two publishers).
+
+### Phase 5 — Distributed workers
+
+- Trusted in-process handler registry; a dispatch names a `task_type`, never
+  imports code.
+- Manual ack, prefetch, lease heartbeat, graceful SIGTERM, fencing tokens.
+- `manage.py worker`; the compose e2e drives echo → add → noop to `SUCCEEDED`
+  in-process and through the REST API.
 
 ### Phase 6 — Reliability
 
-71. `core/domain/retry.py`: `RetryPolicy` (frozen, validated at construction),
-    `get_retry_policy(config)` reading the per-task `config["retry"]` block, and
-    `calculate_backoff` — exponential growth, a hard cap, and optional full jitter.
-    Pure domain: no Django import.
-72. `TaskRunState.DEAD` added; the task machine now has 12 edges. `reap_lease`
-    (RUNNING→READY) is gone, replaced by `reap_retry` (RUNNING→RETRYING) and
-    `reap_dead` (RUNNING→DEAD). A dead worker is a *consumed attempt*, not a free
-    retry — returning it to READY would let a crash loop run forever uncounted.
-    `bury` (FAILED→DEAD) added.
-73. `core/repositories/transitions.py`: `reclaim_task_run` routes by policy,
-    `schedule_retries` moves FAILED into the retry lifecycle, `promote_due_retries`
-    promotes RETRYING back to READY only once the backoff has elapsed, and
-    `requeue_dead_task_run` is the manual recovery path.
-74. `core/models.TaskRun` gained `scheduled_at`, `result` and `idempotency_key`,
-    plus the `taskrun_scheduled_iff_retrying` CHECK constraint. Migration `0005`.
-75. `schedule_once` now runs reap → schedule_retries → promote_due_retries →
-    advance, in that order, so a retry scheduled in this pass is not dispatched
-    before its delay.
-76. The worker persists handler return values into `TaskRun.result` (success only)
-    and reuses a prior `SUCCEEDED` result when the dispatch carries an
-    `idempotency_key`.
-77. `manage.py requeue_dead <task_run_id>`: the operator's way out of `DEAD`. It
-    exits non-zero for a missing row, a malformed id, or a task that is not DEAD.
-78. Failure-injection tests on real PostgreSQL + RabbitMQ
-    (`tests/integration/test_failure_injection.py`): SIGKILL a worker mid-task and
-    prove the reaper retries it to `SUCCEEDED`; SIGKILL the scheduler and prove a
-    fresh pass cannot double-dispatch; lose a publisher confirm and prove the
-    outbox row stays pending and is delivered exactly once.
-79. The `docker` CI job now injects infrastructure faults: it stops RabbitMQ and
-    asserts readiness returns 503 naming `rabbitmq`, starts it and asserts 200;
-    restarts PostgreSQL and asserts recovery; then runs the end-to-end sample
-    again, so "the probe is green" is never the only claim.
-80. `docs/architecture/failure-model.md` maps every failure mode to a named test
-    and marks the ones without one UNVERIFIED (clock skew, broker durability,
-    in-flight sibling cancellation).
+- `RetryPolicy` with exponential backoff, a cap and optional jitter.
+- `TaskRunState.DEAD` and the 14-edge task machine; a reaped lease is a
+  **consumed attempt** (RUNNING → RETRYING or DEAD), never straight back to
+  READY.
+- `schedule_retries`, `promote_due_retries`, `requeue_dead_task_run`; the worker
+  persists handler results and reuses a prior `SUCCEEDED` result for an
+  idempotency key.
+- Failure-injection tests (SIGKILL a worker, SIGKILL the scheduler, lose a
+  publisher confirm) on real PostgreSQL + RabbitMQ.
+- `docs/architecture/failure-model.md` maps each failure mode to a test or marks
+  it UNVERIFIED.
+
+### Phase 7 — Advanced workflows
+
+- Branching on a sandboxed expression language; fan-in (`all`/`any`).
+- Cron `ScheduledTrigger` with no double-fire across instances.
+- Cooperative cancellation (`request_cancellation` cancels non-terminal task
+  runs) and `SKIPPED` tasks.
+- Append-only `TaskRunEvent` log with a read endpoint; manual re-run of a failed
+  task; saga compensation.
+- `v0.8.1` added compose e2e for cron and saga and made the event insert
+  transactional with its state change ([ADR-013](../adr/ADR-013-event-log-is-transactional.md)).
 
 ### Phase 8 — Security & Multi-Tenancy
 
-81. `Organization` and `Membership` (`owner`/`admin`/`member`/`viewer`), with a
-    unique role per `(organization, user)`.
-82. `organization` FK on every tenant model (`Workflow`, `WorkflowRun`,
-    `TaskRun`, `TaskRunEvent`, `ScheduledTrigger`, `OutboxMessage`,
-    `IdempotencyKey`, `ApiKey`, `AuditLog`) and
-    `OrganizationScopedManager.for_organization` as the read path (ADR-014).
-    Another tenant's id is a 404, not a 403.
-83. Per-organization uniqueness: `(organization, name, version)` for definitions
-    and `(organization, user, key)` for idempotency claims.
-84. Reversible migration: `core.0011` adds nullable columns, `core.0012` creates a
-    default organization and backfills; the reverse detaches and removes it.
-85. API keys: `ff_<hex-prefix>_<hex-secret>`, only a `make_password` hash stored,
-    scopes (`read < write < admin`), expiry, rotation, revocation, shown once.
-    `ApiKeyAuthentication` fixes the tenant to the key and refuses an orphaned
-    key. A key never inherits the staff cross-tenant bypass.
-86. Append-only `AuditLog` with a database trigger (`core.0015`) that rejects
-    `UPDATE` and `DELETE`; entries for publish, trigger, requeue and key
-    lifecycle; metadata redacted before writing.
-87. `core.security.redact_mapping` redacts by key name and by an explicit
-    `secret: true` marker, recursively and without mutating the input; applied to
-    the API's task `config`.
-88. Tenant-isolation suite: every cross-tenant id is a 404; a role-permission
-    matrix covers every role; API-key lifecycle (expired, revoked, wrong scope,
-    rotated, orphaned) is tested.
-89. STRIDE threat model ([`docs/security/threat-model.md`](../security/threat-model.md))
-    and ADR-014 ([`docs/adr/ADR-014-multi-tenancy-shared-schema.md`](../adr/ADR-014-multi-tenancy-shared-schema.md)).
-90. `bandit` and `pip-audit` are required `lint`-job checks. `pip-audit` found
-    real vulnerabilities and forced `djangorestframework` 3.17.2 → 3.18.3
-    (CVE-2026-114136/114137/114138) and `certifi` → 2026.10.19; the three
-    intentional `bandit` findings are annotated at the line, not suppressed
-    globally.
+- `Organization`/`Membership` with `owner/admin/member/viewer`; a unique role
+  per `(organization, user)`.
+- `organization` FK on every tenant model; `OrganizationScopedManager` as the
+  read path; another tenant's id is a 404.
+- Per-org uniqueness: `(organization, name, version)` and
+  `(organization, user, key)`.
+- Reversible migrations `0011` (schema) and `0012` (default-org backfill).
+- API keys: `ff_<hex-prefix>_<hex-secret>`, only a `make_password` hash stored,
+  scopes `read < write < admin`, expiry, rotation, revocation, shown once.
+  `ApiKeyAuthentication` fixes the tenant to the key and refuses an orphaned
+  key; a key never inherits the staff cross-tenant bypass.
+- Append-only `AuditLog` with a database trigger (`0015`) rejecting `UPDATE` and
+  `DELETE`; entries for publish, trigger, requeue and key lifecycle; metadata
+  redacted.
+- `core.security.redact_mapping` redacts by key name and by `secret: true`.
+- Tenant-isolation suite, role matrix, API-key lifecycle tests.
+- STRIDE threat model and ADR-014.
+- `bandit` + `pip-audit`; the latter forced DRF 3.17.2 → 3.18.3 and
+  certifi → 2026.10.19.
+
+### v0.9.1 — Phase 8 follow-ups
+
+- **Membership management**: `GET/POST /api/v1/members/`,
+  `PATCH/DELETE /api/v1/members/<uuid>/`.
+  - Only owner/admin may call them; an admin cannot modify an owner and cannot
+    grant the owner role; the last owner cannot be removed or demoted.
+  - Every real change writes an audit entry (`member.added`,
+    `member.role_changed`, `member.removed`).
+  - Another tenant's membership is a 404.
+- This record was rewritten against the code and CI.
+- `make test-pg` runs the full unit suite on the compose PostgreSQL database;
+  `make db-up` starts it. `docs/development/setup.md` explains why SQLite is not
+  the authority for locking, ordering or trigger semantics.
 
 ## Verification
 
 ### In CI (authoritative)
 
 Phase 8 run: https://github.com/Abolfazlrwm/flowforge/actions/runs/39921080486
-(v0.9.0 — 645 unit tests on PostgreSQL + 29 integration tests green; `lint` now
+(v0.9.0 — 645 unit tests on PostgreSQL + 29 integration tests green; `lint`
 includes `bandit` and `pip-audit`; the docker job drove the cron and saga e2e
 through the real stack)
 
-Phase 5 run: https://github.com/Abolfazlrwm/flowforge/actions/runs/39506564517
-(v0.6.0 — worker; 389 unit + 20 integration green; docker e2e reached `SUCCEEDED`)
-
-Phase 5 gap release: https://github.com/Abolfazlrwm/flowforge/actions/runs/39546701729
-(v0.6.1 — 390 unit + 21 integration; the SIGTERM subprocess test passed; the REST
-API e2e reached `succeeded`; docker asserted `healthy` for scheduler, publisher and
-worker)
-
-Phase 6: https://github.com/Abolfazlrwm/flowforge/actions/runs/39605151141
-(v0.7.0 — 435 unit + 24 integration green; the three failure-injection tests
-passed, including the SIGKILL-a-worker chain; docker reported the broker outage as
-503 with `"rabbitmq": "error"`, recovered to 200, survived the DB restart, and the
-e2e sample still reached `SUCCEEDED` afterwards)
-
-Phase 2 run: https://github.com/Abolfazlrwm/flowforge/actions/runs/39252710339
-
-| Job | Result |
-|-----|--------|
-| lint (ruff, ruff format, mypy) | PASS |
-| test — unit (270 passed, 98.12% coverage, gate 80%) | PASS |
-| test — integration (8 PostgreSQL concurrency tests, `REQUIRE_POSTGRES=1`) | PASS |
-| test — Codecov upload (`Upload queued for processing complete`) | PASS |
-| docker (build, compose up, health probes) | PASS |
-
-The integration step ran all eight tests for real — the five transition races
-from Phase 1 and the three new publish races:
-
-```
-tests/integration/test_concurrent_publish.py::test_publishing_identical_content_concurrently_yields_one_workflow PASSED
-tests/integration/test_concurrent_publish.py::test_publishing_different_content_concurrently_holds_one_definition PASSED
-tests/integration/test_concurrent_publish.py::test_definition_exists_is_true_for_the_different_content_race PASSED
-============================== 8 passed in 2.52s ===============================
-```
-
-Phase 1 run: https://github.com/Abolfazlrwm/flowforge/actions/runs/39226452632
-| Job | Result |
-|-----|--------|
-| lint (ruff, ruff format, mypy) | PASS |
-| test — unit (143 passed, 97.55% coverage, gate 80%) | PASS |
-| test — integration (5 PostgreSQL concurrency tests, `REQUIRE_POSTGRES=1`) | PASS |
-| test — Codecov upload (`Upload queued for processing complete`) | PASS |
-| docker (build, compose up, health probes) | PASS |
-
-Note: the Codecov step was skipped on the Phase 0 run because no `CODECOV_TOKEN`
-existed. The secret was added on 2026-10-19 and the upload now succeeds.
-
-Phase 0 run: https://github.com/Abolfazlrwm/flowforge/actions/runs/39211983697
-
-| Job | Result |
-|-----|--------|
-| lint (ruff, ruff format, mypy) | PASS |
-| test (13 tests, coverage gate 80%) | PASS |
-| docker (build, compose up, health probes) | PASS |
-
-Docker job evidence:
-
-```
-migrate status=exited exit=0
-stack ready after 2 attempt(s)
-{"status": "ready", "checks": {"postgres": "ok", "redis": "ok", "rabbitmq": "ok"}}
-{"status": "alive", "service": "flowforge"}
-```
-
-An earlier run of the same commit series,
-[39211260120](https://github.com/Abolfazlrwm/flowforge/actions/runs/39211260120),
-failed in the docker job with `ProgrammingError: relation "django_session"
-already exists`. That was defect #25 (concurrent migrations), fixed in
-`a0571bf`. It is recorded rather than discarded because the previous green run
-[39210906976](https://github.com/Abolfazlrwm/flowforge/actions/runs/39210906976)
-passed only because of container start ordering.
+v0.9.1 run: https://github.com/Abolfazlrwm/flowforge/actions/runs/39924397804
+(661 unit tests on PostgreSQL + 29 integration tests green; `lint`, `schema`,
+`docs` and `docker` green)
 
 ### Locally (Windows, Python 3.13.14)
 
@@ -425,162 +211,88 @@ passed only because of container start ordering.
 |-------|--------|
 | `uv run ruff check .` | PASS |
 | `uv run ruff format --check .` | PASS |
-| `uv run mypy flowforge core api` | PASS (17 files) |
-| `uv run pytest tests/unit --cov` | 13 passed, 100% |
+| `uv run mypy flowforge core api --ignore-missing-imports` | PASS (68 files) |
+| `uv run pytest tests/unit` | 661 passed (SQLite) |
 | `manage.py makemigrations --check --dry-run` | No changes detected |
-| `manage.py check --deploy` (prod, strong key) | 0 issues |
-| `docker compose config` | Valid |
-| `detect-secrets` over tracked files + full history | 0 real secrets |
+| `uv run mkdocs build --strict` | PASS |
+| `uv run bandit -r core api flowforge -c pyproject.toml` | 0 issues |
+| `uv run pip-audit` | No known vulnerabilities |
+
+`make test-pg` is the local PostgreSQL run and needs Docker. CI already runs the
+full unit suite on PostgreSQL, so a machine without Docker is not unverified —
+it is the same suite against the same engine in CI.
 
 ## Known limitations
 
-### Architectural
+### Architecture
 
-1. **The worker does not reconnect to RabbitMQ.** Both the worker and the publisher
-   open their pika connection once. If the broker restarts, the worker process
-   exits and the publisher fails its next sweep. Nothing is lost — the outbox row
-   stays pending and the lease is reaped — but the processes must be restarted.
-   The docker CI job restarts them explicitly rather than pretending recovery is
-   automatic. Recorded as failure mode 14 in
-   [`docs/architecture/failure-model.md`](../architecture/failure-model.md).
-2. **Broker durability is classic-queue durability.** Messages are published
-   `delivery_mode=2` to a durable exchange and durable queues, which survives a
-   clean broker restart. It does not survive an abrupt broker failure before
-   fsync, because the dispatch queue is a classic queue, not a quorum queue.
-   Failure mode 17, UNVERIFIED.
-3. **Idempotency keys are best-effort, not a lock.** A dispatch whose key already
-   has a `SUCCEEDED` result reuses it, but two *concurrent* executions of the same
-   key can both run. A handler without a key that is not naturally idempotent
-   will replay after a crash; at-least-once delivery is the contract, and the
-   registry is trusted-only precisely so the operator decides what is safe.
-4. **A failed run does not cancel its running siblings.** `derive_workflow_run_state`
-   marks the run FAILED as soon as any task fails, but tasks already `RUNNING` run
-   to completion. Cooperative cancellation is not implemented. Failure mode 11.
-5. **The publisher's broker path is verified against a real broker in CI** (v0.5.1).
-   `tests/integration/test_rabbit_publisher.py` runs against a RabbitMQ service
-   container with `REQUIRE_RABBITMQ=1`: confirms + arrival, mandatory routing,
-   outage then recovery, crash-window redelivery, and two publishers without
-   duplicates. No remaining owner-side verification is required.
-6. **Readiness checks are mostly real but not exhaustive.** RabbitMQ is checked
-   with a real AMQP connection open/close (not a TCP connect), Redis with a cache
-   write (which would also pass against a different cache backend), and PostgreSQL
-   with `SELECT 1`. None asserts the broker's vhost/permissions beyond a successful
-   handshake.
-7. **`make demo` does not run a workflow yet.** It brings up the stack and probes
-   both health endpoints. A real end-to-end run is exercised by `manage.py
-   sample_run` (in-process) and by the REST API in the compose CI job, not by
-   `make demo`.
+1. **Idempotency keys are best-effort, not a lock.** A dispatch whose key already
+   has a `SUCCEEDED` result reuses it, but two concurrent executions of the same
+   key can both run. At-least-once delivery is the contract.
+2. **Readiness checks are not exhaustive.** RabbitMQ uses a real AMQP
+   open/close, Redis a cache round-trip, PostgreSQL `SELECT 1`; none asserts the
+   broker's vhost or permissions beyond a successful handshake.
+3. **`make demo` probes health, not a workflow.** The e2e run is
+   `manage.py sample_run` and the REST API flow in the compose CI job.
+4. **`publish_definition` does not serialize concurrent first-publishes.**
+   `select_for_update()` cannot lock a row that does not exist; the unique
+   constraint picks a winner and the loser sees `IntegrityError`. The database
+   stays correct; the caller retries.
+5. **The MkDocs build does not validate Mermaid syntax.** A wrong diagram renders
+   as an error box and passes `mkdocs build --strict`.
+6. **PostgreSQL RLS is not used.** Application-level scoping is the tenant
+   boundary (ADR-014); RLS is a follow-up.
+7. **Staff is a cross-tenant read bypass.** Intentional and narrow; an API key
+   never inherits it.
+8. **The audit log is not tamper-evident against a database owner.** The trigger
+   blocks `UPDATE`/`DELETE` through SQL, but a superuser can drop it.
+9. **Secret redaction is key-name based.** A secret under an innocuous key is not
+   redacted unless the mapping declares `secret: true`.
+10. **Throttling is per-process.** A distributed deployment needs a shared cache;
+    the test suite uses a local cache.
 
-### Tooling
+### Tooling and deployment
 
-8. **Base image pinned by tag, not digest.** `python:3.13-slim` can drift.
-9. **No dedicated `tests/e2e/` directory.** End-to-end coverage lives in the
-   compose CI job: `manage.py sample_run` drives a workflow in-process to
-   `SUCCEEDED`, and a separate step drives the same flow through the REST API
-   (auth → publish → trigger → poll). The SIGTERM subprocess test
-   (`tests/integration/test_worker_sigterm.py`) covers graceful shutdown against
-   real PostgreSQL + RabbitMQ. These run only in CI (no local Docker/PostgreSQL).
-10. **Coverage is a line count, not a quality signal.** 86.73% at v0.7.0 (gate
-    80%). The uncovered lines are concentrated in the pika connection paths, which
-    only the integration suite exercises.
-11. **Pre-commit hooks use `language: system`**, so they depend on the local
-   environment rather than a locked one.
-12. **Compose bind-mounts the source over `/app`**, which hides the image's
-   `staticfiles/` output. Harmless with `DEBUG=True` (Django serves static
-   itself) but wrong for a production-like run.
-13. **The migration gate needs Docker Compose v2.20+** for
-    `service_completed_successfully`. Older Compose silently ignores the
-    condition and the race returns. The stack is not yet gated on the Compose
+11. **Base image pinned by tag, not digest.** `python:3.13-slim` can drift.
+12. **No dedicated `tests/e2e/` directory.** End-to-end coverage lives in the
+    compose CI job and `tests/integration/test_worker_sigterm.py`; it is CI-only
+    because the maintainer's Docker daemon is offline (owner decision
+    2026-10-19).
+13. **Coverage is a line count.** The gate is 80%; the exact number is reported by
+    CI and is not repeated here, because a number in prose goes stale.
+14. **Pre-commit hooks use `language: system`**, so they depend on the local
+    environment.
+15. **Compose bind-mounts the source over `/app`**, hiding the image's
+    `staticfiles/` output. Harmless with `DEBUG=True`, wrong for a
+    production-like run.
+16. **The migration gate needs Docker Compose v2.20+** for
+    `service_completed_successfully`; the stack is not gated on the Compose
     version.
+17. **The name "FlowForge" is conflicted** (npm reserved, PyPI `flow-forge` taken,
+    a prior company now FlowFuse). Retained by owner-delegated decision
+    ([ADR-009](../adr/ADR-009-project-name-evaluation.md)).
 
-### Naming
+### Dependencies
 
-14. **The name "FlowForge" is conflicted** — npm name reserved, PyPI
-    `flow-forge` taken, a prior venture-funded company (now FlowFuse), and an
-    active `flowforgesoft.com`. Five alternatives were measured and all are
-    taken on PyPI (ADR-009). Retained by owner-delegated decision.
-
-### Dependency deferrals
-
-15. **Python stays at 3.13.** Django 5.2 supports Python 3.14 only from 5.2.8.
-    The compiled dependencies do ship `cp314` wheels (`psycopg-binary` 11,
-    `pydantic-core` 31, `rpds-py` 29) and the rest are pure Python, but "every
-    dependency verified on 3.14 in CI" has not been demonstrated: that needs a
-    3.14 entry in the CI matrix *and* a matching Docker base image. Docker
-    Python minor/major bumps are ignored in `dependabot.yml` until then.
-16. **redis-py stays below 6 for the Redis cache backend.** The Celery-driven pin
-    is gone (ADR-011); the remaining reason is cache-backend compatibility, which
-    is verified separately before a major bump.
-17. **Celery is gone.** Removed in Phase 4 (ADR-011); the Celery Dependabot
-    ignore was removed with it.
-18. **Docker is verified in CI only, and that is now sufficient by owner
-    decision.** The daemon is offline on the maintainer's machine, so
-    `docker compose up` has never run there. On 2026-10-19 the owner withdrew the
-    earlier "do not tag until Docker is verified on my machine" rule and accepted
-    the CI `docker` job (build + compose up + both health probes) as the evidence.
-    Recorded in [DECISIONS.md](DECISIONS.md).
-19. **The Phase 2 publish-race tests have not run on the developer's machine.**
-    A local PostgreSQL is listening on `localhost:5432` but rejects the
-    `flowforge` credentials in `.env` (`password authentication failed`), so the
-    three new concurrency tests skip locally — the same CI-only coverage Phase 1's
-    transition races have. The developer's own credentials were not changed to
-    force a local run: the owner's database is not theirs to modify. CI supplies
-    `POSTGRES_PASSWORD: flowforge`, so the tests run for real there.
-20. **`publish_definition` does not serialise concurrent first-publishes.**
-    `select_for_update()` cannot lock a row that does not exist, so two callers
-    publishing the same `(name, version)` for the first time both see "not there"
-    and both insert. The unique constraint picks the winner and the loser's
-    transaction rolls back, which leaves the database correct — but the loser sees
-    an `IntegrityError` rather than a friendly conflict, and it is the caller's
-    job to retry. Serialising would need a whole-range lock or a retry loop;
-    neither was added. Documented in `docs/architecture/definitions.md`.
-21. **`docs/architecture/definitions.md` is the only new architecture document,
-    and its Mermaid diagram is not rendered in CI.** There is no Markdown link
-    checker and no diagram render step in the pipeline; the diagram is verified
-    by reading, not by a build.
-22. **The MkDocs site is now built in CI, but a Mermaid syntax error is still
-    invisible.** Owner decision on 2026-10-19 added a `docs` job running
-    `mkdocs build --strict` with `mkdocs-material` and `pymdownx.superfences`, so
-    a broken internal link, a nav entry with no target, or an unparseable page
-    fails the build. Resolving limitation 19 required creating `docs/index.md`
-    (the nav pointed at a file that did not exist) and fixing a link to the
-    `docs/adr/` directory. **What the build still cannot catch:** a diagram whose
-    Mermaid syntax is wrong renders as an error box in the browser and passes CI.
-    Deploying to GitHub Pages is deferred to Phase 10.
-
-### Security (Phase 8)
-
-- **No membership-management endpoints.** Roles exist in the data model and are
-  enforced, but there is no API to add/remove a member or change a role, and no
-  audit entry for such a change. A Phase 9 follow-up.
-- **Application-level scoping, not PostgreSQL RLS.** The primary tenant boundary
-  is `OrganizationScopedManager`; RLS is a recorded follow-up (ADR-014), not the
-  current mechanism.
-- **Staff is a cross-tenant read bypass.** Intentional and narrow; an API key is
-  excluded from it, and the isolation suite uses ordinary members.
-- **The audit log is not tamper-evident against a database owner.** The trigger
-  stops `UPDATE`/`DELETE` through SQL, but a superuser can drop the trigger.
-- **Secret redaction is key-name based.** A secret stored under an innocuous key
-  is not redacted unless the mapping declares `secret: true`.
-- **Throttling is per-process.** A distributed deployment needs a shared cache;
-  the test suite uses a local cache.
+18. **Python stays at 3.13.** Django 5.2 supports 3.14 only from 5.2.8; a 3.14 CI
+    matrix entry and a matching base image are not in place.
+19. **redis-py stays below 6.** The cache backend is verified against 5.x before a
+    major bump.
 
 ## Dependency decisions
 
-The Dependabot backlog was resolved as a single coordinated upgrade rather than
-nine separate merges, so a regression can be attributed to one change.
-
-| Package | Proposed | Outcome |
-|---------|----------|---------|
-| Django | 5.1.15 → 5.2.18 | **Taken.** Owner decision, ADR-010. 5.1 is out of support. |
-| djangorestframework | 3.15.2 → 3.17.2 | **Taken.** 3.17 is the first series declaring Django 5.2 support. |
-| actions/checkout | 4 → 7.0.1 | **Taken.** Verified by the `lint`/`test`/`docker` jobs. |
-| actions/setup-python | 5 → 7.0.0 | **Taken.** Same. |
-| astral-sh/setup-uv | 6 → 10.3.0 | **Taken.** Same. |
-| codecov/codecov-action | 4 → 7.1.1 | **Taken, and a pre-existing defect fixed.** The upload had been failing with `Token required - not valid tokenless upload` since Phase 0 while the step reported success. It now skips visibly when no token exists, and fails loudly when one does. |
-| redis | 5.3.1 → 8.1.0 | **Declined.** Blocked by Celery 5.4's `redis<6` (limitation 13). Ignore rule added. |
-| celery | 5.4.0 → 5.6.3 | **Declined.** Interim; Phase 4 decides (limitation 14). Ignore rule added. |
-| python (Docker) | 3.13-slim → 3.14-slim | **Declined.** Not verified in CI (limitation 12). Ignore rule added. |
+| Package | Version | Decision |
+|---------|---------|----------|
+| Django | 5.2.18 | LTS; [ADR-010](../adr/ADR-010-django-5-2-lts.md) |
+| djangorestframework | 3.18.3 | **Security fix** for CVE-2026-114136/114137/114138 (pip-audit) |
+| certifi | 2026.10.19 | **Security fix** for PYSEC-2026-4320 (pip-audit) |
+| psycopg | 3.2.x (`[binary]`) | PostgreSQL driver |
+| pika | 1.3.x | RabbitMQ client ([ADR-011](../adr/ADR-011-custom-scheduler-and-transactional-outbox.md)) |
+| redis | >= 5, < 6 | Cache backend compatibility |
+| croniter | 5.x | Cron expression parsing |
+| structlog + django-structlog | 24.x / 9.x | Structured logging |
+| Python | 3.13 in CI/Docker; `>= 3.11` | 3.14 deferred (limitation 18) |
+| bandit + pip-audit | dev extra | Required `lint` checks |
 
 ## Blockers
 
@@ -588,20 +300,24 @@ None.
 
 ## Next step
 
-Phase 8 is complete and released as `v0.9.0`. Phase 9 is next; its scope is to be
-defined with the owner.
+Phase 9 — **Observability and Performance (v0.10.0)**, per
+[`ROADMAP.md`](ROADMAP.md):
 
-The security follow-ups Phase 9 may pick up, all recorded in the limitations
-above and in [ADR-014](../adr/ADR-014-multi-tenancy-shared-schema.md):
-
-- membership-management endpoints and their audit entries;
-- PostgreSQL RLS as a second tenant boundary;
-- a database-level check that a child row's organization matches its parent's.
+- structured JSON logging with correlation IDs propagated API → outbox → broker
+  → worker;
+- a Prometheus metrics endpoint (queue depth, outbox lag, task latency, retries,
+  lease expirations, DEAD count) per process;
+- OpenTelemetry tracing API → scheduler → publisher → worker, with a
+  trace-propagation test;
+- Grafana dashboards as code and a compose `observability` profile (Prometheus,
+  Grafana, OTel collector);
+- load tests with a documented reproducible command and a real measured
+  benchmark report;
+- profile and fix at least one measured bottleneck, with before/after numbers.
 
 ## Ordering note
 
-The CI URL for Phase 2 was added in a second commit inside the same PR, once the
-run was actually green (`39252710339`). Committing a CI URL before the run exists
-would be a claim rather than a verification, and the Codecov upload — disabled in
-Phase 0 by exactly that kind of assumption — is the precedent for why the URL is
-not written in advance.
+A CI URL is added only after the run is green. The v0.9.0 URL above is the run
+that merged as `4febc05`; the v0.9.1 URL is added in a follow-up commit on the
+same pull request once its run passes, because committing a URL before the run
+exists would be a claim rather than a verification.

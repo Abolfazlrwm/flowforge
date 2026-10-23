@@ -7,6 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.1] - 2026-10-23
+
+Phase 8 follow-ups.
+
+### Added
+
+- **Membership management API.** `GET/POST /api/v1/members/` and
+  `PATCH/DELETE /api/v1/members/<uuid>/`. Only owner/admin may call them; an
+  admin cannot modify an owner or grant the owner role; the last owner cannot be
+  removed or demoted (owner rows are locked while the count is taken). Every
+  real change writes an audit entry (`member.added`, `member.role_changed`,
+  `member.removed`) in the same transaction; a no-op role change writes nothing.
+  Another tenant's membership is a 404.
+- **`make test-pg`** runs the full unit suite against the compose PostgreSQL
+  with `REQUIRE_POSTGRES=1`; `make db-up` starts the database alone.
+
+### Changed
+
+- `docs/development/PROGRESS.md` rewritten against the code and CI: current
+  branches and tags, state-machine edge counts, dependency versions, and only
+  the limitations that still apply (the worker reconnect, classic queue, sibling
+  cancellation and Celery entries were resolved and removed).
+- `docs/development/setup.md` documents the PostgreSQL test run and why SQLite
+  is not the authority for locking, ordering or trigger semantics.
+
 ## [0.9.0] - 2026-10-23
 
 Phase 8 — Security & Multi-Tenancy.
