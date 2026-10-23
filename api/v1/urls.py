@@ -17,6 +17,8 @@ from api.views import (
     ApiKeyListCreateView,
     ApiKeyRevokeView,
     ApiKeyRotateView,
+    MemberDetailView,
+    MemberListCreateView,
     MeView,
     RunDetailView,
     RunEventsView,
@@ -65,6 +67,11 @@ urlpatterns: list[URLPattern] = [
         ApiKeyRevokeView.as_view(),
         name="api-key-revoke",
     ),
+    # --- members ------------------------------------------------------------
+    # Listing exposes usernames and e-mails, so it needs the admin role. Only an
+    # owner may grant or modify the owner role; the last owner is permanent.
+    path("members/", MemberListCreateView.as_view(), name="member-list"),
+    path("members/<uuid:pk>/", MemberDetailView.as_view(), name="member-detail"),
     # --- schema -------------------------------------------------------------
     # The schema is committed to `docs/api/openapi.yaml` and CI fails if it has
     # drifted. Serving it here is for humans reading the docs site.
