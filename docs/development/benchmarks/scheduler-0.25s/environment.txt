@@ -1,0 +1,10 @@
+runner: Linux 6.17.0-1022-azure x86_64
+cpus: 4
+model name	: AMD EPYC 9V74 80-Core Processor
+               total        used        free      shared  buff/cache   available
+Mem:            15Gi       1.4Gi        11Gi        47Mi       3.1Gi        14Gi
+locust: locust 2.47.0 from /home/runner/work/flowforge/flowforge/.venv/lib/python3.13/site-packages/locust (Python 3.13.16)
+python: Python 3.13.16
+uv: uv 0.12.5 (x86_64-unknown-linux-gnu)
+docker: Docker version 28.0.4, build b8034c0
+commit: 39fc3f5550ef15e7310643cbeb72f607f67be852
