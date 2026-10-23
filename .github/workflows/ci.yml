@@ -398,6 +398,37 @@ jobs:
       - name: End-to-end saga compensation
         run: docker compose exec -T web python manage.py saga_e2e --timeout 120
 
+      # --- End-to-end suite (tests/e2e) ---------------------------------------
+      # The full user journey as a pytest suite: the REST API, the Python SDK and
+      # the CLI, each driving a publish -> trigger -> complete cycle against the
+      # live compose stack the steps above brought up. It runs here, in the same
+      # healthy state and before any failure is injected, so a green run means a
+      # real user's script works against a real deployment.
+      - name: Mint an API token for the end-to-end suite
+        id: e2e_token
+        run: |
+          set -euo pipefail
+          docker compose exec -T web python manage.py e2e_token
+          TOKEN="$(docker compose exec -T web cat /tmp/e2e_token | tr -d '\r\n')"
+          test -n "$TOKEN"
+          echo "token=$TOKEN" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Python for the end-to-end suite
+        uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884  # v10.3.0
+        with:
+          version: ${{ env.UV_VERSION }}
+          enable-cache: true
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
+        with:
+          python-version: "3.13"
+      - name: Install dependencies from the lock file
+        run: uv sync --locked --extra dev
+      - name: Run the end-to-end suite against the live stack
+        env:
+          FLOWFORGE_E2E_BASE_URL: http://localhost:8000
+          FLOWFORGE_E2E_TOKEN: ${{ steps.e2e_token.outputs.token }}
+        run: uv run pytest tests/e2e -v
+
       # --- Failure injection -------------------------------------------------
       # The pytest suite kills worker and scheduler *processes* (see
       # tests/integration/test_failure_injection.py). Container- and
