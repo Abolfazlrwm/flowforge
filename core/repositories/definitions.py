@@ -21,7 +21,7 @@ from django.db import transaction
 
 from core.domain.definition import TaskDefinition, WorkflowDefinition
 from core.domain.errors import DefinitionError
-from core.models import Task, Workflow
+from core.models import Organization, Task, Workflow
 
 __all__ = [
     "DefinitionConflictError",
@@ -49,8 +49,18 @@ class DefinitionConflictError(Exception):
         )
 
 
-def publish_definition(definition: WorkflowDefinition) -> tuple[Workflow, bool]:
+def publish_definition(
+    definition: WorkflowDefinition, *, organization: Organization | None = None
+) -> tuple[Workflow, bool]:
     """Create the rows for `definition`, returning the `Workflow` row.
+
+    Args:
+        definition: The validated definition to persist.
+        organization: The tenant that owns this definition. ``(name, version)``
+            is unique *per organization*, so two tenants may each publish their
+            own ``etl v1`` without colliding. ``None`` is accepted only for the
+            pre-tenancy unit tests and the backfill path; every API caller passes
+            the active organization.
 
     Returns:
         The workflow, and whether this call created it. `False` means an
@@ -58,15 +68,16 @@ def publish_definition(definition: WorkflowDefinition) -> tuple[Workflow, bool]:
         the caller needs to know, because "created" is a 201 and "already there"
         is a 200, and guessing from a pre-check would be a race.
 
-    Idempotent: an existing `(name, version)` with the same fingerprint returns
-    the existing row without creating anything.
+    Idempotent: an existing `(organization, name, version)` with the same
+    fingerprint returns the existing row without creating anything.
 
     Raises:
-        DefinitionConflictError: if `(name, version)` exists with different content.
+        DefinitionConflictError: if `(organization, name, version)` exists with
+            different content.
         DefinitionError: if the definition's dependency graph is invalid. Checked
             first, so no rows are written for a definition that cannot run.
-        IntegrityError: if two callers race on the same `(name, version)`; the
-            unique constraint decides the winner, exactly as in Phase 1.
+        IntegrityError: if two callers race on the same `(organization, name,
+            version)`; the unique constraint decides the winner.
     """
     # Force the cached graph even though the caller may not have touched it, so
     # validation happens before any row is written rather than during scheduling.
@@ -77,7 +88,11 @@ def publish_definition(definition: WorkflowDefinition) -> tuple[Workflow, bool]:
         # (name, version) cannot both see "not there" and both insert.
         existing = (
             Workflow.objects.select_for_update()
-            .filter(name=definition.name, version=definition.version)
+            .filter(
+                organization=organization,
+                name=definition.name,
+                version=definition.version,
+            )
             .select_related()
             .first()
         )
@@ -87,6 +102,7 @@ def publish_definition(definition: WorkflowDefinition) -> tuple[Workflow, bool]:
             return existing, False
 
         workflow = Workflow.objects.create(
+            organization=organization,
             name=definition.name,
             version=definition.version,
             description=definition.description,
@@ -157,9 +173,9 @@ def load_definition(workflow: Workflow) -> WorkflowDefinition:
     return definition
 
 
-def definition_exists(*, name: str, version: int) -> bool:
-    """Whether a definition with this `(name, version)` has been published."""
-    return Workflow.objects.filter(name=name, version=version).exists()
+def definition_exists(*, name: str, version: int, organization: Organization | None = None) -> bool:
+    """Whether this `(organization, name, version)` has been published."""
+    return Workflow.objects.filter(organization=organization, name=name, version=version).exists()
 
 
 def _fingerprint_of(workflow: Workflow) -> str:

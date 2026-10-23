@@ -22,6 +22,7 @@ from core.domain.states import TaskRunState, WorkflowRunState
 from core.models import TaskRun
 from core.repositories.definitions import publish_definition
 from core.services.runs import trigger
+from core.services.tenancy import ensure_default_organization
 
 
 class Command(BaseCommand):
@@ -71,10 +72,11 @@ class Command(BaseCommand):
                 ),
             ),
         )
-        workflow, created = publish_definition(definition)
+        organization = ensure_default_organization()
+        workflow, created = publish_definition(definition, organization=organization)
         self.stdout.write(f"Published saga-e2e (created={created}).")
 
-        run, _ = trigger(workflow, requested_by_id=None)
+        run, _ = trigger(workflow, requested_by_id=None, organization=organization)
         self.stdout.write(f"Triggered run {run.id}; waiting up to {timeout:.0f}s.")
 
         deadline = time.monotonic() + timeout
