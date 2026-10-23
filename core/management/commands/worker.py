@@ -19,6 +19,8 @@ from typing import Any, cast
 from django.conf import settings
 from django.core.management.base import BaseCommand
 
+from core.observability import metrics as obs_metrics
+from core.observability import tracing
 from core.worker import builtin  # noqa: F401 - importing it populates the registry
 from core.worker.consumer import DEFAULT_QUEUE, Worker
 
@@ -47,6 +49,15 @@ class Command(BaseCommand):
             default=30,
             help="Lease length; the heartbeat renews it every third (default: 30).",
         )
+        parser.add_argument(
+            "--metrics-port",
+            type=obs_metrics.metrics_port_argument,
+            default=0,
+            # The custom type treats an empty string as "disabled": compose
+            # interpolates an unset variable to an empty string, and a bare
+            # `int("")` would kill the process before it ever started.
+            help="Port for this process's Prometheus endpoint (0 or empty disables it).",
+        )
 
     def handle(self, *_args: object, **options: object) -> None:
         """Start the consumer and block until SIGTERM/SIGINT."""
@@ -57,6 +68,10 @@ class Command(BaseCommand):
             prefetch=int(opts["prefetch"]),
             lease_seconds=int(opts["lease_seconds"]),
         )
+        tracing.configure_tracing("worker")
+        metrics_port = int(opts["metrics_port"])
+        if metrics_port:
+            obs_metrics.start_metrics_server(metrics_port)
         signal.signal(signal.SIGTERM, lambda *_: worker.stop())
         signal.signal(signal.SIGINT, lambda *_: worker.stop())
         self.stdout.write(f"Worker {worker.worker_id} started on queue {worker.queue}.")

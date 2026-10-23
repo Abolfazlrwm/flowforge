@@ -86,6 +86,21 @@ class TestScopesHaveRates:
 
         assert {"read", "trigger"} <= declared
 
+    def test_the_shipped_rates_are_the_documented_policy(self) -> None:
+        """The defaults are the shipped policy; a typo here silently loosens it.
+
+        The rates are configurable through the environment because every
+        deployment has a different notion of "normal", and the load-test job
+        raises them so the benchmark measures the engine rather than the throttle.
+        That makes the default values load-bearing in a way they were not before:
+        an unset variable must still yield the documented limit.
+        """
+        rates = settings.REST_FRAMEWORK["DEFAULT_THROTTLE_RATES"]
+
+        assert rates["auth"] == "10/min"
+        assert rates["trigger"] == "60/min"
+        assert rates["read"] == "300/min"
+
 
 class TestTriggerThrottle:
     """The 429 path, with the real throttle class installed."""
