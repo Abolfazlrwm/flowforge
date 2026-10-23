@@ -29,6 +29,7 @@ from core.domain.machines import TASK_RUN_MACHINE, WORKFLOW_RUN_MACHINE
 from core.domain.retry import calculate_backoff, get_retry_policy
 from core.domain.states import TaskRunState, WorkflowRunState
 from core.models import TaskRun, TaskRunEvent, WorkflowRun
+from core.observability import metrics as obs_metrics
 
 
 def _resolve_now(now: datetime | None) -> datetime:
@@ -186,6 +187,7 @@ def reclaim_task_run(
             }
         reclaimed = TaskRun.objects.filter(pk=task_run_id).update(**updates) == 1
         if reclaimed:
+            obs_metrics.LEASE_EXPIRATIONS.inc()
             _record_task_run_event(
                 task_run_id=task_run_id,
                 organization_id=task_run.organization_id,
@@ -254,6 +256,7 @@ def schedule_retries(*, now: datetime | None = None, limit: int = 1000) -> int:
                     now=moment,
                     scheduled_at=scheduled_at,
                 ):
+                    obs_metrics.TASK_RETRIES.inc()
                     moved += 1
             elif transition_task_run(
                 task_run_id=task_run.id,
