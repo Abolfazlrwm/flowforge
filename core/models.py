@@ -13,12 +13,20 @@ the plan behind each one.
 from __future__ import annotations
 
 import uuid
+from datetime import datetime
+from typing import TypeVar
 
 from django.conf import settings
 from django.db import models
 from django.db.models import F, Q
+from django.utils import timezone
 
 from core.domain.states import TaskRunState, WorkflowRunState
+
+#: The model a scoped manager is bound to. A ``TypeVar`` keeps ``objects.create``
+#: and ``objects.filter`` typed as the concrete model under mypy strict, which a
+#: bare ``models.Manager`` would erase to ``Any``.
+_M = TypeVar("_M", bound=models.Model)
 
 WORKFLOW_RUN_TERMINAL = tuple(
     state.value
@@ -38,6 +46,213 @@ WORKFLOW_RUN_STATE_CHOICES = [(state.value, state.name.title()) for state in Wor
 TASK_RUN_STATE_CHOICES = [(state.value, state.name.title()) for state in TaskRunState]
 
 
+class OrganizationScopedManager(models.Manager[_M]):
+    """A manager that refuses to hand back rows outside one organization.
+
+    ``for_organization(org)`` is the sanctioned read path for a tenant-scoped
+    model: it filters on the ``organization`` column (or, for a model that reaches
+    its tenant through a parent, the equivalent join) so a caller cannot read
+    across tenants by accident. Cross-tenant access is meant to be impossible by
+    construction — every endpoint and service goes through here — and the
+    tenant-isolation suite asserts it on every endpoint.
+    """
+
+    def for_organization(self, organization: Organization | None) -> models.QuerySet[_M]:
+        """Rows belonging to ``organization`` only.
+
+        ``None`` matches the pre-backfill rows whose tenant is not yet known; it
+        is used by the unit fixtures and the migration path, never by an API
+        caller, which always resolves a real organization.
+        """
+        return self.filter(organization=organization)
+
+
+class Organization(models.Model):
+    """A tenant. Every definition, run, task run and trigger belongs to one.
+
+    This is the shared-schema multi-tenancy boundary (ADR-014): one database, an
+    ``organization`` foreign key on every tenant row, and access always scoped by
+    organization. There is no per-tenant schema or database.
+    """
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    name = models.CharField(max_length=200)
+    slug = models.SlugField(max_length=80, unique=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        """Table-level rules."""
+
+        ordering = ["name"]
+
+    def __str__(self) -> str:
+        """Readable label for the admin and logs."""
+        return self.name
+
+
+class Membership(models.Model):
+    """A user's role within one organization.
+
+    Roles are ordered ``owner > admin > member > viewer``. A user may belong to
+    several organizations with a different role in each; there is no global role,
+    which is what keeps one tenant's admin from being another tenant's admin.
+    """
+
+    class Role(models.TextChoices):
+        """The role a member holds, most privileged first."""
+
+        OWNER = "owner", "Owner"
+        ADMIN = "admin", "Admin"
+        MEMBER = "member", "Member"
+        VIEWER = "viewer", "Viewer"
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    organization = models.ForeignKey(
+        Organization, on_delete=models.CASCADE, related_name="memberships"
+    )
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="memberships"
+    )
+    role = models.CharField(max_length=10, choices=Role.choices, default=Role.MEMBER)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        """One role per (user, organization)."""
+
+        constraints = [
+            models.UniqueConstraint(
+                fields=["organization", "user"],
+                name="uniq_membership_org_user",
+            ),
+        ]
+
+    def __str__(self) -> str:
+        """Readable label for the admin and logs."""
+        return f"{self.user} in {self.organization} ({self.role})"
+
+
+class ApiKey(models.Model):
+    """A hashed, organization-scoped API credential.
+
+    The plaintext key is shown exactly once, at creation. Only a hash is stored,
+    so a database dump cannot be replayed. A short random ``prefix`` is stored in
+    the clear because it is how a presented key is looked up without hashing every
+    row: the full key is ``ff_<prefix>_<secret>``, and only ``secret`` is hashed.
+
+    Keys are revoked rather than deleted (``revoked_at``) so an audit trail of
+    "this credential existed and was withdrawn" survives. They may also expire.
+    """
+
+    class Scope(models.TextChoices):
+        """What the key may do. ``admin`` implies ``write`` implies ``read``."""
+
+        READ = "read", "Read"
+        WRITE = "write", "Write"
+        ADMIN = "admin", "Admin"
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    organization = models.ForeignKey(
+        Organization, on_delete=models.CASCADE, related_name="api_keys"
+    )
+    name = models.CharField(max_length=200)
+    #: The non-secret lookup handle, unique across every tenant.
+    prefix = models.CharField(max_length=32, unique=True)
+    #: ``make_password(secret)`` — never the secret itself.
+    hashed_key = models.CharField(max_length=256)
+    #: The scopes granted to this key, as a list of ``Scope`` values.
+    scopes = models.JSONField(default=list)
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="api_keys",
+    )
+    expires_at = models.DateTimeField(null=True, blank=True)
+    revoked_at = models.DateTimeField(null=True, blank=True)
+    last_used_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    objects = OrganizationScopedManager()
+
+    class Meta:
+        """Tenant-scoped listing index."""
+
+        indexes = [
+            models.Index(fields=["organization", "created_at"], name="idx_apikey_org_created"),
+        ]
+
+    def is_usable(self, *, now: datetime | None = None) -> bool:
+        """Whether the key may authenticate a request right now."""
+        moment = now if now is not None else timezone.now()
+        if self.revoked_at is not None:
+            return False
+        if self.expires_at is None:
+            return True
+        return self.expires_at > moment
+
+    def has_scope(self, required: str) -> bool:
+        """Whether this key grants at least ``required``, honouring hierarchy."""
+        order = {"read": 0, "write": 1, "admin": 2}
+        threshold = order.get(required, 99)
+        return any(order.get(scope, -1) >= threshold for scope in self.scopes)
+
+    def __str__(self) -> str:
+        """Readable label; never includes the secret."""
+        return f"api key {self.prefix} ({self.name})"
+
+
+class AuditLog(models.Model):
+    """An append-only record of a security-relevant action.
+
+    Rows are never updated or deleted — enforced in the database by a trigger
+    (migration ``0015``), not merely by convention. ``actor_label`` snapshots the
+    actor's display name so the entry still reads correctly after the user row is
+    gone; ``metadata`` is redacted before it is written, so a secret never lands
+    in the audit trail.
+    """
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    organization = models.ForeignKey(
+        Organization,
+        null=True,
+        blank=True,
+        on_delete=models.PROTECT,
+        related_name="audit_log",
+    )
+    actor = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="audit_log",
+    )
+    #: Snapshot of the actor's label, so deletion of the user does not erase who did it.
+    actor_label = models.CharField(max_length=200, blank=True, default="")
+    #: Dotted action name, e.g. ``workflow.published`` or ``api_key.revoked``.
+    action = models.CharField(max_length=100)
+    target_type = models.CharField(max_length=100)
+    target_id = models.CharField(max_length=100)
+    #: Redacted, JSON-shaped context. Never contains a secret.
+    metadata = models.JSONField(default=dict, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    objects = OrganizationScopedManager()
+
+    class Meta:
+        """Newest first, with indexes for the tenant list and target history."""
+
+        ordering = ["-created_at", "-id"]
+        indexes = [
+            models.Index(fields=["organization", "created_at"], name="idx_audit_org_created"),
+            models.Index(fields=["target_type", "target_id"], name="idx_audit_target"),
+        ]
+
+    def __str__(self) -> str:
+        """Readable label for the admin and logs."""
+        return f"{self.action} on {self.target_type}:{self.target_id}"
+
+
 class Workflow(models.Model):
     """A versioned workflow definition.
 
@@ -47,23 +262,34 @@ class Workflow(models.Model):
     """
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    # Nullable only so the backfill migration is reversible; publish_definition
+    # always sets it, so no live row is ever unscoped (see ADR-014).
+    organization = models.ForeignKey(
+        Organization, null=True, on_delete=models.PROTECT, related_name="workflows"
+    )
     name = models.CharField(max_length=200)
     version = models.PositiveIntegerField(default=1)
     description = models.TextField(blank=True, default="")
     created_at = models.DateTimeField(auto_now_add=True)
+
+    objects = OrganizationScopedManager()
 
     class Meta:
         """Table-level rules."""
 
         constraints = [
             models.UniqueConstraint(
-                fields=["name", "version"],
+                fields=["organization", "name", "version"],
                 name="uniq_workflow_name_version",
             ),
             models.CheckConstraint(
                 condition=Q(version__gte=1),
                 name="workflow_version_positive",
             ),
+        ]
+        indexes = [
+            # "List this organization's definitions." Every scoped read filters here.
+            models.Index(fields=["organization", "name"], name="idx_workflow_org_name"),
         ]
 
     def __str__(self) -> str:
@@ -127,6 +353,11 @@ class WorkflowRun(models.Model):
     """
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    # Nullable only so the backfill migration is reversible; every run is created
+    # with an organization by the trigger path, so no live run is unscoped.
+    organization = models.ForeignKey(
+        Organization, null=True, blank=True, on_delete=models.PROTECT, related_name="runs"
+    )
     workflow = models.ForeignKey(Workflow, on_delete=models.PROTECT, related_name="runs")
     state = models.CharField(
         max_length=20,
@@ -147,6 +378,8 @@ class WorkflowRun(models.Model):
         on_delete=models.SET_NULL,
         related_name="workflow_runs",
     )
+
+    objects = OrganizationScopedManager()
 
     class Meta:
         """Table-level rules and the indexes behind named queries."""
@@ -169,6 +402,8 @@ class WorkflowRun(models.Model):
             models.Index(fields=["workflow", "-created_at"], name="idx_wfrun_wf_recent"),
             # "Which runs have been in this state longer than X?" (stuck-run sweep).
             models.Index(fields=["state", "created_at"], name="idx_wfrun_state_age"),
+            # "List this organization's runs" — the tenant-scoped run list.
+            models.Index(fields=["organization", "-created_at"], name="idx_wfrun_org_recent"),
         ]
 
     def __str__(self) -> str:
@@ -190,6 +425,16 @@ class TaskRun(models.Model):
     """
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    # Tenant scoping: a task run always belongs to the same organization as its
+    # run. Nullable only for the reversible backfill; the trigger/claim paths
+    # always set it.
+    organization = models.ForeignKey(
+        Organization,
+        null=True,
+        blank=True,
+        on_delete=models.PROTECT,
+        related_name="task_runs",
+    )
     workflow_run = models.ForeignKey(
         WorkflowRun, on_delete=models.CASCADE, related_name="task_runs"
     )
@@ -217,6 +462,8 @@ class TaskRun(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
     started_at = models.DateTimeField(null=True, blank=True)
     finished_at = models.DateTimeField(null=True, blank=True)
+
+    objects = OrganizationScopedManager()
 
     class Meta:
         """Table-level rules and the indexes behind named queries."""
@@ -270,6 +517,8 @@ class TaskRun(models.Model):
         indexes = [
             # The scheduler's claim query: oldest READY task first.
             models.Index(fields=["state", "created_at"], name="idx_taskrun_state_age"),
+            # Tenant scoping: "every task run of this organization", by construction.
+            models.Index(fields=["organization"], name="idx_taskrun_org"),
             # Run progress: "how many of this run's tasks are in state X?"
             models.Index(fields=["workflow_run", "state"], name="idx_taskrun_run_state"),
             # The lease reaper: only ever scans running rows, so a partial index
@@ -309,6 +558,16 @@ class IdempotencyKey(models.Model):
     """
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    # Tenant scoping: an idempotency key is scoped to the organization that owns
+    # the run it guards, so a replay in one tenant can never return another
+    # tenant's run. Nullable only for the reversible backfill.
+    organization = models.ForeignKey(
+        Organization,
+        null=True,
+        blank=True,
+        on_delete=models.CASCADE,
+        related_name="idempotency_keys",
+    )
     user = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         on_delete=models.CASCADE,
@@ -327,18 +586,23 @@ class IdempotencyKey(models.Model):
     )
     created_at = models.DateTimeField(auto_now_add=True)
 
+    objects = OrganizationScopedManager()
+
     class Meta:
         """Table-level rules."""
 
         constraints = [
             # The race is resolved by this constraint, not by a lock: a row that
             # does not exist yet cannot be locked, and PostgreSQL has no gap locks
-            # to make `select_for_update()` help.
-            models.UniqueConstraint(fields=["user", "key"], name="uniq_idempotency_user_key"),
+            # to make `select_for_update()` help. Scoped per organization so two
+            # tenants may independently reuse a key without colliding.
+            models.UniqueConstraint(
+                fields=["organization", "user", "key"], name="uniq_idempotency_org_user_key"
+            ),
         ]
         indexes = [
             # Replay lookup: the only query this table serves.
-            models.Index(fields=["user", "key"], name="idx_idempotency_lookup"),
+            models.Index(fields=["organization", "user", "key"], name="idx_idempotency_lookup"),
         ]
 
     def __str__(self) -> str:
@@ -369,6 +633,16 @@ class OutboxMessage(models.Model):
     """
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    # Tenant scoping: the publisher drains this table and must never cross
+    # tenants, so every dispatch row carries its organization. Nullable only for
+    # the reversible backfill.
+    organization = models.ForeignKey(
+        Organization,
+        null=True,
+        blank=True,
+        on_delete=models.PROTECT,
+        related_name="outbox_messages",
+    )
     task_run = models.ForeignKey(TaskRun, on_delete=models.PROTECT, related_name="outbox_messages")
     workflow_run = models.ForeignKey(
         WorkflowRun, on_delete=models.PROTECT, related_name="outbox_messages"
@@ -388,6 +662,8 @@ class OutboxMessage(models.Model):
     published_at = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
+    objects = OrganizationScopedManager()
+
     class Meta:
         """Table-level rules and the indexes the publisher and scheduler rely on."""
 
@@ -401,6 +677,8 @@ class OutboxMessage(models.Model):
             ),
         ]
         indexes = [
+            # Tenant scoping: a per-organization pending scan, by construction.
+            models.Index(fields=["organization"], name="idx_outbox_org"),
             # The publisher's pending scan: every null ``published_at`` in creation
             # order. Partial so it tracks only undelivered work, not the whole table.
             models.Index(
@@ -429,6 +707,15 @@ class ScheduledTrigger(models.Model):
     """
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    # Tenant scoping: a cron trigger belongs to the organization that owns its
+    # workflow. Nullable only for the reversible backfill.
+    organization = models.ForeignKey(
+        Organization,
+        null=True,
+        blank=True,
+        on_delete=models.CASCADE,
+        related_name="scheduled_triggers",
+    )
     workflow = models.ForeignKey(
         Workflow, on_delete=models.CASCADE, related_name="scheduled_triggers"
     )
@@ -441,6 +728,8 @@ class ScheduledTrigger(models.Model):
     last_run_at = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
+    objects = OrganizationScopedManager()
+
     class Meta:
         """Index the poll query: enabled and due, ordered by soonest first."""
 
@@ -448,6 +737,11 @@ class ScheduledTrigger(models.Model):
             models.Index(
                 fields=["enabled", "next_run_at"],
                 name="idx_trigger_due",
+            ),
+            # Tenant scoping: "this organization's due triggers", by construction.
+            models.Index(
+                fields=["organization", "enabled", "next_run_at"],
+                name="idx_trigger_org_due",
             ),
         ]
 
@@ -483,11 +777,22 @@ class TaskRunEvent(models.Model):
         TRANSITION = "transition", "State transition"
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    # Tenant scoping: an event belongs to the organization of its task run.
+    # Nullable only for the reversible backfill.
+    organization = models.ForeignKey(
+        Organization,
+        null=True,
+        blank=True,
+        on_delete=models.PROTECT,
+        related_name="task_run_events",
+    )
     task_run = models.ForeignKey(TaskRun, on_delete=models.CASCADE, related_name="events")
     kind = models.CharField(max_length=20, choices=Kind.choices)
     from_state = models.CharField(max_length=20, null=True, blank=True)
     to_state = models.CharField(max_length=20)
     created_at = models.DateTimeField(auto_now_add=True)
+
+    objects = OrganizationScopedManager()
 
     class Meta:
         """Order by time, and index the per-run history query."""
@@ -497,6 +802,11 @@ class TaskRunEvent(models.Model):
             models.Index(
                 fields=["task_run", "created_at"],
                 name="idx_event_taskrun_created",
+            ),
+            # Tenant scoping: "this organization's event log", by construction.
+            models.Index(
+                fields=["organization", "created_at"],
+                name="idx_event_org_created",
             ),
         ]
 

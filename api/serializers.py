@@ -19,7 +19,8 @@ from __future__ import annotations
 
 from typing import Any, ClassVar
 
-from core.models import Task, TaskRun, TaskRunEvent, Workflow, WorkflowRun
+from core.models import ApiKey, Task, TaskRun, TaskRunEvent, Workflow, WorkflowRun
+from core.security import redact_mapping
 from rest_framework import serializers
 
 
@@ -34,7 +35,13 @@ class UserSerializer(serializers.Serializer[Any]):
 
 
 class TaskSerializer(serializers.ModelSerializer[Task]):
-    """One task of a published definition."""
+    """One task of a published definition.
+
+    ``config`` is redacted on the way out: a task may legitimately carry a
+    password or a token to execute, but a client reading the definition must not
+    receive it. The worker still gets the real config in its dispatch payload;
+    redaction applies to what humans and clients read, not to execution.
+    """
 
     class Meta:
         """Field mapping."""
@@ -42,6 +49,12 @@ class TaskSerializer(serializers.ModelSerializer[Task]):
         model = Task
         fields: ClassVar[list[str]] = ["key", "task_type", "depends_on", "config"]
         read_only_fields: ClassVar[list[str]] = fields
+
+    def to_representation(self, instance: Task) -> dict[str, Any]:
+        """Render the task with its config redacted."""
+        data = super().to_representation(instance)
+        data["config"] = redact_mapping(instance.config or {})
+        return data
 
 
 class WorkflowSerializer(serializers.ModelSerializer[Workflow]):
@@ -177,6 +190,57 @@ class TaskRunEventSerializer(serializers.ModelSerializer[TaskRunEvent]):
             "created_at",
         ]
         read_only_fields: ClassVar[list[str]] = fields
+
+
+class ApiKeySerializer(serializers.ModelSerializer[ApiKey]):
+    """An API key as listed: metadata only, never the secret or its hash."""
+
+    class Meta:
+        """Field mapping."""
+
+        model = ApiKey
+        fields: ClassVar[list[str]] = [
+            "id",
+            "name",
+            "prefix",
+            "scopes",
+            "created_at",
+            "expires_at",
+            "revoked_at",
+            "last_used_at",
+        ]
+        read_only_fields: ClassVar[list[str]] = fields
+
+
+class ApiKeyCreatedSerializer(ApiKeySerializer):
+    """The one response that carries the plaintext key.
+
+    ``key`` is read from the serializer context rather than the model: the model
+    has no plaintext to read, by design.
+    """
+
+    key = serializers.SerializerMethodField()
+
+    class Meta(ApiKeySerializer.Meta):
+        """Field mapping: the listed fields plus the one-time secret."""
+
+        fields: ClassVar[list[str]] = [*ApiKeySerializer.Meta.fields, "key"]
+
+    def get_key(self, _obj: ApiKey) -> str:
+        """The plaintext key, supplied once by the view."""
+        return str(self.context["plaintext"])
+
+
+class ApiKeyCreateSerializer(serializers.Serializer[Any]):
+    """The body of an API-key creation request."""
+
+    name = serializers.CharField(max_length=200)
+    scopes = serializers.ListField(
+        child=serializers.ChoiceField(choices=["read", "write", "admin"]),
+        required=False,
+        default=["read"],
+    )
+    expires_at = serializers.DateTimeField(required=False, allow_null=True)
 
 
 class TriggerSerializer(serializers.Serializer[Any]):
