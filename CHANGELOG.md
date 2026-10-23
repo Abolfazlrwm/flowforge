@@ -7,6 +7,63 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-10-23
+
+Phase 9 — Observability and Performance.
+
+### Added
+
+- **Correlation ids.** One id follows a run from the HTTP request through the
+  outbox, the broker and the worker. Stored on `WorkflowRun` and
+  `OutboxMessage` (migration `0016`), repeated in the dispatch payload, and
+  rebound per message by the worker, which clears the context first so one
+  tenant's run cannot leak into the next log line.
+- **Prometheus metrics, per process.** `GET /api/v1/metrics/` on the web
+  process; `--metrics-port` on the scheduler, publisher and worker. Counters and
+  histograms are process-local (`flowforge_task_latency_seconds`,
+  `flowforge_task_retries_total`, `flowforge_lease_expirations_total`); the
+  durable-state gauges (`flowforge_workflow_runs`, `flowforge_task_runs`,
+  `flowforge_outbox_pending`, `flowforge_outbox_lag_seconds`,
+  `flowforge_dead_tasks`, `flowforge_scheduled_triggers_due`) are computed at
+  scrape time so they cannot drift from the database.
+- **OpenTelemetry tracing.** `run.trigger` → `task.dispatch` → `task.execute` as
+  one trace across three processes. The W3C `traceparent` is persisted on the run
+  and the outbox row because the outbox crosses a process boundary with no live
+  span.
+- **Grafana dashboards as code and a compose `observability` profile.**
+  `docker compose --profile observability up` adds Prometheus, Grafana and an OTel
+  collector beside the unchanged application stack. The dashboard is provisioned
+  read-only from `deploy/observability/grafana/dashboards/flowforge.json`.
+- **Load test and measured benchmark.** `loadtests/locustfile.py` drives the whole
+  pipeline and records `trigger` and `run end-to-end` separately;
+  `manage.py loadtest_user` creates the fixture account. A `loadtest` CI job runs
+  a fixed 10-user/60-second shape and uploads the raw CSVs.
+  `docs/development/BENCHMARKS.md` records the results with the hardware, the
+  configuration and the limitations.
+- **`scripts/profile_scheduler.py`** measures the scheduler's cost per pass and
+  compares the two `transition_task_run` call shapes in one process.
+
+### Changed
+
+- **`transition_task_run` accepts `organization_id`.** Every caller already held
+  the row, so passing the tenant removes one `SELECT` per transition: 5.00 → 4.00
+  queries per transition (−20%), 1 672 → 1 542 queries over 140 scheduler passes
+  (−7.8%).
+- `THROTTLE_AUTH_RATE`, `THROTTLE_TRIGGER_RATE`, `THROTTLE_READ_RATE` and
+  `SCHEDULER_INTERVAL` are configurable. The shipped defaults (10/60/300 per
+  minute, 5 s) are unchanged and asserted by a test.
+- `--metrics-port` on the scheduler, publisher and worker defaults to `0`
+  (disabled); the compose stack sets 9101/9102/9103 and publishes them on
+  loopback.
+
+### Documentation
+
+- `docs/deployment/observability.md`: the correlation contract, the two kinds of
+  metric and why they differ, the trace chain across the outbox, the profile, and
+  a symptom-to-query table.
+- `docs/development/load-testing.md`: the reproducible command, what each number
+  means, how to read the CSVs, and what the test does not tell you.
+
 ## [0.9.1] - 2026-10-23
 
 Phase 8 follow-ups.
