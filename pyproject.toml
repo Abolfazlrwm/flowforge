@@ -91,8 +91,11 @@ dev = [
     "locust>=2.32,<3",
 ]
 
-# NOTE: the `flowforge` console script is intentionally absent until the CLI
-# lands in Phase 10. Declaring it now would ship a broken entry point.
+# NOTE: this distribution ships the server, so it deliberately declares no
+# console script. The `flowforge` command is part of `flowforge-client`
+# (`sdk/`), a separate distribution with no runtime dependencies — a CLI that
+# installs Django into a client environment would be the wrong trade. See
+# `docs/cli.md`.
 
 [project.urls]
 Homepage = "https://github.com/Abolfazlrwm/flowforge"
