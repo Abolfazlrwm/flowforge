@@ -155,7 +155,21 @@ services:
     # unset host variable still yields a valid port. A shell-form command would
     # NOT expand `$VAR` — compose does not run it through a shell — and the
     # literal string would reach argparse.
-    command: ["python", "manage.py", "scheduler", "--metrics-port", "${SCHEDULER_METRICS_PORT:-9101}"]
+    #
+    # `--interval` is the scheduler's polling cadence, and it sets the floor on a
+    # run's end-to-end latency: a 4-task diamond needs four passes, so the default
+    # 5s makes 20s the fastest a run can possibly finish. The load-test job lowers
+    # it to measure the engine rather than the cadence.
+    command:
+      [
+        "python",
+        "manage.py",
+        "scheduler",
+        "--metrics-port",
+        "${SCHEDULER_METRICS_PORT:-9101}",
+        "--interval",
+        "${SCHEDULER_INTERVAL:-5}",
+      ]
     healthcheck: *app-healthcheck
 
   publisher:
