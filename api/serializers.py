@@ -20,6 +20,7 @@ from __future__ import annotations
 from typing import Any, ClassVar
 
 from core.models import ApiKey, Task, TaskRun, TaskRunEvent, Workflow, WorkflowRun
+from core.security import redact_mapping
 from rest_framework import serializers
 
 
@@ -34,7 +35,13 @@ class UserSerializer(serializers.Serializer[Any]):
 
 
 class TaskSerializer(serializers.ModelSerializer[Task]):
-    """One task of a published definition."""
+    """One task of a published definition.
+
+    ``config`` is redacted on the way out: a task may legitimately carry a
+    password or a token to execute, but a client reading the definition must not
+    receive it. The worker still gets the real config in its dispatch payload;
+    redaction applies to what humans and clients read, not to execution.
+    """
 
     class Meta:
         """Field mapping."""
@@ -42,6 +49,12 @@ class TaskSerializer(serializers.ModelSerializer[Task]):
         model = Task
         fields: ClassVar[list[str]] = ["key", "task_type", "depends_on", "config"]
         read_only_fields: ClassVar[list[str]] = fields
+
+    def to_representation(self, instance: Task) -> dict[str, Any]:
+        """Render the task with its config redacted."""
+        data = super().to_representation(instance)
+        data["config"] = redact_mapping(instance.config or {})
+        return data
 
 
 class WorkflowSerializer(serializers.ModelSerializer[Workflow]):

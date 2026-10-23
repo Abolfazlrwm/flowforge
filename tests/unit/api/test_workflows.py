@@ -12,6 +12,7 @@ from __future__ import annotations
 from typing import Any
 
 from core.models import Task, Workflow
+from core.security import REDACTED
 from django.urls import reverse
 from rest_framework import status
 from rest_framework.test import APIClient
@@ -239,6 +240,29 @@ class TestDetail:
 
         assert response.status_code == status.HTTP_404_NOT_FOUND
         assert response.data["error"]["code"] == "not_found"
+
+
+class TestSecretRedaction:
+    """A task's config is returned with secret values redacted."""
+
+    def test_secret_config_values_are_redacted(self, staff_client: APIClient) -> None:
+        """A client reading a definition must not receive a credential."""
+        payload = definition_payload(
+            tasks=[
+                {
+                    "key": "load",
+                    "task_type": "sql",
+                    "config": {"url": "postgres://x", "password": "hunter2"},
+                }
+            ]
+        )
+        staff_client.post(reverse(LIST_URL), payload, format="json")
+
+        response = staff_client.get(_detail_url("etl", 1))
+
+        config = response.data["tasks"][0]["config"]
+        assert config["url"] == "postgres://x"
+        assert config["password"] == REDACTED
 
 
 class TestPagination:

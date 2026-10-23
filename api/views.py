@@ -30,6 +30,7 @@ from core.models import ApiKey, TaskRun, TaskRunEvent, Workflow, WorkflowRun
 from core.repositories.definitions import publish_definition
 from core.repositories.transitions import requeue_failed_task_run
 from core.services import api_keys as api_key_service
+from core.services import audit as audit_service
 from core.services import runs as run_service
 from django.db.models import Count, QuerySet
 from django.shortcuts import get_object_or_404
@@ -139,6 +140,15 @@ class WorkflowListCreateView(ListAPIView[Workflow]):
         workflow, created = publish_definition(
             definition, organization=tenancy.require_active_organization(request)
         )
+        if created:
+            audit_service.record(
+                organization=workflow.organization,
+                action="workflow.published",
+                target_type="workflow",
+                target_id=workflow.pk,
+                actor=request.user,
+                metadata={"name": workflow.name, "version": workflow.version},
+            )
         payload = WorkflowSerializer(_with_tasks(workflow)).data
         return Response(payload, status=status.HTTP_201_CREATED if created else status.HTTP_200_OK)
 
@@ -246,6 +256,15 @@ class RunListCreateView(ListAPIView[WorkflowRun]):
             fingerprint=run_service.request_fingerprint(trigger.validated_data),
         )
 
+        if created:
+            audit_service.record(
+                organization=run.organization,
+                action="run.triggered",
+                target_type="run",
+                target_id=run.pk,
+                actor=request.user,
+                metadata={"workflow": workflow.name, "version": workflow.version},
+            )
         payload = WorkflowRunSerializer(_with_task_runs(run)).data
         response = Response(payload, status=status.HTTP_202_ACCEPTED)
         if not created:
@@ -338,6 +357,13 @@ class TaskRunRequeueView(APIView):
                 {"detail": "Task run is not FAILED; only a failed task can be re-run."},
                 status=status.HTTP_409_CONFLICT,
             )
+        audit_service.record(
+            organization=task_run.organization,
+            action="task_run.requeued",
+            target_type="task_run",
+            target_id=task_run.pk,
+            actor=request.user,
+        )
         task_run.refresh_from_db()
         return Response(TaskRunSerializer(task_run).data, status=status.HTTP_200_OK)
 
@@ -382,6 +408,14 @@ class ApiKeyListCreateView(APIView):
             created_by=request.user,
             expires_at=body.validated_data.get("expires_at"),
         )
+        audit_service.record(
+            organization=organization,
+            action="api_key.created",
+            target_type="api_key",
+            target_id=api_key.pk,
+            actor=request.user,
+            metadata={"name": api_key.name, "scopes": api_key.scopes},
+        )
         payload = ApiKeyCreatedSerializer(api_key, context={"plaintext": plaintext}).data
         return Response(payload, status=status.HTTP_201_CREATED)
 
@@ -402,6 +436,14 @@ class ApiKeyRotateView(APIView):
         """Rotate the key named by ``pk`` within the caller's organization."""
         api_key = get_object_or_404(_api_key_queryset(request), pk=pk)
         new_key, plaintext = api_key_service.rotate_api_key(api_key=api_key)
+        audit_service.record(
+            organization=new_key.organization,
+            action="api_key.rotated",
+            target_type="api_key",
+            target_id=new_key.pk,
+            actor=request.user,
+            metadata={"name": new_key.name, "rotated_from": str(api_key.pk)},
+        )
         payload = ApiKeyCreatedSerializer(new_key, context={"plaintext": plaintext}).data
         return Response(payload, status=status.HTTP_200_OK)
 
@@ -422,6 +464,14 @@ class ApiKeyRevokeView(APIView):
         """Revoke the key named by ``pk`` within the caller's organization."""
         api_key = get_object_or_404(_api_key_queryset(request), pk=pk)
         api_key_service.revoke_api_key(api_key=api_key)
+        audit_service.record(
+            organization=api_key.organization,
+            action="api_key.revoked",
+            target_type="api_key",
+            target_id=api_key.pk,
+            actor=request.user,
+            metadata={"name": api_key.name},
+        )
         api_key.refresh_from_db()
         return Response(ApiKeySerializer(api_key).data, status=status.HTTP_200_OK)
 
