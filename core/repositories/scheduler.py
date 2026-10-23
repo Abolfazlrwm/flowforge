@@ -427,7 +427,11 @@ def tick_scheduled_triggers(
         due = list(
             ScheduledTrigger.objects.filter(enabled=True, next_run_at__lte=moment)
             .select_related("workflow", "workflow__organization")
-            .select_for_update(skip_locked=skip_locked)
+            # Lock only the trigger rows. `workflow.organization` is nullable, so
+            # the join is an OUTER join, and PostgreSQL refuses `FOR UPDATE` on the
+            # nullable side; `of=("self",)` keeps the lock on the non-nullable side.
+            # SQLite has no row locks and ignores this.
+            .select_for_update(skip_locked=skip_locked, of=("self",))
             .order_by("next_run_at")
         )
         for scheduled in due:
