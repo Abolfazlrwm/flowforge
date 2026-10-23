@@ -190,10 +190,15 @@ REST_FRAMEWORK = {
     ],
     # Per-scope rates. The scopes are declared on the views that use them, so a
     # rate is never a number with no owner.
+    #
+    # Configurable because every deployment has a different notion of "normal",
+    # and a load test that cannot exceed the default measures the throttle rather
+    # than the engine. The defaults are the shipped policy; changing them is an
+    # explicit operational decision, not a code change.
     "DEFAULT_THROTTLE_RATES": {
-        "auth": "10/min",
-        "trigger": "60/min",
-        "read": "300/min",
+        "auth": env("THROTTLE_AUTH_RATE", default="10/min"),
+        "trigger": env("THROTTLE_TRIGGER_RATE", default="60/min"),
+        "read": env("THROTTLE_READ_RATE", default="300/min"),
     },
 }
 

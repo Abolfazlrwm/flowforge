@@ -636,6 +636,18 @@ jobs:
     # the configuration next to the results for exactly this reason.
     runs-on: ubuntu-latest
     timeout-minutes: 25
+    env:
+      # The benchmark measures the engine, not the throttle. The shipped defaults
+      # are 60 triggers/min and 300 reads/min per caller; ten virtual users
+      # triggering and polling immediately exhaust that, and the first run of this
+      # job recorded 1469 `429` responses and almost no real measurements. These
+      # rates are set high enough that the throttle is not the binding constraint,
+      # which the report states.
+      THROTTLE_TRIGGER_RATE: "100000/min"
+      THROTTLE_READ_RATE: "100000/min"
+      # Every virtual user authenticates as the same fixture account, so ten
+      # logins in the first second would trip the 10/min default on their own.
+      THROTTLE_AUTH_RATE: "100000/min"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
