@@ -26,7 +26,7 @@ from django.utils import timezone
 from core.domain.definition import WorkflowDefinition
 from core.domain.services import initial_task_run_state
 from core.domain.states import WorkflowRunState
-from core.models import IdempotencyKey, Task, TaskRun, Workflow, WorkflowRun
+from core.models import IdempotencyKey, Organization, Task, TaskRun, Workflow, WorkflowRun
 from core.repositories import idempotency
 from core.repositories.definitions import load_definition
 from core.repositories.transitions import (
@@ -52,6 +52,7 @@ def trigger(
     workflow: Workflow,
     *,
     requested_by_id: int | None,
+    organization: Organization | None = None,
     idempotency_key: str | None = None,
     fingerprint: str = "",
 ) -> tuple[WorkflowRun, bool]:
@@ -60,6 +61,9 @@ def trigger(
     Args:
         workflow: The published definition to instantiate.
         requested_by_id: The user who asked. ``None`` for a system trigger.
+        organization: The tenant that owns the run. Defaults to the workflow's
+            own organization, which is what the scheduler uses; an API caller
+            passes the active organization explicitly.
         idempotency_key: The client's ``Idempotency-Key`` header, if any.
         fingerprint: Digest of the request body. Only used when a key is given.
 
@@ -74,9 +78,11 @@ def trigger(
             retries with a stale fingerprint — the caller of this function does
             not see this; it is handled below.
     """
+    org = organization if organization is not None else workflow.organization
+
     if idempotency_key is None:
         with transaction.atomic():
-            return _materialise(workflow, requested_by_id=requested_by_id), True
+            return _materialise(workflow, requested_by_id=requested_by_id, organization=org), True
 
     try:
         with transaction.atomic():
@@ -84,15 +90,18 @@ def trigger(
             # cannot be created, the claim rolls back with it and the key is free
             # again rather than replaying as an empty response forever.
             claim = idempotency.reserve(
+                organization=org,
                 user_id=requested_by_id or 0,
                 key=idempotency_key,
                 fingerprint=fingerprint,
             )
-            run = _materialise(workflow, requested_by_id=requested_by_id)
+            run = _materialise(workflow, requested_by_id=requested_by_id, organization=org)
             idempotency.complete(claim, status=202, body={}, workflow_run_id=run.pk)
             return run, True
     except IntegrityError:
-        existing = idempotency.find(user_id=requested_by_id or 0, key=idempotency_key)
+        existing = idempotency.find(
+            organization=org, user_id=requested_by_id or 0, key=idempotency_key
+        )
         if existing is None:
             # Not a lost race on the key — some other constraint failed. Do not
             # disguise it as a replay.
@@ -109,21 +118,27 @@ def trigger(
         return existing.workflow_run, False
 
 
-def _materialise(workflow: Workflow, *, requested_by_id: int | None) -> WorkflowRun:
+def _materialise(
+    workflow: Workflow, *, requested_by_id: int | None, organization: Organization | None
+) -> WorkflowRun:
     """Create the run row and one task run per task.
 
     Reads the definition through the same lossless path the publish side uses, so
     the run is instantiated from validated content rather than from whatever the
-    rows happen to say.
+    rows happen to say. Every row is stamped with ``organization`` so the whole
+    run is tenant-scoped from creation, not by a later filter.
     """
     definition: WorkflowDefinition = load_definition(workflow)
 
-    run = WorkflowRun.objects.create(workflow=workflow, requested_by_id=requested_by_id)
+    run = WorkflowRun.objects.create(
+        workflow=workflow, organization=organization, requested_by_id=requested_by_id
+    )
     tasks_by_key = {task.key: task for task in Task.objects.filter(workflow=workflow)}
     TaskRun.objects.bulk_create(
         [
             TaskRun(
                 workflow_run=run,
+                organization=organization,
                 task=tasks_by_key[task.key],
                 state=initial_task_run_state(dependency_count=len(task.depends_on)).value,
                 # The handler idempotency key, if the task declares one. Two task
@@ -140,16 +155,19 @@ def _materialise(workflow: Workflow, *, requested_by_id: int | None) -> Workflow
     return run
 
 
-def runs_visible_to(user: Any) -> QuerySet[WorkflowRun]:
-    """The runs a user may list.
+def runs_visible_to(organization: Organization) -> QuerySet[WorkflowRun]:
+    """The runs of one organization, newest first.
 
-    Staff see everything; everyone else sees their own. Filtering here rather
-    than in the view means the rule cannot be forgotten by a second view.
+    Tenant scoping lives here rather than in each view so a second view cannot
+    forget it: every run list, detail and event-log read goes through this
+    function, and ``for_organization`` makes another tenant's runs invisible by
+    construction (a lookup by their id returns 404, not 403).
     """
-    queryset = WorkflowRun.objects.select_related("workflow").order_by("-created_at", "-id")
-    if user.is_staff:
-        return queryset
-    return queryset.filter(requested_by_id=user.pk)
+    return (
+        WorkflowRun.objects.for_organization(organization)
+        .select_related("workflow")
+        .order_by("-created_at", "-id")
+    )
 
 
 def request_cancellation(run_id: UUID, *, now: datetime | None = None) -> int:

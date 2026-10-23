@@ -1,24 +1,45 @@
 """Permission classes, one per rule, each named for what it allows.
 
-Every view names its permission class explicitly. There is a default in settings
-(`IsAuthenticated`) so that a view which forgets cannot become public by
-accident, but a view that relies on the default without saying so is a view whose
-author never made a decision.
+Authorization is **per organization**, not per user. A caller acts as a member of
+exactly one active organization (see :mod:`api.tenancy`), and the role they hold
+there decides what they may do. The four roles are ordered:
+
+``viewer < member < admin < owner``
+
+* **viewer** — read definitions, runs and event logs.
+* **member** — viewer, plus triggering runs and re-running a failed task.
+* **admin** — member, plus publishing definitions and managing API keys.
+* **owner** — admin, plus managing members and the organization itself.
+
+Global staff (``is_staff``) bypass the role check for operational access. That is
+deliberate and narrow: staff are operators of the platform, not members of a
+tenant, and the tenant-isolation suite is written against ordinary members so a
+staff bypass can never hide a scoping bug.
+
+A view that relies on the default permission without naming its own is a view
+whose author never made a decision, so every view names its class explicitly.
 """
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
-from rest_framework.permissions import SAFE_METHODS, BasePermission
+from rest_framework.permissions import BasePermission
 from rest_framework.request import Request
 
+from api.tenancy import resolve_membership
+
 if TYPE_CHECKING:
-    # Imported for the type only. `rest_framework.views` reads DRF settings at
-    # import time, and those settings name this module as the default permission
-    # class — importing it for real is a circular import that only shows up when
-    # this module happens to be imported first.
     from rest_framework.views import APIView
+
+#: Higher rank is more privileged. Unknown roles sort below ``viewer`` so a
+#: corrupted row cannot accidentally grant access.
+ROLE_RANK: dict[str, int] = {
+    "viewer": 0,
+    "member": 1,
+    "admin": 2,
+    "owner": 3,
+}
 
 
 class IsAuthenticatedAndActive(BasePermission):
@@ -38,41 +59,55 @@ class IsAuthenticatedAndActive(BasePermission):
         return bool(user and user.is_authenticated and user.is_active)
 
 
-class IsStaffOrReadOnly(BasePermission):
-    """Anyone authenticated may read; only staff may write.
+class HasOrganizationRole(BasePermission):
+    """The caller holds at least ``minimum_role`` in the active organization.
 
-    Publishing a definition changes what every future run executes, so it is not
-    an ordinary authenticated write.
+    ``resolve_membership`` resolves the tenant from the API key, the
+    ``X-Organization`` header, or a single membership. When it cannot, the caller
+    is refused: a request that cannot be attributed to a tenant must not reach
+    tenant data.
     """
 
-    message = "Only staff may modify this resource."
+    #: The least-privileged role that satisfies this permission.
+    minimum_role: str = "viewer"
+    message = "You do not have the required role in this organization."
 
     def has_permission(self, request: Request, view: APIView) -> bool:
-        """Read only, unless the caller is staff."""
+        """Check the caller's role in the active organization."""
         user = request.user
         if not (user and user.is_authenticated and user.is_active):
             return False
-        if request.method in SAFE_METHODS:
-            return True
-        return bool(user.is_staff)
-
-
-class IsOwnerOrStaff(BasePermission):
-    """Object-level: the requester owns the row, or is staff.
-
-    Runs are per-user. A run started by someone else must not be readable, and
-    "not readable" is a 403 rather than a 404 because the row demonstrably
-    exists — hiding it would be a second, contradictory policy.
-    """
-
-    message = "You do not have permission to access this resource."
-
-    def has_object_permission(self, request: Request, view: APIView, obj: Any) -> bool:
-        """The owner, or any staff member."""
-        user = request.user
-        if not (user and user.is_authenticated):
-            return False
         if user.is_staff:
             return True
-        owner_id = getattr(obj, "requested_by_id", None)
-        return owner_id is not None and owner_id == user.pk
+        membership = resolve_membership(request)
+        if membership is None:
+            self.message = (
+                "You do not belong to an organization. Send an 'X-Organization' "
+                "header naming one you are a member of."
+            )
+            return False
+        return ROLE_RANK.get(membership.role, -1) >= ROLE_RANK[self.minimum_role]
+
+
+class IsViewer(HasOrganizationRole):
+    """Any member of the organization, including read-only viewers."""
+
+    minimum_role = "viewer"
+
+
+class IsMember(HasOrganizationRole):
+    """A member who may trigger work: viewer and above, excluding viewers."""
+
+    minimum_role = "member"
+
+
+class IsAdmin(HasOrganizationRole):
+    """An administrator who may publish and manage keys."""
+
+    minimum_role = "admin"
+
+
+class IsOwner(HasOrganizationRole):
+    """The organization owner."""
+
+    minimum_role = "owner"

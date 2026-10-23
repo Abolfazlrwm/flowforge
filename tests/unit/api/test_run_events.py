@@ -1,8 +1,8 @@
 """Reading a run's event log.
 
 The endpoint is read-only history: it returns the task-run events the scheduler
-and workers recorded, oldest first, and it enforces the same per-user visibility
-as the run detail — another user's run is a 404, not a 403.
+and workers recorded, oldest first, and it enforces the same per-organization
+visibility as the run detail — another tenant's run is a 404, not a 403.
 """
 
 from __future__ import annotations
@@ -71,13 +71,13 @@ class TestRunEvents:
         ]
         assert all(e["task_key"] == "extract" for e in response.data)
 
-    def test_reading_another_users_run_is_404_not_403(
-        self, user_client: APIClient, other_client: APIClient, published: Any
+    def test_reading_another_tenants_run_is_404_not_403(
+        self, user_client: APIClient, stranger_client: APIClient, published: Any
     ) -> None:
-        """The same visibility rule as the run detail: a stranger's run is hidden."""
+        """The same visibility rule as the run detail: another tenant's run is hidden."""
         created = _trigger(user_client)
 
-        response = other_client.get(_events_url(created.data["id"]))
+        response = stranger_client.get(_events_url(created.data["id"]))
 
         assert response.status_code == status.HTTP_404_NOT_FOUND
 
