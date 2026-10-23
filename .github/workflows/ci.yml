@@ -542,6 +542,79 @@ jobs:
           docker compose logs --no-color rabbitmq worker | tail -60
           exit 1
 
+      # --- Observability profile ---------------------------------------------
+      # Phase 9's acceptance requires the profile to actually run, not merely to
+      # parse. These steps bring it up against the live stack the steps above
+      # used, so the assertions are about a system that has real runs in it.
+
+      # Every process exposes its own registry. The web process serves the same
+      # registry over HTTP; the other three run their own metrics server.
+      - name: Observability — each process exposes Prometheus metrics
+        run: |
+          set -euo pipefail
+
+          curl -fsS http://localhost:8000/api/v1/metrics/ | tee /tmp/web-metrics.txt
+          grep -Eq '^# HELP flowforge_workflow_runs ' /tmp/web-metrics.txt
+          grep -Eq '^flowforge_workflow_runs\{state="succeeded"\} [1-9]' /tmp/web-metrics.txt
+          grep -Eq '^flowforge_dead_tasks ' /tmp/web-metrics.txt
+
+          for entry in 9101:scheduler 9102:publisher 9103:worker; do
+            port="${entry%%:*}"; svc="${entry##*:}"
+            body="$(curl -fsS "http://localhost:${port}/metrics")"
+            echo "$body" | grep -Eq '^flowforge_task_runs\{' \
+              || { echo "$svc: no task-run gauge on :$port"; exit 1; }
+            echo "$svc: metrics reachable on :$port"
+          done
+
+      - name: Observability — profile starts and scrapes the live stack
+        run: |
+          set -euo pipefail
+          docker compose --profile observability up -d prometheus grafana otel-collector
+
+          # Prometheus: ready, then every FlowForge target UP. A target that is
+          # DOWN means the scrape config does not match the stack, which is the
+          # failure mode a dashboard-as-code file cannot catch on its own.
+          for attempt in $(seq 1 60); do
+            if curl -fsS http://localhost:9090/-/ready >/dev/null 2>&1; then break; fi
+            sleep 2
+          done
+          curl -fsS http://localhost:9090/-/ready >/dev/null \
+            || { echo "Prometheus never became ready"; exit 1; }
+          sleep 20   # two scrape intervals, so a target has reported at least once
+
+          for attempt in $(seq 1 30); do
+            up="$(curl -fsS 'http://localhost:9090/api/v1/targets' \
+              | python3 -c 'import json,sys; print(sum(1 for t in json.load(sys.stdin)["data"]["activeTargets"] if t["labels"]["job"].startswith("flowforge-") and t["health"]=="up"))')"
+            echo "flowforge targets up: $up (attempt $attempt)"
+            test "$up" = "4" && break
+            sleep 2
+          done
+          test "$up" = "4" || {
+            echo "expected 4 FlowForge targets UP, got $up"
+            curl -fsS 'http://localhost:9090/api/v1/targets' | python3 -m json.tool | head -60
+            exit 1
+          }
+
+          # The dashboard is provisioned from the committed JSON, so a malformed
+          # file or a missing datasource shows up here rather than in a browser.
+          for attempt in $(seq 1 60); do
+            if curl -fsS http://localhost:3000/api/health >/dev/null 2>&1; then break; fi
+            sleep 2
+          done
+          curl -fsS http://localhost:3000/api/health >/dev/null \
+            || { echo "Grafana never became healthy"; exit 1; }
+          found="$(curl -fsS -H 'Content-Type: application/json' \
+            http://localhost:3000/api/search?query=FlowForge \
+            | python3 -c 'import json,sys; print(any(d.get("uid")=="flowforge-overview" for d in json.load(sys.stdin)))')"
+          test "$found" = "True" \
+            || { echo "the FlowForge dashboard was not provisioned"; exit 1; }
+
+          # The collector accepts OTLP/HTTP, which is what the app exports to when
+          # OTEL_EXPORTER_OTLP_ENDPOINT is set.
+          curl -fsS -X POST http://localhost:4318/v1/traces \
+            -H 'Content-Type: application/json' -d '{"resourceSpans":[]}' \
+            || { echo "the collector did not accept an OTLP/HTTP export"; exit 1; }
+
       - name: Container logs
         if: always()
         run: docker compose logs --no-color --tail=200

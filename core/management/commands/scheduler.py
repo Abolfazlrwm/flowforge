@@ -47,8 +47,8 @@ class Command(BaseCommand):
         parser.add_argument(
             "--metrics-port",
             type=int,
-            default=9101,
-            help="Port for this process's Prometheus endpoint (default: 9101).",
+            default=0,
+            help="Port for this process's Prometheus endpoint (0 disables it).",
         )
 
     def handle(self, *_args: object, **options: object) -> None:
@@ -63,7 +63,9 @@ class Command(BaseCommand):
             return
 
         tracing.configure_tracing("scheduler")
-        obs_metrics.start_metrics_server(int(opts["metrics_port"]))
+        metrics_port = int(opts["metrics_port"])
+        if metrics_port:
+            obs_metrics.start_metrics_server(metrics_port)
         stop = threading.Event()
         signal.signal(signal.SIGTERM, lambda *_: stop.set())
         signal.signal(signal.SIGINT, lambda *_: stop.set())

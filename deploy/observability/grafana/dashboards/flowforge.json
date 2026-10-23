@@ -1,0 +1,160 @@
+{
+  "annotations": {
+    "list": [
+      {
+        "builtIn": 1,
+        "datasource": { "type": "grafana", "uid": "-- Grafana --" },
+        "enable": true,
+        "hide": true,
+        "iconColor": "rgba(0, 211, 255, 1)",
+        "name": "Annotations & Alerts",
+        "type": "dashboard"
+      }
+    ]
+  },
+  "description": "FlowForge durability, throughput and latency. Durable-state gauges are scraped from the database at query time, so they cannot drift; counters and histograms are per-process and summed across services.",
+  "editable": false,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [],
+  "panels": [
+    {
+      "type": "stat",
+      "title": "Outbox pending",
+      "description": "Undelivered outbox rows. Sustained growth means the publisher is falling behind.",
+      "gridPos": { "h": 4, "w": 4, "x": 0, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "short", "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }, { "color": "orange", "value": 100 }, { "color": "red", "value": 1000 }] } }, "overrides": [] },
+      "targets": [{ "datasource": { "type": "prometheus", "uid": "prometheus" }, "editorMode": "code", "expr": "flowforge_outbox_pending", "legendFormat": "pending", "refId": "A" }]
+    },
+    {
+      "type": "stat",
+      "title": "Outbox lag",
+      "description": "Age of the oldest undelivered outbox row.",
+      "gridPos": { "h": 4, "w": 4, "x": 4, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "s", "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }, { "color": "orange", "value": 30 }, { "color": "red", "value": 300 }] } }, "overrides": [] },
+      "targets": [{ "datasource": { "type": "prometheus", "uid": "prometheus" }, "editorMode": "code", "expr": "flowforge_outbox_lag_seconds", "legendFormat": "lag", "refId": "A" }]
+    },
+    {
+      "type": "stat",
+      "title": "DEAD tasks",
+      "description": "Task runs that exhausted every attempt and need a human decision.",
+      "gridPos": { "h": 4, "w": 4, "x": 8, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "short", "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }, { "color": "orange", "value": 1 }, { "color": "red", "value": 10 }] } }, "overrides": [] },
+      "targets": [{ "datasource": { "type": "prometheus", "uid": "prometheus" }, "editorMode": "code", "expr": "flowforge_dead_tasks", "legendFormat": "dead", "refId": "A" }]
+    },
+    {
+      "type": "stat",
+      "title": "Queue depth",
+      "description": "Messages waiting in the dispatch queue, as reported by the broker.",
+      "gridPos": { "h": 4, "w": 4, "x": 12, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "short", "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }, { "color": "orange", "value": 100 }, { "color": "red", "value": 1000 }] } }, "overrides": [] },
+      "targets": [{ "datasource": { "type": "prometheus", "uid": "prometheus" }, "editorMode": "code", "expr": "flowforge_queue_depth", "legendFormat": "{{queue}}", "refId": "A" }]
+    },
+    {
+      "type": "stat",
+      "title": "Triggers due",
+      "description": "Enabled scheduled triggers whose next run has come due.",
+      "gridPos": { "h": 4, "w": 4, "x": 16, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+      "targets": [{ "datasource": { "type": "prometheus", "uid": "prometheus" }, "editorMode": "code", "expr": "flowforge_scheduled_triggers_due", "legendFormat": "due", "refId": "A" }]
+    },
+    {
+      "type": "stat",
+      "title": "Task throughput",
+      "description": "Tasks completed per second, summed across workers.",
+      "gridPos": { "h": 4, "w": 4, "x": 20, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "reqps" }, "overrides": [] },
+      "targets": [{ "datasource": { "type": "prometheus", "uid": "prometheus" }, "editorMode": "code", "expr": "sum(rate(flowforge_task_latency_seconds_count[5m]))", "legendFormat": "tasks/s", "refId": "A" }]
+    },
+    {
+      "type": "timeseries",
+      "title": "Workflow runs by state",
+      "description": "Durable state, scraped from the database at query time.",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 4 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "short", "custom": { "fillOpacity": 25, "showPoints": "never", "spanNulls": false, "stacking": { "mode": "normal" } } }, "overrides": [] },
+      "options": { "legend": { "calcs": ["lastNotNull"], "displayMode": "table", "placement": "bottom" }, "tooltip": { "mode": "multi", "sort": "desc" } },
+      "targets": [{ "datasource": { "type": "prometheus", "uid": "prometheus" }, "editorMode": "code", "expr": "flowforge_workflow_runs", "legendFormat": "{{state}}", "range": true, "refId": "A" }]
+    },
+    {
+      "type": "timeseries",
+      "title": "Task runs by state",
+      "description": "READY work waiting, RUNNING in flight, RETRYING backing off, DEAD stuck.",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 4 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "short", "custom": { "fillOpacity": 25, "showPoints": "never", "spanNulls": false, "stacking": { "mode": "normal" } } }, "overrides": [] },
+      "options": { "legend": { "calcs": ["lastNotNull"], "displayMode": "table", "placement": "bottom" }, "tooltip": { "mode": "multi", "sort": "desc" } },
+      "targets": [{ "datasource": { "type": "prometheus", "uid": "prometheus" }, "editorMode": "code", "expr": "flowforge_task_runs", "legendFormat": "{{state}}", "range": true, "refId": "A" }]
+    },
+    {
+      "type": "timeseries",
+      "title": "Task latency quantiles",
+      "description": "p50/p95/p99 of handler execution latency, summed across workers.",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 12 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "s", "custom": { "fillOpacity": 10, "showPoints": "never", "spanNulls": false } }, "overrides": [] },
+      "options": { "legend": { "calcs": ["mean", "max"], "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi", "sort": "desc" } },
+      "targets": [
+        { "datasource": { "type": "prometheus", "uid": "prometheus" }, "editorMode": "code", "expr": "histogram_quantile(0.50, sum(rate(flowforge_task_latency_seconds_bucket[5m])) by (le))", "legendFormat": "p50", "refId": "A" },
+        { "datasource": { "type": "prometheus", "uid": "prometheus" }, "editorMode": "code", "expr": "histogram_quantile(0.95, sum(rate(flowforge_task_latency_seconds_bucket[5m])) by (le))", "legendFormat": "p95", "refId": "B" },
+        { "datasource": { "type": "prometheus", "uid": "prometheus" }, "editorMode": "code", "expr": "histogram_quantile(0.99, sum(rate(flowforge_task_latency_seconds_bucket[5m])) by (le))", "legendFormat": "p99", "refId": "C" }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Outbox depth and lag",
+      "description": "The publisher's backlog and how old the oldest row is.",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 12 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "short", "custom": { "fillOpacity": 10, "showPoints": "never", "spanNulls": false } }, "overrides": [{ "matcher": { "id": "byName", "options": "lag" }, "properties": [{ "id": "unit", "value": "s" }] }] },
+      "options": { "legend": { "calcs": ["lastNotNull"], "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi", "sort": "desc" } },
+      "targets": [
+        { "datasource": { "type": "prometheus", "uid": "prometheus" }, "editorMode": "code", "expr": "flowforge_outbox_pending", "legendFormat": "pending", "refId": "A" },
+        { "datasource": { "type": "prometheus", "uid": "prometheus" }, "editorMode": "code", "expr": "flowforge_outbox_lag_seconds", "legendFormat": "lag", "refId": "B" }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Retries and lease expirations",
+      "description": "A lease expiration is a worker that died or stalled; a retry is a task that failed and is backing off.",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 20 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "short", "custom": { "fillOpacity": 10, "showPoints": "never", "spanNulls": false } }, "overrides": [] },
+      "options": { "legend": { "calcs": ["lastNotNull"], "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi", "sort": "desc" } },
+      "targets": [
+        { "datasource": { "type": "prometheus", "uid": "prometheus" }, "editorMode": "code", "expr": "sum by (service) (rate(flowforge_task_retries_total[5m]))", "legendFormat": "retries/s {{service}}", "refId": "A" },
+        { "datasource": { "type": "prometheus", "uid": "prometheus" }, "editorMode": "code", "expr": "sum by (service) (rate(flowforge_lease_expirations_total[5m]))", "legendFormat": "expirations/s {{service}}", "refId": "B" }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Queue depth vs outbox pending",
+      "description": "The two backlogs side by side: the broker's queue and the rows not yet handed to it.",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 20 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "short", "custom": { "fillOpacity": 10, "showPoints": "never", "spanNulls": false } }, "overrides": [] },
+      "options": { "legend": { "calcs": ["lastNotNull"], "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi", "sort": "desc" } },
+      "targets": [
+        { "datasource": { "type": "prometheus", "uid": "prometheus" }, "editorMode": "code", "expr": "flowforge_queue_depth", "legendFormat": "broker {{queue}}", "refId": "A" },
+        { "datasource": { "type": "prometheus", "uid": "prometheus" }, "editorMode": "code", "expr": "flowforge_outbox_pending", "legendFormat": "outbox", "refId": "B" }
+      ]
+    }
+  ],
+  "refresh": "15s",
+  "schemaVersion": 39,
+  "tags": ["flowforge", "observability"],
+  "templating": { "list": [] },
+  "time": { "from": "now-6h", "to": "now" },
+  "timepicker": {},
+  "timezone": "browser",
+  "title": "FlowForge",
+  "uid": "flowforge-overview",
+  "version": 1,
+  "weekStart": ""
+}
