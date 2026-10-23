@@ -1213,7 +1213,7 @@ jobs:
         run: |
           set -euo pipefail
           KC_VERSION=0.6.7
-          curl -sSL "https://github.com/yannh/kubeconform/releases/download/v${KC_VERSION}/kubeconform_${KC_VERSION}_linux-amd64.tar.gz" -o kc.tgz
+          curl -sSL "https://github.com/yannh/kubeconform/releases/download/v${KC_VERSION}/kubeconform-linux-amd64.tar.gz" -o kc.tgz
           tar -xzf kc.tgz
           sudo mv kubeconform /usr/local/bin/kubeconform
           kubeconform -v

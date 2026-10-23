@@ -44,18 +44,16 @@ from __future__ import annotations
 import uuid
 
 import pytest
-from django.db import connection
-from django.db.migrations.executor import MigrationExecutor
-
 from core.models import (
     ApiKey,
-    AuditLog,
     Organization,
     OutboxMessage,
     TaskRun,
     Workflow,
     WorkflowRun,
 )
+from django.db import connection
+from django.db.migrations.executor import MigrationExecutor
 
 #: The migration that ends the v0.9.0 line. ``git ls-tree v0.9.0
 #: core/migrations/`` lists 0001..0015; HEAD adds 0016 only. If that stops being
@@ -157,9 +155,7 @@ def test_the_v090_migration_is_the_one_before_head() -> None:
     release, rather than quietly covering less and less.
     """
     loader = MigrationExecutor(connection).loader
-    applied = {
-        name for app, name in loader.graph.nodes if app == "core"
-    }
+    applied = {name for app, name in loader.graph.nodes if app == "core"}
     assert HEAD_MIGRATION in applied, (
         f"{HEAD_MIGRATION} is no longer a migration in this tree; the upgrade "
         "test needs re-pointing at the current release's last migration"
