@@ -117,7 +117,7 @@ written, not by a pre-check that would race.
 curl -sX POST https://example.com/api/v1/runs/ \
   -H "Authorization: Token $TOKEN" \
   -H 'Content-Type: application/json' \
-  -H 'Idempotency-Key: 8f14e45f-ea3b-4c1e-9d1a-2f6c1b0a9d33' \
+  -H "Idempotency-Key: $(uuidgen)" \
   -d '{"name": "etl", "version": 1}'
 ```
 
