@@ -30,6 +30,7 @@ from core.domain.errors import DefinitionError
 from core.domain.schema import DefinitionSchemaError
 from core.repositories.definitions import DefinitionConflictError
 from core.repositories.idempotency import IdempotencyMismatchError
+from core.services.memberships import MembershipConflictError, MembershipForbiddenError
 from rest_framework import status
 from rest_framework.exceptions import APIException
 from rest_framework.response import Response
@@ -133,7 +134,9 @@ def _normalise(data: Any) -> tuple[str, Any | None]:
     return str(data), None
 
 
-def api_exception_handler(exc: Exception, context: dict[str, Any]) -> Response | None:
+def api_exception_handler(  # noqa: PLR0911 - one return per mapped failure is the point
+    exc: Exception, context: dict[str, Any]
+) -> Response | None:
     """Render every failure with :func:`error_body`.
 
     Domain exceptions are mapped here, before DRF is consulted, because a
@@ -165,6 +168,20 @@ def api_exception_handler(exc: Exception, context: dict[str, Any]) -> Response |
         return Response(
             error_body(ErrorCode.VALIDATION_ERROR, str(exc)),
             status=status.HTTP_400_BAD_REQUEST,
+        )
+    if isinstance(exc, MembershipForbiddenError):
+        # The actor's role does not permit the change. A plain `Exception`, so
+        # without this branch it would fall through to the 500 path.
+        return Response(
+            error_body(ErrorCode.PERMISSION_DENIED, str(exc)),
+            status=status.HTTP_403_FORBIDDEN,
+        )
+    if isinstance(exc, MembershipConflictError):
+        # The change would leave the organization without an owner, or the user is
+        # already a member. 409, not 400: the request is well-formed.
+        return Response(
+            error_body(ErrorCode.CONFLICT, str(exc)),
+            status=status.HTTP_409_CONFLICT,
         )
 
     response = drf_exception_handler(exc, context)
