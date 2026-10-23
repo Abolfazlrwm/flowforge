@@ -18,7 +18,7 @@ from core.models import Membership
 from core.services.tenancy import ensure_default_organization
 
 USERNAME = "e2e"
-PASSWORD = "e2e-password-not-for-production"  # noqa: S105 - test fixture
+PASSWORD = "e2e-password-not-for-production"  # noqa: S105  # nosec B105 - test fixture, not a credential
 TOKEN_FILE = Path(tempfile.gettempdir()) / "e2e_token"
 
 

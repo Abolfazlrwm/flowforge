@@ -38,6 +38,15 @@ jobs:
         run: uv run mypy flowforge core api --ignore-missing-imports
         env:
           DJANGO_SETTINGS_MODULE: flowforge.settings.test
+      # Security gates. `bandit` scans first-party code; the three intentional
+      # findings (dev/test secrets and retry jitter) are annotated at the line,
+      # not suppressed wholesale. `pip-audit` audits the locked dependency set
+      # and fails on a known vulnerability, which is how the DRF 3.18.3 upgrade
+      # was forced.
+      - name: bandit
+        run: uv run bandit -r core api flowforge -c pyproject.toml
+      - name: pip-audit
+        run: uv run pip-audit
 
   docs:
     # The documentation site was never built before Phase 3: mkdocs was not in

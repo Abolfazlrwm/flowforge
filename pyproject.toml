@@ -26,7 +26,8 @@ classifiers = [
 ]
 dependencies = [
     "django>=5.2,<5.3",
-    "djangorestframework>=3.17,<3.18",
+    # 3.18.2 fixes CVE-2026-114136/114137/114138 reported by `pip-audit`.
+    "djangorestframework>=3.18.2,<3.19",
     "django-filter>=24.2",
     "psycopg[binary]>=3.2,<4",
     "redis>=5.0,<6",
@@ -67,6 +68,10 @@ dev = [
     "pre-commit>=4.0",
     "coverage>=7.6",
     "httpx>=0.27",
+    # Security gates run in CI (and locally): `bandit` for code patterns,
+    # `pip-audit` for known vulnerabilities in the resolved dependency set.
+    "bandit>=1.7,<2",
+    "pip-audit>=2.7,<3",
     # Documentation site. `mkdocs build --strict` runs in CI on every pull
     # request, so a broken internal link or a nav entry with no target fails the
     # build. `pymdown-extensions` supplies `pymdownx.superfences`, which is what
@@ -194,3 +199,9 @@ fail_under = 80
 
 [tool.coverage.html]
 directory = "htmlcov"
+
+[tool.bandit]
+# Generated migrations and tests are not production code. The three findings in
+# production code are annotated individually with `# nosec BXXX` and a reason,
+# rather than suppressed globally.
+exclude_dirs = ["tests", "core/migrations"]
