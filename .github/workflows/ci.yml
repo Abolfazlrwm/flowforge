@@ -716,6 +716,99 @@ jobs:
             -H 'Content-Type: application/json' -d '{"resourceSpans":[]}' \
             || { echo "the collector did not accept an OTLP/HTTP export"; exit 1; }
 
+      # --- Backup / restore drill --------------------------------------------
+      # Phase 11, task #4: a real restore drill with evidence — not a documented
+      # hope. Dump the live database, wipe it, restore it, prove every row came
+      # back, and prove a workflow still executes end to end against the restored
+      # data. The application stack keeps running; only its database is destroyed
+      # and rebuilt underneath it.
+      - name: Backup and restore drill (PostgreSQL + RabbitMQ definitions)
+        run: |
+          set -euo pipefail
+
+          # Freeze writes so the before/after counts are taken against a stable
+          # database. The processes are restarted afterwards and reconnect to the
+          # restored data on their next query.
+          docker compose stop scheduler publisher worker web
+          sleep 3
+
+          # 1. Baseline row counts, read straight from PostgreSQL (no Django
+          #    import path needed) so the restore is verified against a real,
+          #    known-good value rather than an assumption.
+          COUNT_SQL="SELECT 'core_organization='    || COUNT(*) FROM core_organization
+          UNION ALL SELECT 'core_membership='      || COUNT(*) FROM core_membership
+          UNION ALL SELECT 'core_apikey='          || COUNT(*) FROM core_apikey
+          UNION ALL SELECT 'core_auditlog='        || COUNT(*) FROM core_auditlog
+          UNION ALL SELECT 'core_workflow='        || COUNT(*) FROM core_workflow
+          UNION ALL SELECT 'core_task='            || COUNT(*) FROM core_task
+          UNION ALL SELECT 'core_workflowrun='     || COUNT(*) FROM core_workflowrun
+          UNION ALL SELECT 'core_taskrun='         || COUNT(*) FROM core_taskrun
+          UNION ALL SELECT 'core_outboxmessage='   || COUNT(*) FROM core_outboxmessage
+          UNION ALL SELECT 'core_scheduledtrigger='|| COUNT(*) FROM core_scheduledtrigger
+          UNION ALL SELECT 'core_taskrunevent='    || COUNT(*) FROM core_taskrunevent
+          ORDER BY 1;"
+          docker compose exec -T db psql -U flowforge -d flowforge -t -A -c "$COUNT_SQL" > /tmp/before.counts
+          echo "BEFORE restore:"; cat /tmp/before.counts
+
+          # 2. Dump PostgreSQL in custom format (restorable, parallel-friendly).
+          docker compose exec -T db sh -c 'pg_dump -U flowforge -Fc flowforge > /tmp/flowforge.dump'
+          docker compose exec -T db sh -c 'head -c 8 /tmp/flowforge.dump | grep -q PgDMP && echo dump-magic-ok'
+          docker compose exec -T db ls -l /tmp/flowforge.dump
+
+          # 3. Export RabbitMQ definitions (durable topology: quorum queues,
+          #    exchanges, bindings, users, vhost, permissions) and prove the
+          #    export is genuinely re-importable by POSTing it straight back into
+          #    the same broker (a no-op for existing resources).
+          docker compose exec -T rabbitmq curl -s -u flowforge:flowforge \
+            http://localhost:15672/api/definitions > /tmp/rabbitmq-defs.json
+          python3 - <<'PY'
+          import json
+          d = json.load(open('/tmp/rabbitmq-defs.json'))
+          q = d.get('queues', [])
+          assert any(qd.get('type') == 'quorum' for qd in q), "no quorum queue in export"
+          print("rabbitmq definitions: queues=%d exchanges=%d vhosts=%d users=%d"
+                % (len(q), len(d.get('exchanges', [])), len(d.get('vhosts', [])), len(d.get('users', []))))
+          PY
+          cat /tmp/rabbitmq-defs.json | docker compose exec -T rabbitmq curl -s -o /tmp/rmq-import.txt \
+            -w 'rabbitmq-definitions re-import status=%{http_code}\n' \
+            -u flowforge:flowforge -H 'Content-Type: application/json' --data-binary @- \
+            http://localhost:15672/api/definitions/%2F
+          grep -Eq 'status=2[0-9][0-9]' /tmp/rmq-import.txt \
+            || { echo "rabbitmq definitions were not re-importable"; cat /tmp/rmq-import.txt; exit 1; }
+
+          # 4. Wipe: terminate any lingering backend, drop and recreate the
+          #    database. This is the "wipe" the drill must survive.
+          docker compose exec -T db psql -U flowforge -d postgres -c \
+            "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname='flowforge' AND pid <> pg_backend_pid();"
+          docker compose exec -T db psql -U flowforge -d postgres -c "DROP DATABASE flowforge;"
+          docker compose exec -T db psql -U flowforge -d postgres -c "CREATE DATABASE flowforge OWNER flowforge;"
+
+          # 5. Restore from the dump onto the freshly created (empty) database.
+          docker compose exec -T db sh -c 'pg_restore -U flowforge --dbname=flowforge --no-owner --clean --if-exists /tmp/flowforge.dump' \
+            && echo "pg_restore: completed" \
+            || echo "pg_restore: exited non-zero; verifying restored data below"
+
+          # 6. Verify: the row counts must match the baseline exactly.
+          docker compose exec -T db psql -U flowforge -d flowforge -t -A -c "$COUNT_SQL" > /tmp/after.counts
+          echo "AFTER restore:"; cat /tmp/after.counts
+          if ! diff -u /tmp/before.counts /tmp/after.counts; then
+            echo "ROW COUNTS DIVERGED AFTER RESTORE"; exit 1
+          fi
+          echo "row counts identical before/after restore"
+
+          # 7. Prove the restored database actually runs a workflow: bring the
+          #    stack back, wait for readiness, and execute the full pipeline.
+          docker compose start web scheduler publisher worker
+          code=""
+          for attempt in $(seq 1 90); do
+            code=$(curl -s -o /tmp/ready.json -w '%{http_code}' http://localhost:8000/health/ready/ || true)
+            if [ "$code" = "200" ]; then echo "stack ready after restore (attempt $attempt)"; break; fi
+            sleep 2
+          done
+          test "$code" = "200" || { echo "stack did not become ready after restore"; docker compose logs --no-color --tail=120; exit 1; }
+          docker compose exec -T web python manage.py sample_run --timeout 120
+          echo "workflow executed end to end against the restored database"
+
       - name: Container logs
         if: always()
         run: docker compose logs --no-color --tail=200
