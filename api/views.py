@@ -26,9 +26,10 @@ from __future__ import annotations
 from typing import Any
 
 from core.domain.schema import parse_workflow_definition
-from core.models import TaskRun, TaskRunEvent, Workflow, WorkflowRun
+from core.models import ApiKey, TaskRun, TaskRunEvent, Workflow, WorkflowRun
 from core.repositories.definitions import publish_definition
 from core.repositories.transitions import requeue_failed_task_run
+from core.services import api_keys as api_key_service
 from core.services import runs as run_service
 from django.db.models import Count, QuerySet
 from django.shortcuts import get_object_or_404
@@ -40,11 +41,21 @@ from rest_framework.request import Request
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from api import schema as _schema_extensions  # noqa: F401 - registers the OpenAPI auth scheme
 from api import tenancy
 from api.filters import WorkflowFilter, WorkflowRunFilter
 from api.pagination import StandardCursorPagination
-from api.permissions import IsAdmin, IsAuthenticatedAndActive, IsMember, IsViewer
+from api.permissions import (
+    HasApiKeyScope,
+    IsAdmin,
+    IsAuthenticatedAndActive,
+    IsMember,
+    IsViewer,
+)
 from api.serializers import (
+    ApiKeyCreatedSerializer,
+    ApiKeyCreateSerializer,
+    ApiKeySerializer,
     TaskRunEventSerializer,
     TaskRunSerializer,
     TriggerSerializer,
@@ -86,8 +97,10 @@ class WorkflowListCreateView(ListAPIView[Workflow]):
     def get_permissions(self) -> list[Any]:
         """Reading needs membership; publishing needs the admin role."""
         if self.request.method in SAFE_METHODS:
-            return [IsViewer()]
-        return [IsAdmin()]
+            self.required_scope = "read"
+            return [IsViewer(), HasApiKeyScope()]
+        self.required_scope = "admin"
+        return [IsAdmin(), HasApiKeyScope()]
 
     def get_throttles(self) -> list[Any]:
         """Reads and publishes are throttled at different rates."""
@@ -139,7 +152,8 @@ class WorkflowDetailView(RetrieveAPIView[Workflow]):
     round trip for nothing.
     """
 
-    permission_classes = [IsViewer]
+    permission_classes = [IsViewer, HasApiKeyScope]
+    required_scope = "read"
     serializer_class = WorkflowSerializer
     throttle_scope = "read"
     lookup_field = "name"
@@ -168,8 +182,10 @@ class RunListCreateView(ListAPIView[WorkflowRun]):
     def get_permissions(self) -> list[Any]:
         """Reading needs membership; triggering needs the member role."""
         if self.request.method in SAFE_METHODS:
-            return [IsViewer()]
-        return [IsMember()]
+            self.required_scope = "read"
+            return [IsViewer(), HasApiKeyScope()]
+        self.required_scope = "write"
+        return [IsMember(), HasApiKeyScope()]
 
     def get_throttles(self) -> list[Any]:
         """Triggering is expensive; listing is not."""
@@ -247,7 +263,8 @@ class RunDetailView(RetrieveAPIView[WorkflowRun]):
     run exists by probing for its id.
     """
 
-    permission_classes = [IsViewer]
+    permission_classes = [IsViewer, HasApiKeyScope]
+    required_scope = "read"
     serializer_class = WorkflowRunSerializer
     throttle_scope = "read"
 
@@ -267,7 +284,8 @@ class RunEventsView(ListAPIView[TaskRunEvent]):
     bounded by the number of tasks and their attempts.
     """
 
-    permission_classes = [IsViewer]
+    permission_classes = [IsViewer, HasApiKeyScope]
+    required_scope = "read"
     serializer_class = TaskRunEventSerializer
     throttle_scope = "read"
     pagination_class = None
@@ -293,7 +311,8 @@ class TaskRunRequeueView(APIView):
     as everywhere else, enforced by scoping the lookup to the caller's runs.
     """
 
-    permission_classes = [IsMember]
+    permission_classes = [IsMember, HasApiKeyScope]
+    required_scope = "write"
     throttle_scope = "trigger"
 
     @extend_schema(
@@ -323,6 +342,111 @@ class TaskRunRequeueView(APIView):
         return Response(TaskRunSerializer(task_run).data, status=status.HTTP_200_OK)
 
 
+class ApiKeyListCreateView(APIView):
+    """List the organization's API keys, or issue a new one.
+
+    Listing never exposes a secret: the stored value is a hash and the response
+    carries only metadata. Creation returns the plaintext key **exactly once**,
+    which is the only moment it can be captured.
+    """
+
+    permission_classes = [IsAdmin, HasApiKeyScope]
+    required_scope = "admin"
+    throttle_scope = "read"
+
+    def get_throttles(self) -> list[Any]:
+        """Issuing a key is a write; listing is a read."""
+        self.throttle_scope = "read" if self.request.method in SAFE_METHODS else "trigger"
+        return super().get_throttles()
+
+    @extend_schema(responses={200: ApiKeySerializer(many=True)}, tags=["api keys"])
+    def get(self, request: Request) -> Response:
+        """List the active organization's keys (metadata only)."""
+        keys = _api_key_queryset(request).order_by("-created_at")
+        return Response(ApiKeySerializer(keys, many=True).data)
+
+    @extend_schema(
+        request=ApiKeyCreateSerializer,
+        responses={201: ApiKeyCreatedSerializer},
+        tags=["api keys"],
+    )
+    def post(self, request: Request) -> Response:
+        """Issue a key and return its plaintext value once."""
+        body = ApiKeyCreateSerializer(data=request.data)
+        body.is_valid(raise_exception=True)
+        organization = tenancy.require_active_organization(request)
+        api_key, plaintext = api_key_service.create_api_key(
+            organization=organization,
+            name=body.validated_data["name"],
+            scopes=list(body.validated_data.get("scopes") or ["read"]),
+            created_by=request.user,
+            expires_at=body.validated_data.get("expires_at"),
+        )
+        payload = ApiKeyCreatedSerializer(api_key, context={"plaintext": plaintext}).data
+        return Response(payload, status=status.HTTP_201_CREATED)
+
+
+class ApiKeyRotateView(APIView):
+    """Revoke a key and issue a replacement, returning the new plaintext once."""
+
+    permission_classes = [IsAdmin, HasApiKeyScope]
+    required_scope = "admin"
+    throttle_scope = "trigger"
+
+    @extend_schema(
+        request=None,
+        responses={200: ApiKeyCreatedSerializer},
+        tags=["api keys"],
+    )
+    def post(self, request: Request, pk: Any) -> Response:
+        """Rotate the key named by ``pk`` within the caller's organization."""
+        api_key = get_object_or_404(_api_key_queryset(request), pk=pk)
+        new_key, plaintext = api_key_service.rotate_api_key(api_key=api_key)
+        payload = ApiKeyCreatedSerializer(new_key, context={"plaintext": plaintext}).data
+        return Response(payload, status=status.HTTP_200_OK)
+
+
+class ApiKeyRevokeView(APIView):
+    """Revoke a key. The row is kept so the credential's history stays auditable."""
+
+    permission_classes = [IsAdmin, HasApiKeyScope]
+    required_scope = "admin"
+    throttle_scope = "trigger"
+
+    @extend_schema(
+        request=None,
+        responses={200: ApiKeySerializer},
+        tags=["api keys"],
+    )
+    def post(self, request: Request, pk: Any) -> Response:
+        """Revoke the key named by ``pk`` within the caller's organization."""
+        api_key = get_object_or_404(_api_key_queryset(request), pk=pk)
+        api_key_service.revoke_api_key(api_key=api_key)
+        api_key.refresh_from_db()
+        return Response(ApiKeySerializer(api_key).data, status=status.HTTP_200_OK)
+
+
+def _is_staff_bypass(request: Request) -> bool:
+    """Whether this request gets the staff cross-tenant read bypass.
+
+    A request authenticated by an API key never does: a key is bound to exactly
+    one organization, so even a key created by a staff user is scoped to that
+    organization. Letting a key inherit the staff bypass would turn one
+    organization's credential into a read-all credential.
+    """
+    return bool(request.user.is_staff and getattr(request, "api_key", None) is None)
+
+
+def _api_key_queryset(request: Request) -> QuerySet[ApiKey]:
+    """The API keys this caller may manage, scoped to their organization."""
+    if _is_staff_bypass(request):
+        return ApiKey.objects.all()
+    organization = tenancy.get_active_organization(request)
+    if organization is None:
+        return ApiKey.objects.none()
+    return ApiKey.objects.for_organization(organization)
+
+
 def _workflow_queryset(request: Request) -> QuerySet[Workflow]:
     """The definitions this caller may see.
 
@@ -332,7 +456,7 @@ def _workflow_queryset(request: Request) -> QuerySet[Workflow]:
     ordinary caller with no resolvable organization gets an empty queryset rather
     than a cross-tenant one.
     """
-    if request.user.is_staff:
+    if _is_staff_bypass(request):
         return Workflow.objects.all()
     organization = tenancy.get_active_organization(request)
     if organization is None:
@@ -342,7 +466,7 @@ def _workflow_queryset(request: Request) -> QuerySet[Workflow]:
 
 def _run_queryset(request: Request) -> QuerySet[WorkflowRun]:
     """The runs this caller may see, scoped to their organization."""
-    if request.user.is_staff:
+    if _is_staff_bypass(request):
         return WorkflowRun.objects.select_related("workflow").order_by("-created_at", "-id")
     organization = tenancy.get_active_organization(request)
     if organization is None:
