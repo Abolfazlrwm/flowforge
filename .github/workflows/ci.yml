@@ -648,6 +648,11 @@ jobs:
       # Every virtual user authenticates as the same fixture account, so ten
       # logins in the first second would trip the 10/min default on their own.
       THROTTLE_AUTH_RATE: "100000/min"
+      # The scheduler polls every 5s by default, and a 4-task diamond needs four
+      # passes — so the default cadence puts a 20-second floor under every run and
+      # the first run of this job measured exactly that (median end-to-end
+      # 20000 ms). Lowering it measures the engine instead of the poll interval.
+      SCHEDULER_INTERVAL: "0.25"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
@@ -662,6 +667,10 @@ jobs:
 
       - name: Record the machine
         run: |
+          # Written into the artifact, not /tmp: the report cites these figures,
+          # and an environment description that is not committed with the numbers
+          # is an unverifiable claim.
+          mkdir -p loadtest-results
           {
             echo "runner: $(uname -srm)"
             echo "cpus: $(nproc)"
@@ -670,7 +679,9 @@ jobs:
             echo "locust: $(uv run locust --version 2>&1 | head -1)"
             echo "python: $(python -V 2>&1)"
             echo "uv: $(uv --version)"
-          } | tee /tmp/environment.txt
+            echo "docker: $(docker --version)"
+            echo "commit: $(git rev-parse HEAD)"
+          } | tee loadtest-results/environment.txt
 
       - name: Build production image
         run: docker build --target production -t flowforge:ci .
