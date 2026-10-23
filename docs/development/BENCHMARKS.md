@@ -121,8 +121,7 @@ it with a separate `SELECT`:
 ```python
 if organization_id is None:
     organization_id = (
-        TaskRun.objects.filter(pk=task_run_id)
-        .values_list("organization_id", flat=True).first()
+        TaskRun.objects.filter(pk=task_run_id).values_list("organization_id", flat=True).first()
     )
 ```
 
