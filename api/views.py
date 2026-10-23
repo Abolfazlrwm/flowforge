@@ -27,6 +27,9 @@ from typing import Any
 
 from core.domain.schema import parse_workflow_definition
 from core.models import ApiKey, Membership, TaskRun, TaskRunEvent, Workflow, WorkflowRun
+from core.observability import context as obs_context
+from core.observability import metrics as obs_metrics
+from core.observability import tracing
 from core.repositories.definitions import publish_definition
 from core.repositories.transitions import requeue_failed_task_run
 from core.services import api_keys as api_key_service
@@ -36,11 +39,12 @@ from core.services import runs as run_service
 from django.contrib.auth.models import User
 from django.db import transaction
 from django.db.models import Count, QuerySet
+from django.http import HttpResponse
 from django.shortcuts import get_object_or_404
 from drf_spectacular.utils import OpenApiParameter, OpenApiResponse, extend_schema
 from rest_framework import status
 from rest_framework.generics import ListAPIView, RetrieveAPIView
-from rest_framework.permissions import SAFE_METHODS
+from rest_framework.permissions import SAFE_METHODS, AllowAny
 from rest_framework.request import Request
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -91,6 +95,35 @@ class MeView(APIView):
     def get(self, request: Request) -> Response:
         """Return the caller's own account."""
         return Response(UserSerializer(request.user).data)
+
+
+class MetricsView(APIView):
+    """Prometheus metrics for the web process.
+
+    The body is aggregate only — state counts, outbox depth and lag, DEAD count,
+    due triggers — with no tenant identifier, username or task key. It is
+    deliberately unauthenticated so a Prometheus sidecar can scrape it without a
+    credential; deploy it on a private network (the compose ``observability``
+    profile does). It is read-only and cheap: every gauge is an indexed count
+    computed at scrape time.
+    """
+
+    permission_classes = [AllowAny]
+    authentication_classes = []
+    throttle_scope = "read"
+
+    @extend_schema(
+        responses={
+            (200, "text/plain"): OpenApiResponse(description="Prometheus text exposition format.")
+        },
+        tags=["observability"],
+    )
+    def get(self, _request: Request) -> HttpResponse:
+        """Render the registry in the Prometheus text format."""
+        return HttpResponse(
+            obs_metrics.render_metrics(),
+            content_type="text/plain; version=0.0.4; charset=utf-8",
+        )
 
 
 class WorkflowListCreateView(ListAPIView[Workflow]):
@@ -254,13 +287,32 @@ class RunListCreateView(ListAPIView[WorkflowRun]):
         )
 
         key = request.headers.get(IDEMPOTENCY_HEADER) or None
-        run, created = run_service.trigger(
-            workflow,
-            requested_by_id=request.user.pk,
-            organization=workflow.organization,
-            idempotency_key=key,
-            fingerprint=run_service.request_fingerprint(trigger.validated_data),
+        correlation_id = obs_context.current_correlation_id()
+        obs_context.bind_request_context(
+            correlation_id=correlation_id,
+            organization_id=workflow.organization_id,
         )
+        tracing.configure_tracing("web")
+        # The span is the root the scheduler and the worker continue. Its
+        # traceparent is stored on the run because the outbox crosses a process
+        # boundary where no live span exists.
+        with tracing.start_span(
+            "run.trigger",
+            attributes={
+                "flowforge.organization_id": str(workflow.organization_id or ""),
+                "flowforge.workflow": workflow.name,
+                "flowforge.workflow_version": workflow.version,
+            },
+        ):
+            run, created = run_service.trigger(
+                workflow,
+                requested_by_id=request.user.pk,
+                organization=workflow.organization,
+                idempotency_key=key,
+                fingerprint=run_service.request_fingerprint(trigger.validated_data),
+                correlation_id=correlation_id,
+                traceparent=tracing.current_traceparent(),
+            )
 
         if created:
             audit_service.record(

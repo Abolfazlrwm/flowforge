@@ -378,6 +378,12 @@ class WorkflowRun(models.Model):
         on_delete=models.SET_NULL,
         related_name="workflow_runs",
     )
+    # Observability (Phase 9). `correlation_id` ties the API request, the
+    # scheduler's dispatch and the worker's execution together in the logs;
+    # `traceparent` carries the W3C trace context across the outbox boundary,
+    # where there is no live span to inherit from.
+    correlation_id = models.CharField(max_length=64, blank=True, default="")
+    traceparent = models.CharField(max_length=128, blank=True, default="")
 
     objects = OrganizationScopedManager()
 
@@ -654,6 +660,11 @@ class OutboxMessage(models.Model):
     # The message body. Carries the dispatch id, the task identity and a snapshot of
     # the task's configuration at dispatch time, so the worker needs no other lookup.
     payload = models.JSONField(default=dict)
+    # Observability: the log correlation id and the W3C trace context the worker
+    # continues. Both are copied from the run at dispatch time and repeated in the
+    # payload, so the worker does not need a second lookup to log or trace.
+    correlation_id = models.CharField(max_length=64, blank=True, default="")
+    traceparent = models.CharField(max_length=128, blank=True, default="")
     # The generation this row represents, frozen at creation. Part of the unique key.
     fencing_token_snapshot = models.PositiveBigIntegerField(default=0)
     attempt_snapshot = models.PositiveIntegerField(default=1)

@@ -48,13 +48,15 @@ def request_fingerprint(payload: Any) -> str:
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
-def trigger(
+def trigger(  # noqa: PLR0913 - one keyword per trigger option
     workflow: Workflow,
     *,
     requested_by_id: int | None,
     organization: Organization | None = None,
     idempotency_key: str | None = None,
     fingerprint: str = "",
+    correlation_id: str | None = None,
+    traceparent: str | None = None,
 ) -> tuple[WorkflowRun, bool]:
     """Create a run of ``workflow`` and its task runs.
 
@@ -66,6 +68,10 @@ def trigger(
             passes the active organization explicitly.
         idempotency_key: The client's ``Idempotency-Key`` header, if any.
         fingerprint: Digest of the request body. Only used when a key is given.
+        correlation_id: The log correlation id for this request, if any.
+        traceparent: The W3C trace context to continue in the scheduler and the
+            worker. Stored on the run because the request's span is over by the
+            time the scheduler runs.
 
     Returns:
         The run, and whether it was created by this call. ``False`` means a
@@ -82,7 +88,16 @@ def trigger(
 
     if idempotency_key is None:
         with transaction.atomic():
-            return _materialise(workflow, requested_by_id=requested_by_id, organization=org), True
+            return (
+                _materialise(
+                    workflow,
+                    requested_by_id=requested_by_id,
+                    organization=org,
+                    correlation_id=correlation_id,
+                    traceparent=traceparent,
+                ),
+                True,
+            )
 
     try:
         with transaction.atomic():
@@ -95,7 +110,13 @@ def trigger(
                 key=idempotency_key,
                 fingerprint=fingerprint,
             )
-            run = _materialise(workflow, requested_by_id=requested_by_id, organization=org)
+            run = _materialise(
+                workflow,
+                requested_by_id=requested_by_id,
+                organization=org,
+                correlation_id=correlation_id,
+                traceparent=traceparent,
+            )
             idempotency.complete(claim, status=202, body={}, workflow_run_id=run.pk)
             return run, True
     except IntegrityError:
@@ -119,7 +140,12 @@ def trigger(
 
 
 def _materialise(
-    workflow: Workflow, *, requested_by_id: int | None, organization: Organization | None
+    workflow: Workflow,
+    *,
+    requested_by_id: int | None,
+    organization: Organization | None,
+    correlation_id: str | None = None,
+    traceparent: str | None = None,
 ) -> WorkflowRun:
     """Create the run row and one task run per task.
 
@@ -131,7 +157,11 @@ def _materialise(
     definition: WorkflowDefinition = load_definition(workflow)
 
     run = WorkflowRun.objects.create(
-        workflow=workflow, organization=organization, requested_by_id=requested_by_id
+        workflow=workflow,
+        organization=organization,
+        requested_by_id=requested_by_id,
+        correlation_id=correlation_id or "",
+        traceparent=traceparent or "",
     )
     tasks_by_key = {task.key: task for task in Task.objects.filter(workflow=workflow)}
     TaskRun.objects.bulk_create(
