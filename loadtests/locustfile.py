@@ -29,11 +29,18 @@ Environment variables (all optional; the defaults target the compose stack):
 from __future__ import annotations
 
 import os
+import threading
 import time
 import uuid
 from typing import Any
 
 from locust import HttpUser, between, events, task
+
+#: Guards the one-time publish. Every virtual user publishes the same definition,
+#: so without this ten concurrent inserts race and the losers report a conflict.
+#: A mutable holder rather than a module global, so the update needs no `global`.
+_publish_lock = threading.Lock()
+_publish_state: dict[str, bool] = {"done": False}
 
 #: A diamond: ``seed`` fans out to two independent tasks, both feed ``combine``.
 #: Four tasks per run is enough to exercise the fan-out/fan-in path without the
@@ -102,7 +109,7 @@ class FlowForgeUser(HttpUser):
     host = os.environ.get("LOCUST_HOST", "http://localhost:8000")
 
     def on_start(self) -> None:
-        """Authenticate once and publish the workflow this user will trigger."""
+        """Authenticate once, then make sure the workflow exists."""
         self.username = os.environ.get("LOCUST_USERNAME", "loadtest")
         self.password = os.environ.get("LOCUST_PASSWORD", "loadtest-password")
         self.token: str | None = None
@@ -123,20 +130,35 @@ class FlowForgeUser(HttpUser):
         if not self.token:
             return
 
-        # Publishing is idempotent by (name, version): a second publish of the
-        # same definition returns the existing workflow rather than creating a
-        # duplicate, so a user that restarts mid-run does not fork the workload.
-        with self.client.post(
-            "/api/v1/workflows/",
-            json=WORKFLOW_DEFINITION,
-            headers=self._headers(),
-            name="publish workflow",
-            catch_response=True,
-        ) as response:
-            if response.status_code in (200, 201):
-                self.workflow_ready = True
-            else:
-                response.failure(f"publish returned {response.status_code}")
+        self.workflow_ready = self._ensure_published()
+
+    def _ensure_published(self) -> bool:
+        """Publish the workflow exactly once per process.
+
+        Every virtual user publishes the same definition, and `publish_definition`
+        is idempotent by `(name, version)` — but ten concurrent publishes still
+        race on the insert, and the loser sees a conflict. A module-level lock
+        means one publish happens and the rest just wait for it, which keeps the
+        publish out of the measured request mix entirely.
+        """
+        with _publish_lock:
+            if _publish_state["done"]:
+                return True
+            with self.client.post(
+                "/api/v1/workflows/",
+                json=WORKFLOW_DEFINITION,
+                headers=self._headers(),
+                name="publish workflow",
+                catch_response=True,
+            ) as response:
+                # 200/201: created or already identical. 409: already published
+                # with a different body, which still means the workflow exists and
+                # is triggerable — the run would fail for a different reason.
+                if response.status_code in (200, 201, 409):
+                    _publish_state["done"] = True
+                else:
+                    response.failure(f"publish returned {response.status_code}")
+        return _publish_state["done"]
 
     def _headers(self) -> dict[str, str]:
         """The auth header, or nothing when authentication failed."""

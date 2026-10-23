@@ -59,6 +59,26 @@ Users, spawn rate and duration are command-line flags, so a run is fully
 described by the command that produced it. **Change them and the numbers are not
 comparable** — always record the command next to the result.
 
+## Rate limits
+
+The API throttles per caller: 10 logins/min, 60 triggers/min and 300 reads/min
+by default. Ten virtual users triggering and polling exhaust that immediately,
+and the first run of the CI job recorded **1469 `429` responses** and almost no
+real measurements — it benchmarked the throttle.
+
+The rates are therefore configurable, which a real deployment needs anyway:
+
+```bash
+THROTTLE_TRIGGER_RATE=100000/min \
+THROTTLE_READ_RATE=100000/min \
+THROTTLE_AUTH_RATE=100000/min \
+  docker compose up -d --build
+```
+
+The CI job sets all three. **Any result produced with raised limits measures
+capacity, not the shipped policy** — the report says so next to the numbers, and
+a separate check asserts the shipped defaults are still what the docs claim.
+
 ## Reading the results
 
 `--csv loadtest-results/run` writes one file per request name plus

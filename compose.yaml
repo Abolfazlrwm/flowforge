@@ -25,12 +25,21 @@ x-app-environment: &app-environment
   # Observability. The processes that run no web server expose their own metrics
   # endpoint when given a port; zero disables it. The web process serves the same
   # registry at /api/v1/metrics/ on port 8000 and needs no extra port.
-  SCHEDULER_METRICS_PORT: ${SCHEDULER_METRICS_PORT:-9101}
-  PUBLISHER_METRICS_PORT: ${PUBLISHER_METRICS_PORT:-9102}
-  WORKER_METRICS_PORT: ${WORKER_METRICS_PORT:-9103}
+  #
+  # The port itself is passed on the `command:` line, not through the
+  # environment: compose does NOT run a shell-form command through a shell, so a
+  # `$VAR` there is passed literally. `command:` uses the list form and
+  # `${VAR:-default}`, which compose interpolates itself at parse time.
+  #
   # Empty by default so the plain stack does not try to export spans to a
   # collector that is not running. See the observability profile below.
   OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
+  # Per-caller API rate limits. The defaults are the shipped policy; the
+  # load-test job raises them so the benchmark measures the engine rather than
+  # the throttle.
+  THROTTLE_AUTH_RATE: ${THROTTLE_AUTH_RATE:-10/min}
+  THROTTLE_TRIGGER_RATE: ${THROTTLE_TRIGGER_RATE:-60/min}
+  THROTTLE_READ_RATE: ${THROTTLE_READ_RATE:-300/min}
 
 # Shared healthcheck for the processes that run no HTTP server. The Dockerfile's
 # port-8000 check would always fail for them; `manage.py healthcheck` verifies the
@@ -142,12 +151,11 @@ services:
         condition: service_healthy
     volumes:
       - .:/app
-    # Shell form, and `$$` escapes the variable so *compose* leaves it alone and
-    # the container's shell expands it from this service's `environment:` block.
-    # A single `$` would make compose interpolate it at parse time, and with no
-    # host-side value it would become an empty string — which is how the
-    # scheduler once died on `int("")`.
-    command: python manage.py scheduler --metrics-port "$$SCHEDULER_METRICS_PORT"
+    # List form: compose interpolates `${...}` itself, with a default, so an
+    # unset host variable still yields a valid port. A shell-form command would
+    # NOT expand `$VAR` — compose does not run it through a shell — and the
+    # literal string would reach argparse.
+    command: ["python", "manage.py", "scheduler", "--metrics-port", "${SCHEDULER_METRICS_PORT:-9101}"]
     healthcheck: *app-healthcheck
 
   publisher:
@@ -166,7 +174,7 @@ services:
         condition: service_healthy
     volumes:
       - .:/app
-    command: python manage.py publisher --metrics-port "$$PUBLISHER_METRICS_PORT"
+    command: ["python", "manage.py", "publisher", "--metrics-port", "${PUBLISHER_METRICS_PORT:-9102}"]
     healthcheck: *app-healthcheck
 
   worker:
@@ -185,7 +193,7 @@ services:
         condition: service_healthy
     volumes:
       - .:/app
-    command: python manage.py worker --metrics-port "$$WORKER_METRICS_PORT"
+    command: ["python", "manage.py", "worker", "--metrics-port", "${WORKER_METRICS_PORT:-9103}"]
     healthcheck: *app-healthcheck
 
   # --- observability profile -------------------------------------------------
