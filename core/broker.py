@@ -15,12 +15,19 @@ the row pending, a later sweep redelivers it, and the worker de-duplicates on
 
 from __future__ import annotations
 
+import contextlib
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
 from django.db import transaction
 
+from core.observability import metrics as obs_metrics
+from core.observability import tracing
 from core.repositories.outbox import fetch_pending, mark_published
+
+#: The queue the publisher feeds and the worker drains. Kept here (no pika) so
+#: the broker-agnostic module and the metrics probe can name it.
+DISPATCH_QUEUE = "flowforge.tasks"
 
 
 class Publisher(Protocol):
@@ -32,6 +39,15 @@ class Publisher(Protocol):
         Must block until the broker has confirmed receipt (publisher confirms), so
         the caller can mark the outbox row delivered. Raising here leaves the row
         pending and therefore redeliverable.
+        """
+        ...
+
+    def queue_depth(self, queue: str) -> int:
+        """Return the broker's current message count for ``queue``.
+
+        A metrics probe, not part of delivery: a publisher whose broker does not
+        support a passive declare may raise, and the caller treats that as "no
+        reading" rather than as a failed sweep.
         """
         ...
 
@@ -54,6 +70,10 @@ class FakePublisher:
         """Record the delivery instead of sending it."""
         self.sent.append({"exchange": exchange, "routing_key": routing_key, "payload": payload})
 
+    def queue_depth(self, _queue: str) -> int:
+        """An in-memory publisher has no broker queue; report zero."""
+        return 0
+
     def close(self) -> None:
         """Nothing to release for an in-memory publisher."""
         return None
@@ -74,13 +94,32 @@ def publish_once(publisher: Publisher, *, limit: int = 1000) -> int:
     published = 0
     with transaction.atomic():
         for message in fetch_pending(limit=limit):
-            publisher.publish(
-                exchange=message.exchange,
-                routing_key=message.routing_key,
-                payload=message.payload,
-            )
+            # The publisher's span is a child of the scheduler's dispatch span;
+            # its traceparent replaces the one in the *published* payload (the
+            # stored row is unchanged), so the worker continues the publisher's
+            # span and the chain API -> scheduler -> publisher -> worker shares
+            # one trace id.
+            with tracing.start_span(
+                "outbox.publish",
+                context=tracing.context_from_traceparent(message.traceparent),
+                attributes={
+                    "flowforge.dispatch_id": str(message.id),
+                    "flowforge.organization_id": str(message.organization_id or ""),
+                },
+            ):
+                payload = dict(message.payload)
+                payload["traceparent"] = tracing.current_traceparent() or message.traceparent
+                publisher.publish(
+                    exchange=message.exchange,
+                    routing_key=message.routing_key,
+                    payload=payload,
+                )
             if mark_published(message.id):
                 published += 1
+    # Outside the transaction: a probe failure must not roll back a confirmed
+    # publish, and an unsupported passive declare is not a delivery failure.
+    with contextlib.suppress(Exception):
+        obs_metrics.set_queue_depth(DISPATCH_QUEUE, publisher.queue_depth(DISPATCH_QUEUE))
     return published
 
 

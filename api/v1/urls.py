@@ -19,6 +19,7 @@ from api.views import (
     ApiKeyRotateView,
     MemberDetailView,
     MemberListCreateView,
+    MetricsView,
     MeView,
     RunDetailView,
     RunEventsView,
@@ -72,6 +73,10 @@ urlpatterns: list[URLPattern] = [
     # owner may grant or modify the owner role; the last owner is permanent.
     path("members/", MemberListCreateView.as_view(), name="member-list"),
     path("members/<uuid:pk>/", MemberDetailView.as_view(), name="member-detail"),
+    # --- observability ------------------------------------------------------
+    # Aggregate, non-tenant metrics for a Prometheus scrape. Kept out of the
+    # authenticated surface on purpose; the compose profile binds it internally.
+    path("metrics/", MetricsView.as_view(), name="metrics"),
     # --- schema -------------------------------------------------------------
     # The schema is committed to `docs/api/openapi.yaml` and CI fails if it has
     # drifted. Serving it here is for humans reading the docs site.
