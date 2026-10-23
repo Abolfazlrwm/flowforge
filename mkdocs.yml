@@ -32,6 +32,10 @@ nav:
       - Failure Model: architecture/failure-model.md
   - API:
       - Overview: api/overview.md
+      - Reference: api/reference.md
+  - Client:
+      - Python SDK: sdk/index.md
+      - Command Line: cli.md
   - Security:
       - Threat Model: security/threat-model.md
   - Development:
