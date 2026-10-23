@@ -2,11 +2,13 @@
 
 ## Current Phase
 
-**Phase 7 — Advanced Workflows: COMPLETE (v0.8.0).** Merged on
-`feat/phase7-advanced-workflows`, tagged `v0.8.0`, released. Fan-out/fan-in,
-conditional branching on a sandboxed expression language, cron scheduling with no
-double-fire across instances, cooperative cancellation, an append-only event log,
-manual re-run of a failed task, and saga-style compensation. Phase 8 is next.
+**Phase 8 — Security & Multi-Tenancy: COMPLETE (v0.9.0).** Merged on
+`feat/phase8-security-multitenancy`, tagged `v0.9.0`, released. Organizations and
+memberships with `owner/admin/member/viewer` roles, per-organization scoping by
+construction, per-tenant definition and idempotency uniqueness, hashed API keys
+with scopes/expiry/rotation/revocation, an append-only audit log enforced by a
+database trigger, secret redaction, a tenant-isolation suite, `bandit` +
+`pip-audit` in CI, and the STRIDE threat model (ADR-014). Phase 9 is next.
 
 ## Resume point
 
@@ -14,12 +16,13 @@ If this session is resumed cold, read this section first.
 
 | Question | Answer |
 |----------|--------|
-| Where is the work | `main` is at `v0.8.0`. Phase 7 is merged, tagged and released. |
-| What is released | `v0.1.0` … `v0.8.0` (including the `v0.5.1`, `v0.6.1`, `v0.7.1` and `v0.7.2` gap releases). |
+| Where is the work | `main` is at `v0.9.0`. Phase 8 is merged, tagged and released. |
+| What is released | `v0.1.0` … `v0.9.0` (including the `v0.5.1`, `v0.6.1`, `v0.7.1` and `v0.7.2` gap releases). |
 | Framework | **Django 5.2 LTS** (owner decision, [ADR-010](../adr/ADR-010-django-5-2-lts.md)). Python stays at 3.13. |
 | Message broker | **RabbitMQ via pika**, no Celery ([ADR-011](../adr/ADR-011-custom-scheduler-and-transactional-outbox.md)). `RABBITMQ_URL` is the one broker. |
-| What is next | Phase 8 (to be defined with the owner). |
-| What blocks Phase 8 | **Nothing.** |
+| Tenancy | **Shared schema, per-organization scoping** ([ADR-014](../adr/ADR-014-multi-tenancy-shared-schema.md)). Every tenant read goes through `OrganizationScopedManager.for_organization`. |
+| What is next | Phase 9 (to be defined with the owner). |
+| What blocks Phase 9 | **Nothing.** |
 | What else is open | Nothing pending an owner decision. Release tags are cut automatically on green CI; only `v1.0.0` needs owner approval ([DECISIONS.md](DECISIONS.md)). |
 
 ## Status
@@ -38,10 +41,11 @@ If this session is resumed cold, read this section first.
 | Broker/DB resilience | **MERGED** as `0d05e42` (PR #33), tagged `v0.7.1` |
 | Resilience verification | **MERGED** as `47ca4f4` (PR #34), tagged `v0.7.2` |
 | Phase 7 | **MERGED** (PR #36), tagged `v0.8.0` |
-| CI | Green on `main`: `lint`, `test`, `schema`, `docs`, `docker` (Phase 6 run `39605151141`) |
+| Phase 8 | **COMPLETE** on `feat/phase8-security-multitenancy`; merge pending green CI |
+| CI | Green on `main`: `lint` (now incl. `bandit` + `pip-audit`), `test`, `schema`, `docs`, `docker` |
 | Docker | **Verified in CI** (build + compose up + health probes + e2e + failure injection). Accepted by owner decision 2026-10-19 — no local check is required |
-| Tags | `v0.1.0` … `v0.8.0`, annotated. |
-| GitHub Releases | Published for `v0.1.0` … `v0.8.0`. |
+| Tags | `v0.1.0` … `v0.9.0`, annotated. |
+| GitHub Releases | Published for `v0.1.0` … `v0.9.0`. |
 | Branch protection | Active on `main`: `lint`, `test`, `docker` required, strict, no force push, 0 approving reviews, **admins cannot bypass** (`enforce_admins`) |
 | Django | **5.2 LTS** (ADR-010) |
 | Python | 3.13 (3.14 deferred — see limitations) |
@@ -301,6 +305,40 @@ If this session is resumed cold, read this section first.
     and marks the ones without one UNVERIFIED (clock skew, broker durability,
     in-flight sibling cancellation).
 
+### Phase 8 — Security & Multi-Tenancy
+
+81. `Organization` and `Membership` (`owner`/`admin`/`member`/`viewer`), with a
+    unique role per `(organization, user)`.
+82. `organization` FK on every tenant model (`Workflow`, `WorkflowRun`,
+    `TaskRun`, `TaskRunEvent`, `ScheduledTrigger`, `OutboxMessage`,
+    `IdempotencyKey`, `ApiKey`, `AuditLog`) and
+    `OrganizationScopedManager.for_organization` as the read path (ADR-014).
+    Another tenant's id is a 404, not a 403.
+83. Per-organization uniqueness: `(organization, name, version)` for definitions
+    and `(organization, user, key)` for idempotency claims.
+84. Reversible migration: `core.0011` adds nullable columns, `core.0012` creates a
+    default organization and backfills; the reverse detaches and removes it.
+85. API keys: `ff_<hex-prefix>_<hex-secret>`, only a `make_password` hash stored,
+    scopes (`read < write < admin`), expiry, rotation, revocation, shown once.
+    `ApiKeyAuthentication` fixes the tenant to the key and refuses an orphaned
+    key. A key never inherits the staff cross-tenant bypass.
+86. Append-only `AuditLog` with a database trigger (`core.0015`) that rejects
+    `UPDATE` and `DELETE`; entries for publish, trigger, requeue and key
+    lifecycle; metadata redacted before writing.
+87. `core.security.redact_mapping` redacts by key name and by an explicit
+    `secret: true` marker, recursively and without mutating the input; applied to
+    the API's task `config`.
+88. Tenant-isolation suite: every cross-tenant id is a 404; a role-permission
+    matrix covers every role; API-key lifecycle (expired, revoked, wrong scope,
+    rotated, orphaned) is tested.
+89. STRIDE threat model ([`docs/security/threat-model.md`](../security/threat-model.md))
+    and ADR-014 ([`docs/adr/ADR-014-multi-tenancy-shared-schema.md`](../adr/ADR-014-multi-tenancy-shared-schema.md)).
+90. `bandit` and `pip-audit` are required `lint`-job checks. `pip-audit` found
+    real vulnerabilities and forced `djangorestframework` 3.17.2 → 3.18.3
+    (CVE-2026-114136/114137/114138) and `certifi` → 2026.10.19; the three
+    intentional `bandit` findings are annotated at the line, not suppressed
+    globally.
+
 ## Verification
 
 ### In CI (authoritative)
@@ -505,6 +543,23 @@ passed only because of container start ordering.
     Mermaid syntax is wrong renders as an error box in the browser and passes CI.
     Deploying to GitHub Pages is deferred to Phase 10.
 
+### Security (Phase 8)
+
+- **No membership-management endpoints.** Roles exist in the data model and are
+  enforced, but there is no API to add/remove a member or change a role, and no
+  audit entry for such a change. A Phase 9 follow-up.
+- **Application-level scoping, not PostgreSQL RLS.** The primary tenant boundary
+  is `OrganizationScopedManager`; RLS is a recorded follow-up (ADR-014), not the
+  current mechanism.
+- **Staff is a cross-tenant read bypass.** Intentional and narrow; an API key is
+  excluded from it, and the isolation suite uses ordinary members.
+- **The audit log is not tamper-evident against a database owner.** The trigger
+  stops `UPDATE`/`DELETE` through SQL, but a superuser can drop the trigger.
+- **Secret redaction is key-name based.** A secret stored under an innocuous key
+  is not redacted unless the mapping declares `secret: true`.
+- **Throttling is per-process.** A distributed deployment needs a shared cache;
+  the test suite uses a local cache.
+
 ## Dependency decisions
 
 The Dependabot backlog was resolved as a single coordinated upgrade rather than
@@ -528,17 +583,15 @@ None.
 
 ## Next step
 
-Phase 6 is complete and released as `v0.7.0`. Phase 7 is next.
+Phase 8 is complete and released as `v0.9.0`. Phase 9 is next; its scope is to be
+defined with the owner.
 
-The three gaps Phase 7 will feel, all recorded in
-[`docs/architecture/failure-model.md`](../architecture/failure-model.md):
+The security follow-ups Phase 9 may pick up, all recorded in the limitations
+above and in [ADR-014](../adr/ADR-014-multi-tenancy-shared-schema.md):
 
-- **the worker does not reconnect to RabbitMQ** (failure mode 14) — a broker
-  restart requires restarting the processes;
-- **broker durability is classic-queue durability** (failure mode 17) — a quorum
-  queue is the fix;
-- **a failed run does not cancel its running siblings** (failure mode 11) —
-  cooperative cancellation is not implemented.
+- membership-management endpoints and their audit entries;
+- PostgreSQL RLS as a second tenant boundary;
+- a database-level check that a child row's organization matches its parent's.
 
 ## Ordering note
 

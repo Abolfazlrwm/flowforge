@@ -173,3 +173,22 @@ statement); they now wrap both in `transaction.atomic()`, matching the scheduler
 paths and the outbox (ADR-011). A crash rolls back the state change and its event
 together, so the audit trail has no silent gap.
 **Full ADR:** [`docs/adr/ADR-013-event-log-is-transactional.md`](../adr/ADR-013-event-log-is-transactional.md)
+
+## ADR-014: Multi-Tenancy via a Shared Schema and Per-Organization Scoping (v0.9.0)
+
+**Status:** Accepted 2026-10-23.
+
+One shared schema; an `organization` FK on every tenant row; every read through
+`OrganizationScopedManager.for_organization`, so another tenant's row is absent
+from the queryset and a lookup by its id is a **404, not a 403**. Definitions are
+unique on `(organization, name, version)` and idempotency claims on
+`(organization, user, key)`. Authorization is per organization
+(`owner > admin > member > viewer`), not per user; staff is a narrow operational
+read bypass that an API key never inherits. API keys are hashed at rest, bound to
+one organization, scoped, expirable and revocable. The audit log is append-only at
+the database level. The schema migration adds nullable columns and a data
+migration backfills a default organization, so the change is reversible.
+PostgreSQL RLS is recorded as a follow-up, not the primary boundary, because the
+unit suite runs on SQLite.
+
+**Full ADR:** [`docs/adr/ADR-014-multi-tenancy-shared-schema.md`](../adr/ADR-014-multi-tenancy-shared-schema.md)
