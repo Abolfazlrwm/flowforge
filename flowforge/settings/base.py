@@ -40,7 +40,8 @@ _secret_key: str | None = env("DJANGO_SECRET_KEY", default=None)
 
 if not _secret_key:
     if DEBUG:
-        _secret_key = "django-insecure-dev-only-key-do-not-use-in-production"  # noqa: S105
+        # Dev-only fallback, never accepted with DEBUG off. Not a credential.
+        _secret_key = "django-insecure-dev-only-key-do-not-use-in-production"  # noqa: S105  # nosec B105
     else:
         raise ImproperlyConfigured(
             "DJANGO_SECRET_KEY is required when DEBUG is off. "
