@@ -21,6 +21,7 @@ from core.domain.definition import TaskDefinition, WorkflowDefinition
 from core.domain.states import WorkflowRunState
 from core.models import ScheduledTrigger, WorkflowRun
 from core.repositories.definitions import publish_definition
+from core.services.tenancy import ensure_default_organization
 
 
 class Command(BaseCommand):
@@ -58,11 +59,13 @@ class Command(BaseCommand):
                 TaskDefinition(key="done", task_type="noop", depends_on=("seed",)),
             ),
         )
-        workflow, created = publish_definition(definition)
+        organization = ensure_default_organization()
+        workflow, created = publish_definition(definition, organization=organization)
         self.stdout.write(f"Published cron-e2e (created={created}).")
 
         # Every minute, due immediately: the scheduler's next pass fires it.
         trigger = ScheduledTrigger.objects.create(
+            organization=organization,
             workflow=workflow,
             cron_expression="* * * * *",
             enabled=True,

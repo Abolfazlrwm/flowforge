@@ -1,8 +1,8 @@
 """Re-running a failed task run through the API.
 
 `POST /task-runs/<id>/requeue/` is the manual retry from a FAILED task. It is a
-409 for anything not FAILED, a 404 for a task run the caller cannot see, and a
-401 without credentials.
+409 for anything not FAILED, a 404 for a task run in another tenant, and a 401
+without credentials.
 """
 
 from __future__ import annotations
@@ -67,15 +67,15 @@ class TestTaskRunRequeue:
 
         assert response.status_code == status.HTTP_409_CONFLICT
 
-    def test_re_running_another_users_task_is_404(
-        self, user_client: APIClient, other_client: APIClient, published: Any
+    def test_re_running_another_tenants_task_is_404(
+        self, user_client: APIClient, stranger_client: APIClient, published: Any
     ) -> None:
-        """The task run is scoped to the caller's runs, so a stranger's is hidden."""
+        """The task run is scoped to the caller's organization, so it is hidden."""
         created = _trigger(user_client)
         task_run_id = _extract_task_run_id(created.data)
         _fail(task_run_id)
 
-        response = other_client.post(_requeue_url(task_run_id))
+        response = stranger_client.post(_requeue_url(task_run_id))
 
         assert response.status_code == status.HTTP_404_NOT_FOUND
 

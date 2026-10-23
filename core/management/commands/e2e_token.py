@@ -14,8 +14,11 @@ from django.contrib.auth import get_user_model
 from django.core.management.base import BaseCommand
 from rest_framework.authtoken.models import Token
 
+from core.models import Membership
+from core.services.tenancy import ensure_default_organization
+
 USERNAME = "e2e"
-PASSWORD = "e2e-password-not-for-production"  # noqa: S105 - test fixture
+PASSWORD = "e2e-password-not-for-production"  # noqa: S105  # nosec B105 - test fixture, not a credential
 TOKEN_FILE = Path(tempfile.gettempdir()) / "e2e_token"
 
 
@@ -32,6 +35,14 @@ class Command(BaseCommand):
         user.is_active = True
         user.set_password(PASSWORD)
         user.save()
+        # The API is tenant-scoped, so the e2e caller must be a member of an
+        # organization to publish and trigger. Staff bypasses the role check but
+        # still needs an organization to attribute the definition to.
+        Membership.objects.get_or_create(
+            organization=ensure_default_organization(),
+            user=user,
+            defaults={"role": Membership.Role.OWNER},
+        )
         token, _ = Token.objects.get_or_create(user=user)
         TOKEN_FILE.write_text(token.key)
         self.stdout.write(f"e2e token written to {TOKEN_FILE}")

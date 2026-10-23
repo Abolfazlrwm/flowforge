@@ -127,11 +127,19 @@ class TestWorkflowConstraints:
     def test_rejects_a_duplicate_name_and_version(self, workflow: Workflow) -> None:
         """Publishing a new definition must create a new version, not overwrite."""
         with pytest.raises(IntegrityError), transaction.atomic():
-            Workflow.objects.create(name=workflow.name, version=workflow.version)
+            Workflow.objects.create(
+                organization=workflow.organization,
+                name=workflow.name,
+                version=workflow.version,
+            )
 
     def test_allows_the_same_name_at_a_new_version(self, workflow: Workflow) -> None:
         """Versioning is the supported way to change a definition."""
-        second = Workflow.objects.create(name=workflow.name, version=workflow.version + 1)
+        second = Workflow.objects.create(
+            organization=workflow.organization,
+            name=workflow.name,
+            version=workflow.version + 1,
+        )
         assert second.pk != workflow.pk
 
     def test_rejects_a_zero_version(self) -> None:

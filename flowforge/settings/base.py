@@ -40,7 +40,8 @@ _secret_key: str | None = env("DJANGO_SECRET_KEY", default=None)
 
 if not _secret_key:
     if DEBUG:
-        _secret_key = "django-insecure-dev-only-key-do-not-use-in-production"  # noqa: S105
+        # Dev-only fallback, never accepted with DEBUG off. Not a credential.
+        _secret_key = "django-insecure-dev-only-key-do-not-use-in-production"  # noqa: S105  # nosec B105
     else:
         raise ImproperlyConfigured(
             "DJANGO_SECRET_KEY is required when DEBUG is off. "
@@ -158,6 +159,10 @@ REST_FRAMEWORK = {
     # differently: a JWT is short-lived and stateless, a token is revocable by
     # deleting a row. Clients that need immediate revocation use the token.
     "DEFAULT_AUTHENTICATION_CLASSES": [
+        # An `Api-Key` header selects this; with no such header it returns None
+        # and DRF falls through to the next authenticator, so token and JWT
+        # callers are unaffected.
+        "api.authentication.ApiKeyAuthentication",
         "rest_framework_simplejwt.authentication.JWTAuthentication",
         "rest_framework.authentication.TokenAuthentication",
         "rest_framework.authentication.SessionAuthentication",

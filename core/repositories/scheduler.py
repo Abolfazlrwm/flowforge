@@ -146,7 +146,12 @@ def _start_compensation(run: WorkflowRun, compensator_key: str) -> TaskRun:
     dispatches it.
     """
     task = Task.objects.get(workflow=run.workflow, key=compensator_key)
-    return TaskRun.objects.create(workflow_run=run, task=task, state=TaskRunState.READY.value)
+    return TaskRun.objects.create(
+        workflow_run=run,
+        organization_id=run.organization_id,
+        task=task,
+        state=TaskRunState.READY.value,
+    )
 
 
 def _advance_compensation(*, run: WorkflowRun, definition: WorkflowDefinition) -> bool:
@@ -421,8 +426,12 @@ def tick_scheduled_triggers(
     with transaction.atomic():
         due = list(
             ScheduledTrigger.objects.filter(enabled=True, next_run_at__lte=moment)
-            .select_related("workflow")
-            .select_for_update(skip_locked=skip_locked)
+            .select_related("workflow", "workflow__organization")
+            # Lock only the trigger rows. `workflow.organization` is nullable, so
+            # the join is an OUTER join, and PostgreSQL refuses `FOR UPDATE` on the
+            # nullable side; `of=("self",)` keeps the lock on the non-nullable side.
+            # SQLite has no row locks and ignores this.
+            .select_for_update(skip_locked=skip_locked, of=("self",))
             .order_by("next_run_at")
         )
         for scheduled in due:
@@ -448,7 +457,11 @@ def tick_scheduled_triggers(
             )
             continue
         try:
-            trigger(workflow=scheduled.workflow, requested_by_id=requested_by_id)
+            trigger(
+                workflow=scheduled.workflow,
+                requested_by_id=requested_by_id,
+                organization=scheduled.workflow.organization,
+            )
         except Exception:
             # The trigger advanced, so this failure is a missing run, not a
             # double-fire. Log and continue so one broken trigger does not

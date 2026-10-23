@@ -39,6 +39,10 @@ def build_dispatch_payload(
     task = task_run.task
     return {
         "dispatch_id": str(dispatch_id),
+        # Carried for observability: the worker logs the tenant it is acting for,
+        # so a log line can be attributed without a second lookup. It does not
+        # change execution — the task run already belongs to exactly one tenant.
+        "organization_id": str(task_run.organization_id) if task_run.organization_id else None,
         "task_run_id": str(task_run.id),
         "workflow_run_id": str(task_run.workflow_run_id),
         "task_key": task.key,
@@ -91,6 +95,9 @@ def create_dispatch(
         with transaction.atomic():
             return OutboxMessage.objects.create(
                 id=dispatch_id,
+                # The dispatch belongs to the same tenant as the task run it
+                # dispatches; use the FK id so this stays a single INSERT.
+                organization_id=task_run.organization_id,
                 task_run=task_run,
                 workflow_run=workflow_run,
                 fencing_token_snapshot=fencing_token_snapshot,

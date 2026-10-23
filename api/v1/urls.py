@@ -14,6 +14,9 @@ from rest_framework.authtoken.views import obtain_auth_token
 from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView
 
 from api.views import (
+    ApiKeyListCreateView,
+    ApiKeyRevokeView,
+    ApiKeyRotateView,
     MeView,
     RunDetailView,
     RunEventsView,
@@ -47,6 +50,20 @@ urlpatterns: list[URLPattern] = [
         "task-runs/<uuid:pk>/requeue/",
         TaskRunRequeueView.as_view(),
         name="task-run-requeue",
+    ),
+    # --- api keys -----------------------------------------------------------
+    # The plaintext key is returned once, at creation or rotation. Listing only
+    # ever shows metadata.
+    path("api-keys/", ApiKeyListCreateView.as_view(), name="api-key-list"),
+    path(
+        "api-keys/<uuid:pk>/rotate/",
+        ApiKeyRotateView.as_view(),
+        name="api-key-rotate",
+    ),
+    path(
+        "api-keys/<uuid:pk>/revoke/",
+        ApiKeyRevokeView.as_view(),
+        name="api-key-revoke",
     ),
     # --- schema -------------------------------------------------------------
     # The schema is committed to `docs/api/openapi.yaml` and CI fails if it has

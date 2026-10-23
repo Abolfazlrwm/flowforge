@@ -6,8 +6,9 @@ Three things are asserted here that the service tests do not cover:
   dependencies is ``ready`` and one with dependencies is ``pending``;
 * an ``Idempotency-Key`` replays the original run instead of creating a second
   one, and a key reused with a different body is a 422 rather than a replay;
-* runs are per-user. Staff see everything, everybody else sees their own, and
-  reading somebody else's run is a 403 rather than a 404.
+* runs are per **organization**. Every member of the owning tenant sees them,
+  another tenant sees nothing, and reading another tenant's run by id is a 404
+  rather than a 403 — the row is invisible, not merely forbidden.
 """
 
 from __future__ import annotations
@@ -107,10 +108,13 @@ class TestIdempotency:
         assert WorkflowRun.objects.count() == 1
 
     def test_a_key_reused_with_a_different_body_is_422(
-        self, user_client: APIClient, published: Any
+        self, user_client: APIClient, published: Any, organization: Any
     ) -> None:
         """Replaying the original would silently discard this request."""
-        publish_definition(parse_workflow_definition(definition_payload(name="other")))
+        publish_definition(
+            parse_workflow_definition(definition_payload(name="other")),
+            organization=organization,
+        )
 
         first = _trigger(user_client, HTTP_IDEMPOTENCY_KEY="k-2")
         second = user_client.post(
@@ -146,32 +150,40 @@ class TestIdempotency:
 
 
 class TestRunVisibility:
-    """Runs are per-user; staff are the exception, and it is deliberate."""
+    """Runs are per organization; staff are the operational exception."""
 
-    def test_the_list_shows_only_my_runs(
+    def test_every_member_of_the_tenant_sees_the_tenants_runs(
         self, user_client: APIClient, other_client: APIClient, published: Any
     ) -> None:
-        """Bob must not learn what Alice ran."""
+        """Visibility is a tenant boundary, not a per-user one."""
         _trigger(user_client)
 
-        assert other_client.get(reverse(LIST_URL)).data["results"] == []
+        assert len(other_client.get(reverse(LIST_URL)).data["results"]) == 1
         assert len(user_client.get(reverse(LIST_URL)).data["results"]) == 1
+
+    def test_another_tenant_sees_nothing(
+        self, user_client: APIClient, stranger_client: APIClient, published: Any
+    ) -> None:
+        """A member of another organization must not learn what this one ran."""
+        _trigger(user_client)
+
+        assert stranger_client.get(reverse(LIST_URL)).data["results"] == []
 
     def test_staff_see_every_run(
         self, user_client: APIClient, staff_client: APIClient, published: Any
     ) -> None:
-        """Operators need the whole picture."""
+        """Operators need the whole picture, across tenants."""
         _trigger(user_client)
 
         assert len(staff_client.get(reverse(LIST_URL)).data["results"]) == 1
 
-    def test_the_owner_can_read_their_run_with_its_task_runs(
-        self, user_client: APIClient, published: Any
+    def test_a_member_can_read_a_run_in_their_tenant(
+        self, user_client: APIClient, other_client: APIClient, published: Any
     ) -> None:
         """The detail carries the task-level progress, not just the run state."""
         created = _trigger(user_client)
 
-        response = user_client.get(_detail_url(created.data["id"]))
+        response = other_client.get(_detail_url(created.data["id"]))
 
         assert response.status_code == status.HTTP_200_OK
         assert {task_run["task_key"] for task_run in response.data["task_runs"]} == {
@@ -179,21 +191,21 @@ class TestRunVisibility:
             "load",
         }
 
-    def test_reading_someone_elses_run_is_403(
-        self, user_client: APIClient, other_client: APIClient, published: Any
+    def test_reading_another_tenants_run_is_404(
+        self, user_client: APIClient, stranger_client: APIClient, published: Any
     ) -> None:
-        """403, not 404: the row exists and the caller is simply not allowed."""
+        """404, not 403: the row is invisible, so its existence does not leak."""
         created = _trigger(user_client)
 
-        response = other_client.get(_detail_url(created.data["id"]))
+        response = stranger_client.get(_detail_url(created.data["id"]))
 
-        assert response.status_code == status.HTTP_403_FORBIDDEN
-        assert response.data["error"]["code"] == "permission_denied"
+        assert response.status_code == status.HTTP_404_NOT_FOUND
+        assert response.data["error"]["code"] == "not_found"
 
     def test_staff_can_read_anyones_run(
         self, user_client: APIClient, staff_client: APIClient, published: Any
     ) -> None:
-        """The object-level rule has a staff branch, and it works."""
+        """The staff bypass works across tenants, and it is deliberate."""
         created = _trigger(user_client)
 
         assert staff_client.get(_detail_url(created.data["id"])).status_code == status.HTTP_200_OK

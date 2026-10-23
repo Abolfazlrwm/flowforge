@@ -41,7 +41,12 @@ def _resolve_now(now: datetime | None) -> datetime:
 
 
 def _record_task_run_event(
-    *, task_run_id: UUID, kind: str, from_state: str | None, to_state: str
+    *,
+    task_run_id: UUID,
+    kind: str,
+    from_state: str | None,
+    to_state: str,
+    organization_id: UUID | None = None,
 ) -> None:
     """Append one event-log row for a task-run transition that actually happened.
 
@@ -50,8 +55,16 @@ def _record_task_run_event(
     wraps the state ``UPDATE`` (ADR-013), so the event and the state change commit
     or roll back together: a crash can never leave a durable state change without
     its audit entry, nor an entry without its state change.
+
+    The event inherits the task run's organization. Callers that already hold the
+    row pass ``organization_id`` to avoid a lookup; the rest let it be read here.
     """
+    if organization_id is None:
+        organization_id = (
+            TaskRun.objects.filter(pk=task_run_id).values_list("organization_id", flat=True).first()
+        )
     TaskRunEvent.objects.create(
+        organization_id=organization_id,
         task_run_id=task_run_id,
         kind=kind,
         from_state=from_state,
@@ -175,6 +188,7 @@ def reclaim_task_run(
         if reclaimed:
             _record_task_run_event(
                 task_run_id=task_run_id,
+                organization_id=task_run.organization_id,
                 kind=TaskRunEvent.Kind.RECLAIM.value,
                 from_state=TaskRunState.RUNNING.value,
                 to_state=(
@@ -383,6 +397,7 @@ def requeue_dead_task_run(*, task_run_id: UUID, now: datetime | None = None) -> 
         )
         _record_task_run_event(
             task_run_id=task_run_id,
+            organization_id=task_run.organization_id,
             kind=TaskRunEvent.Kind.REQUEUE.value,
             from_state=TaskRunState.DEAD.value,
             to_state=TaskRunState.PENDING.value,
@@ -442,6 +457,7 @@ def requeue_failed_task_run(*, task_run_id: UUID, now: datetime | None = None) -
         )
         _record_task_run_event(
             task_run_id=task_run_id,
+            organization_id=task_run.organization_id,
             kind=TaskRunEvent.Kind.REQUEUE.value,
             from_state=TaskRunState.FAILED.value,
             to_state=TaskRunState.PENDING.value,

@@ -25,6 +25,7 @@ paths:
               $ref: '#/components/schemas/AuthTokenRequest'
         required: true
       security:
+      - ApiKeyAuth: []
       - jwtAuth: []
       - tokenAuth: []
       - cookieAuth: []
@@ -96,6 +97,7 @@ paths:
       tags:
       - auth
       security:
+      - ApiKeyAuth: []
       - jwtAuth: []
       - tokenAuth: []
       - cookieAuth: []
@@ -144,6 +146,7 @@ paths:
       tags:
       - workflows
       security:
+      - ApiKeyAuth: []
       - jwtAuth: []
       - tokenAuth: []
       - cookieAuth: []
@@ -177,6 +180,7 @@ paths:
               $ref: '#/components/schemas/WorkflowDefinitionDocRequest'
         required: true
       security:
+      - ApiKeyAuth: []
       - jwtAuth: []
       - tokenAuth: []
       - cookieAuth: []
@@ -215,6 +219,7 @@ paths:
       tags:
       - workflows
       security:
+      - ApiKeyAuth: []
       - jwtAuth: []
       - tokenAuth: []
       - cookieAuth: []
@@ -269,6 +274,7 @@ paths:
       tags:
       - runs
       security:
+      - ApiKeyAuth: []
       - jwtAuth: []
       - tokenAuth: []
       - cookieAuth: []
@@ -308,6 +314,7 @@ paths:
               $ref: '#/components/schemas/TriggerRequest'
         required: true
       security:
+      - ApiKeyAuth: []
       - jwtAuth: []
       - tokenAuth: []
       - cookieAuth: []
@@ -330,9 +337,11 @@ paths:
       description: |-
         One run and the state of each of its tasks.
 
-        A run belonging to somebody else is a 403, not a 404: the row exists and the
-        caller is simply not allowed to read it. Hiding it would be a second,
-        contradictory policy layered on the first.
+        A run belonging to another tenant is a 404, not a 403: the queryset is
+        scoped to the caller's organization, so the row is invisible by construction.
+        That is the whole point of resolving visibility in the queryset rather than
+        in an object-level permission — a caller cannot learn that another tenant's
+        run exists by probing for its id.
       parameters:
       - in: path
         name: id
@@ -343,6 +352,7 @@ paths:
       tags:
       - runs
       security:
+      - ApiKeyAuth: []
       - jwtAuth: []
       - tokenAuth: []
       - cookieAuth: []
@@ -381,6 +391,7 @@ paths:
       tags:
       - runs
       security:
+      - ApiKeyAuth: []
       - jwtAuth: []
       - tokenAuth: []
       - cookieAuth: []
@@ -407,6 +418,7 @@ paths:
       tags:
       - task runs
       security:
+      - ApiKeyAuth: []
       - jwtAuth: []
       - tokenAuth: []
       - cookieAuth: []
@@ -423,8 +435,224 @@ paths:
           description: Missing or invalid credentials.
         '404':
           description: No such task run, or not visible to the caller.
+  /api/v1/api-keys/:
+    get:
+      operationId: api_keys_list
+      description: List the active organization's keys (metadata only).
+      tags:
+      - api keys
+      security:
+      - ApiKeyAuth: []
+      - jwtAuth: []
+      - tokenAuth: []
+      - cookieAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/ApiKey'
+          description: ''
+    post:
+      operationId: api_keys_create
+      description: Issue a key and return its plaintext value once.
+      tags:
+      - api keys
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ApiKeyCreateRequest'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/ApiKeyCreateRequest'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/ApiKeyCreateRequest'
+        required: true
+      security:
+      - ApiKeyAuth: []
+      - jwtAuth: []
+      - tokenAuth: []
+      - cookieAuth: []
+      responses:
+        '201':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiKeyCreated'
+          description: ''
+  /api/v1/api-keys/{id}/rotate/:
+    post:
+      operationId: api_keys_rotate_create
+      description: Rotate the key named by ``pk`` within the caller's organization.
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: string
+          format: uuid
+        required: true
+      tags:
+      - api keys
+      security:
+      - ApiKeyAuth: []
+      - jwtAuth: []
+      - tokenAuth: []
+      - cookieAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiKeyCreated'
+          description: ''
+  /api/v1/api-keys/{id}/revoke/:
+    post:
+      operationId: api_keys_revoke_create
+      description: Revoke the key named by ``pk`` within the caller's organization.
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: string
+          format: uuid
+        required: true
+      tags:
+      - api keys
+      security:
+      - ApiKeyAuth: []
+      - jwtAuth: []
+      - tokenAuth: []
+      - cookieAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiKey'
+          description: ''
 components:
   schemas:
+    ApiKey:
+      type: object
+      description: 'An API key as listed: metadata only, never the secret or its hash.'
+      properties:
+        id:
+          type: string
+          format: uuid
+          readOnly: true
+        name:
+          type: string
+          readOnly: true
+        prefix:
+          type: string
+          readOnly: true
+        scopes:
+          readOnly: true
+        created_at:
+          type: string
+          format: date-time
+          readOnly: true
+        expires_at:
+          type: string
+          format: date-time
+          readOnly: true
+          nullable: true
+        revoked_at:
+          type: string
+          format: date-time
+          readOnly: true
+          nullable: true
+        last_used_at:
+          type: string
+          format: date-time
+          readOnly: true
+          nullable: true
+      required:
+      - created_at
+      - expires_at
+      - id
+      - last_used_at
+      - name
+      - prefix
+      - revoked_at
+      - scopes
+    ApiKeyCreateRequest:
+      type: object
+      description: The body of an API-key creation request.
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 200
+        scopes:
+          type: array
+          items:
+            $ref: '#/components/schemas/ScopesEnum'
+          default:
+          - read
+        expires_at:
+          type: string
+          format: date-time
+          nullable: true
+      required:
+      - name
+    ApiKeyCreated:
+      type: object
+      description: |-
+        The one response that carries the plaintext key.
+
+        ``key`` is read from the serializer context rather than the model: the model
+        has no plaintext to read, by design.
+      properties:
+        id:
+          type: string
+          format: uuid
+          readOnly: true
+        name:
+          type: string
+          readOnly: true
+        prefix:
+          type: string
+          readOnly: true
+        scopes:
+          readOnly: true
+        created_at:
+          type: string
+          format: date-time
+          readOnly: true
+        expires_at:
+          type: string
+          format: date-time
+          readOnly: true
+          nullable: true
+        revoked_at:
+          type: string
+          format: date-time
+          readOnly: true
+          nullable: true
+        last_used_at:
+          type: string
+          format: date-time
+          readOnly: true
+          nullable: true
+        key:
+          type: string
+          description: The plaintext key, supplied once by the view.
+          readOnly: true
+      required:
+      - created_at
+      - expires_at
+      - id
+      - key
+      - last_used_at
+      - name
+      - prefix
+      - revoked_at
+      - scopes
     AuthToken:
       type: object
       properties:
@@ -517,6 +745,16 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/WorkflowSummary'
+    ScopesEnum:
+      enum:
+      - read
+      - write
+      - admin
+      type: string
+      description: |-
+        * `read` - read
+        * `write` - write
+        * `admin` - admin
     State6d9Enum:
       enum:
       - pending
@@ -533,7 +771,13 @@ components:
         * `cancelled` - Cancelled
     Task:
       type: object
-      description: One task of a published definition.
+      description: |-
+        One task of a published definition.
+
+        ``config`` is redacted on the way out: a task may legitimately carry a
+        password or a token to execute, but a client reading the definition must not
+        receive it. The worker still gets the real config in its dispatch payload;
+        redaction applies to what humans and clients read, not to execution.
       properties:
         key:
           type: string
@@ -796,7 +1040,6 @@ components:
         version:
           type: integer
           readOnly: true
-          default: 1
         description:
           type: string
           readOnly: true
@@ -945,7 +1188,6 @@ components:
         version:
           type: integer
           readOnly: true
-          default: 1
         description:
           type: string
           readOnly: true
@@ -964,6 +1206,10 @@ components:
       - task_count
       - version
   securitySchemes:
+    ApiKeyAuth:
+      type: apiKey
+      in: header
+      name: X-API-Key
     cookieAuth:
       type: apiKey
       in: cookie

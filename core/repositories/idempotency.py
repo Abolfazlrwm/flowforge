@@ -21,7 +21,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from core.models import IdempotencyKey
+from core.models import IdempotencyKey, Organization
 
 
 class IdempotencyMismatchError(Exception):
@@ -40,8 +40,14 @@ class IdempotencyMismatchError(Exception):
         )
 
 
-def reserve(*, user_id: int, key: str, fingerprint: str) -> IdempotencyKey:
-    """Claim ``key`` for ``user``.
+def reserve(
+    *, organization: Organization | None, user_id: int, key: str, fingerprint: str
+) -> IdempotencyKey:
+    """Claim ``key`` for ``user`` within ``organization``.
+
+    The claim is scoped per organization (see the model's unique constraint), so
+    a key reused by a different tenant is an independent claim and can never
+    replay another tenant's run.
 
     Must be called inside the transaction that will create the run, so that a
     failure to create the run releases the claim instead of leaving a permanent
@@ -52,6 +58,7 @@ def reserve(*, user_id: int, key: str, fingerprint: str) -> IdempotencyKey:
             whether that is a replay or a mismatch.
     """
     return IdempotencyKey.objects.create(
+        organization=organization,
         user_id=user_id,
         key=key,
         request_fingerprint=fingerprint,
@@ -75,10 +82,12 @@ def complete(
     claim.save(update_fields=["response_status", "response_body", "workflow_run"])
 
 
-def find(*, user_id: int, key: str) -> IdempotencyKey | None:
-    """The claim for ``key``, or ``None``.
+def find(*, organization: Organization | None, user_id: int, key: str) -> IdempotencyKey | None:
+    """The claim for ``key`` in ``organization``, or ``None``.
 
     Only meaningful *after* a reservation has failed: at that point the winner
     has committed, so the row is visible and complete.
     """
-    return IdempotencyKey.objects.filter(user_id=user_id, key=key).first()
+    return IdempotencyKey.objects.filter(
+        organization=organization, user_id=user_id, key=key
+    ).first()

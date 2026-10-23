@@ -18,6 +18,7 @@ from core.domain.definition import TaskDefinition, WorkflowDefinition
 from core.domain.states import WorkflowRunState
 from core.repositories.definitions import publish_definition
 from core.services.runs import trigger
+from core.services.tenancy import ensure_default_organization
 
 
 class Command(BaseCommand):
@@ -61,10 +62,11 @@ class Command(BaseCommand):
                 TaskDefinition(key="done", task_type="noop", depends_on=("sum",)),
             ),
         )
-        workflow, created = publish_definition(definition)
+        organization = ensure_default_organization()
+        workflow, created = publish_definition(definition, organization=organization)
         self.stdout.write(f"Published sample-e2e (created={created}).")
 
-        run, _ = trigger(workflow, requested_by_id=None)
+        run, _ = trigger(workflow, requested_by_id=None, organization=organization)
         self.stdout.write(f"Triggered run {run.id}; waiting up to {timeout:.0f}s.")
 
         deadline = time.monotonic() + timeout

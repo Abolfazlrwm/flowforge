@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 from core.domain.states import TaskRunState
-from core.models import Task, TaskRun, Workflow, WorkflowRun
+from core.models import Organization, Task, TaskRun, Workflow, WorkflowRun
 from rest_framework.test import APIClient
 
 if TYPE_CHECKING:
@@ -27,9 +27,20 @@ def api_client() -> APIClient:
 
 
 @pytest.fixture
-def workflow(db: None) -> WorkflowModel:
+def organization(db: None) -> Organization:
+    """A tenant for the model-level fixtures.
+
+    The API tests override this with their own fixture; these model fixtures need
+    one so that a workflow created directly still satisfies the per-organization
+    uniqueness rule.
+    """
+    return Organization.objects.create(name="Test Org", slug="test-org")
+
+
+@pytest.fixture
+def workflow(db: None, organization: Organization) -> WorkflowModel:
     """A persisted workflow definition."""
-    return Workflow.objects.create(name="etl", version=1)
+    return Workflow.objects.create(organization=organization, name="etl", version=1)
 
 
 @pytest.fixture
@@ -41,7 +52,7 @@ def task(workflow: WorkflowModel) -> TaskModel:
 @pytest.fixture
 def workflow_run(workflow: WorkflowModel) -> WorkflowRunModel:
     """A persisted workflow run in ``PENDING``."""
-    return WorkflowRun.objects.create(workflow=workflow)
+    return WorkflowRun.objects.create(workflow=workflow, organization=workflow.organization)
 
 
 @pytest.fixture
@@ -49,6 +60,7 @@ def task_run(workflow_run: WorkflowRunModel, task: TaskModel) -> TaskRunModel:
     """A persisted task run in ``READY`` — claimable without further setup."""
     return TaskRun.objects.create(
         workflow_run=workflow_run,
+        organization=workflow_run.organization,
         task=task,
         state=TaskRunState.READY.value,
     )
