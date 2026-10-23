@@ -67,15 +67,21 @@ def resolve_membership(request: object) -> Membership | None:
     user = getattr(request, "user", None)
     if user is not None and getattr(user, "is_authenticated", False):
         memberships = Membership.objects.filter(user=user).select_related("organization")
-        header = _header(request)
-        if header:
-            organization = _organization_from_header(header)
-            if organization is not None:
-                membership = memberships.filter(organization=organization).first()
+        # An API key fixes the tenant on the request; honour it before the
+        # header, so a key can never be pointed at another organization.
+        explicit = getattr(request, "organization", None)
+        if explicit is not None:
+            membership = memberships.filter(organization=explicit).first()
         else:
-            candidates = list(memberships[:2])
-            if len(candidates) == 1:
-                membership = candidates[0]
+            header = _header(request)
+            if header:
+                organization = _organization_from_header(header)
+                if organization is not None:
+                    membership = memberships.filter(organization=organization).first()
+            else:
+                candidates = list(memberships[:2])
+                if len(candidates) == 1:
+                    membership = candidates[0]
 
     setattr(request, _CACHE_ATTR, membership)
     return membership

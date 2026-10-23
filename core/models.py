@@ -13,11 +13,13 @@ the plan behind each one.
 from __future__ import annotations
 
 import uuid
+from datetime import datetime
 from typing import TypeVar
 
 from django.conf import settings
 from django.db import models
 from django.db.models import F, Q
+from django.utils import timezone
 
 from core.domain.states import TaskRunState, WorkflowRunState
 
@@ -127,6 +129,77 @@ class Membership(models.Model):
     def __str__(self) -> str:
         """Readable label for the admin and logs."""
         return f"{self.user} in {self.organization} ({self.role})"
+
+
+class ApiKey(models.Model):
+    """A hashed, organization-scoped API credential.
+
+    The plaintext key is shown exactly once, at creation. Only a hash is stored,
+    so a database dump cannot be replayed. A short random ``prefix`` is stored in
+    the clear because it is how a presented key is looked up without hashing every
+    row: the full key is ``ff_<prefix>_<secret>``, and only ``secret`` is hashed.
+
+    Keys are revoked rather than deleted (``revoked_at``) so an audit trail of
+    "this credential existed and was withdrawn" survives. They may also expire.
+    """
+
+    class Scope(models.TextChoices):
+        """What the key may do. ``admin`` implies ``write`` implies ``read``."""
+
+        READ = "read", "Read"
+        WRITE = "write", "Write"
+        ADMIN = "admin", "Admin"
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    organization = models.ForeignKey(
+        Organization, on_delete=models.CASCADE, related_name="api_keys"
+    )
+    name = models.CharField(max_length=200)
+    #: The non-secret lookup handle, unique across every tenant.
+    prefix = models.CharField(max_length=32, unique=True)
+    #: ``make_password(secret)`` — never the secret itself.
+    hashed_key = models.CharField(max_length=256)
+    #: The scopes granted to this key, as a list of ``Scope`` values.
+    scopes = models.JSONField(default=list)
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="api_keys",
+    )
+    expires_at = models.DateTimeField(null=True, blank=True)
+    revoked_at = models.DateTimeField(null=True, blank=True)
+    last_used_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    objects = OrganizationScopedManager()
+
+    class Meta:
+        """Tenant-scoped listing index."""
+
+        indexes = [
+            models.Index(fields=["organization", "created_at"], name="idx_apikey_org_created"),
+        ]
+
+    def is_usable(self, *, now: datetime | None = None) -> bool:
+        """Whether the key may authenticate a request right now."""
+        moment = now if now is not None else timezone.now()
+        if self.revoked_at is not None:
+            return False
+        if self.expires_at is None:
+            return True
+        return self.expires_at > moment
+
+    def has_scope(self, required: str) -> bool:
+        """Whether this key grants at least ``required``, honouring hierarchy."""
+        order = {"read": 0, "write": 1, "admin": 2}
+        threshold = order.get(required, 99)
+        return any(order.get(scope, -1) >= threshold for scope in self.scopes)
+
+    def __str__(self) -> str:
+        """Readable label; never includes the secret."""
+        return f"api key {self.prefix} ({self.name})"
 
 
 class Workflow(models.Model):

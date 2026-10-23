@@ -111,3 +111,26 @@ class IsOwner(HasOrganizationRole):
     """The organization owner."""
 
     minimum_role = "owner"
+
+
+class HasApiKeyScope(BasePermission):
+    """An API key must grant the scope its view requires.
+
+    For session/token/JWT auth there is no key, so this class allows the request
+    and the role class decides. For an API key, the view's ``required_scope``
+    (``read`` / ``write`` / ``admin``) must be granted. The creator's role still
+    applies as well — both checks run — so a key can never exceed its creator's
+    authority even if it was issued with a broader scope.
+    """
+
+    message = "The API key does not grant the required scope."
+
+    def has_permission(self, request: Request, view: APIView) -> bool:
+        """Check the key's scope, if the request was authenticated by a key."""
+        api_key = getattr(request, "api_key", None)
+        if api_key is None:
+            return True
+        required = getattr(view, "required_scope", None)
+        if required is None:
+            return True
+        return bool(api_key.has_scope(required))
