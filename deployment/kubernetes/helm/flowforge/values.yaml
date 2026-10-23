@@ -1,0 +1,135 @@
+# Default values for the FlowForge Helm chart.
+#
+# SENSITIVE VALUES: do NOT commit real secrets here. Set `existingSecret` to the
+# name of a Secret you manage out of band (sealed-secrets, external-secrets,
+# Vault, a GitOps secret), or supply `secret.*` via `--set` / a sealed values
+# file. The chart only ever references a Secret by name; it never prints values.
+
+namespace: flowforge
+
+# If set, the chart does NOT create its own Secret and reads credentials from
+# this existing Secret instead. The keys it expects are:
+#   django-secret-key, database-url, rabbitmq-url, redis-url
+existingSecret: ""
+
+image:
+  repository: ghcr.io/abolfazlrwm/flowforge
+  # Empty defaults to .Chart.AppVersion.
+  tag: ""
+  pullPolicy: IfNotPresent
+
+imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: ""
+
+serviceAccount:
+  create: true
+  name: ""
+  annotations: {}
+
+# Non-sensitive runtime configuration, projected into a ConfigMap.
+config:
+  djangoSettingsModule: flowforge.settings.prod
+  allowedHosts: "*"
+  throttleAuthRate: "10/min"
+  throttleTriggerRate: "60/min"
+  throttleReadRate: "300/min"
+  # Left empty by default so the stack does not emit export failures against a
+  # collector that is not running. Set to e.g. "http://otel-collector:4318".
+  otelExporterOtlpEndpoint: ""
+
+# Secret values. Override via existingSecret in production.
+secret:
+  djangoSecretKey: "CHANGE-ME-do-not-use-in-production"
+  databaseUrl: "postgres://flowforge:CHANGE-ME@postgres:5432/flowforge"
+  rabbitmqUrl: "amqp://flowforge:CHANGE-ME@rabbitmq:5672/"
+  redisUrl: "redis://redis:6379/0"
+
+# One-shot schema migration Job. Runs as a Helm hook on install/upgrade and is
+# also gated by an init container on every Deployment (see migrateGate).
+migrate:
+  enabled: true
+  ttlSecondsAfterFinished: 300
+  backoffLimit: 3
+
+podSecurityContext:
+  runAsNonRoot: true
+  seccompProfile:
+    type: RuntimeDefault
+
+containerSecurityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  runAsNonRoot: true
+  capabilities:
+    drop: ["ALL"]
+  seccompProfile:
+    type: RuntimeDefault
+
+resources:
+  # Shared defaults, overridden per component below where needed.
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    cpu: 500m
+    memory: 256Mi
+
+web:
+  replicas: 2
+  port: 8000
+  resources:
+    requests:
+      cpu: 250m
+      memory: 256Mi
+    limits:
+      cpu: "1"
+      memory: 512Mi
+  service:
+    type: ClusterIP
+    port: 8000
+  # HorizontalPodAutoscaler for the web tier (optional).
+  autoscaling:
+    enabled: false
+    minReplicas: 2
+    maxReplicas: 6
+    targetCPUUtilizationPercentage: 70
+
+scheduler:
+  replicas: 1
+  metricsPort: 9101
+  interval: 5
+  resources: {}
+
+publisher:
+  replicas: 1
+  metricsPort: 9102
+  resources: {}
+
+worker:
+  replicas: 2
+  metricsPort: 9103
+  resources:
+    requests:
+      cpu: 250m
+      memory: 256Mi
+    limits:
+      cpu: "1"
+      memory: 512Mi
+  autoscaling:
+    enabled: true
+    minReplicas: 2
+    maxReplicas: 10
+    targetCPUUtilizationPercentage: 70
+  podDisruptionBudget:
+    enabled: true
+    # At least this many workers must stay up during a voluntary disruption.
+    minAvailable: 1
+
+# NetworkPolicy. Sets a default-deny ingress for the namespace and allows ingress
+# to the web pods only, plus the DNS egress everything needs. Tighten the egress
+# block to your database subnets in production.
+networkPolicy:
+  enabled: true
+  # Namespace where the ingress controller lives; set to "" to allow from anywhere.
+  ingressNamespace: ingress-nginx

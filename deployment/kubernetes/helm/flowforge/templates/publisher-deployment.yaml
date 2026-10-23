@@ -1,0 +1,64 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}-publisher
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "flowforge.labels" . | nindent 4 }}
+    app.kubernetes.io/component: publisher
+spec:
+  replicas: {{ .Values.publisher.replicas }}
+  selector:
+    matchLabels:
+      {{- include "flowforge.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: publisher
+  template:
+    metadata:
+      labels:
+        {{- include "flowforge.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: publisher
+    spec:
+      serviceAccountName: {{ include "flowforge.serviceAccountName" . }}
+      securityContext:
+        {{- include "flowforge.podSecurityContext" . | nindent 8 }}
+      initContainers:
+        {{- include "flowforge.migrateGate" . | nindent 8 }}
+      containers:
+        - name: publisher
+          image: {{ include "flowforge.image" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command:
+            - python
+            - manage.py
+            - publisher
+            - --metrics-port
+            - {{ .Values.publisher.metricsPort | quote }}
+          {{- include "flowforge.commonEnv" . | nindent 10 }}
+          securityContext:
+            {{- include "flowforge.containerSecurityContext" . | nindent 12 }}
+          startupProbe:
+            exec:
+              command: ["python", "manage.py", "healthcheck"]
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            failureThreshold: 30
+          livenessProbe:
+            exec:
+              command: ["python", "manage.py", "healthcheck"]
+            initialDelaySeconds: 15
+            periodSeconds: 30
+            failureThreshold: 3
+          readinessProbe:
+            exec:
+              command: ["python", "manage.py", "healthcheck"]
+            initialDelaySeconds: 10
+            periodSeconds: 15
+            failureThreshold: 3
+          resources:
+            {{- toYaml (default .Values.resources .Values.publisher.resources) | nindent 12 }}
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir: {}
