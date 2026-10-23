@@ -201,7 +201,9 @@ Phase 8 run: https://github.com/Abolfazlrwm/flowforge/actions/runs/39921080486
 includes `bandit` and `pip-audit`; the docker job drove the cron and saga e2e
 through the real stack)
 
-v0.9.1 run: recorded on the `chore/phase8-followups` pull request once green.
+v0.9.1 run: https://github.com/Abolfazlrwm/flowforge/actions/runs/39924397804
+(661 unit tests on PostgreSQL + 29 integration tests green; `lint`, `schema`,
+`docs` and `docker` green)
 
 ### Locally (Windows, Python 3.13.14)
 
