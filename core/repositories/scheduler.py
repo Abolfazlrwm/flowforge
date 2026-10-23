@@ -146,7 +146,12 @@ def _start_compensation(run: WorkflowRun, compensator_key: str) -> TaskRun:
     dispatches it.
     """
     task = Task.objects.get(workflow=run.workflow, key=compensator_key)
-    return TaskRun.objects.create(workflow_run=run, task=task, state=TaskRunState.READY.value)
+    return TaskRun.objects.create(
+        workflow_run=run,
+        organization_id=run.organization_id,
+        task=task,
+        state=TaskRunState.READY.value,
+    )
 
 
 def _advance_compensation(*, run: WorkflowRun, definition: WorkflowDefinition) -> bool:
@@ -421,7 +426,7 @@ def tick_scheduled_triggers(
     with transaction.atomic():
         due = list(
             ScheduledTrigger.objects.filter(enabled=True, next_run_at__lte=moment)
-            .select_related("workflow")
+            .select_related("workflow", "workflow__organization")
             .select_for_update(skip_locked=skip_locked)
             .order_by("next_run_at")
         )
@@ -448,7 +453,11 @@ def tick_scheduled_triggers(
             )
             continue
         try:
-            trigger(workflow=scheduled.workflow, requested_by_id=requested_by_id)
+            trigger(
+                workflow=scheduled.workflow,
+                requested_by_id=requested_by_id,
+                organization=scheduled.workflow.organization,
+            )
         except Exception:
             # The trigger advanced, so this failure is a missing run, not a
             # double-fire. Log and continue so one broken trigger does not

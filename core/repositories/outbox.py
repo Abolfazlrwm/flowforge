@@ -91,6 +91,9 @@ def create_dispatch(
         with transaction.atomic():
             return OutboxMessage.objects.create(
                 id=dispatch_id,
+                # The dispatch belongs to the same tenant as the task run it
+                # dispatches; use the FK id so this stays a single INSERT.
+                organization_id=task_run.organization_id,
                 task_run=task_run,
                 workflow_run=workflow_run,
                 fencing_token_snapshot=fencing_token_snapshot,
