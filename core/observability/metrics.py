@@ -130,7 +130,12 @@ def set_queue_depth(queue: str, depth: int) -> None:
     QUEUE_DEPTH.labels(queue=queue).set(depth)
 
 
-def start_metrics_server(port: int, addr: str = "0.0.0.0") -> None:  # noqa: S104
+def start_metrics_server(
+    port: int,
+    # nosec B104 - inside a container the scrape happens over the compose
+    # network, not from outside it; see the docstring.
+    addr: str = "0.0.0.0",  # noqa: S104
+) -> None:
     """Expose this process's registry over HTTP for Prometheus.
 
     Binding all interfaces is correct *inside* a container: the scrape happens
