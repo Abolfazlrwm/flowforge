@@ -814,7 +814,12 @@ jobs:
           print("rabbitmq definitions: queues=%d exchanges=%d vhosts=%d users=%d"
                 % (len(q), len(d.get('exchanges', [])), len(d.get('vhosts', [])), len(d.get('users', []))))
           PY
-          docker compose exec -T rabbitmq rabbitmqctl import_definitions - < /tmp/rabbitmq-defs.json \
+          #    The import takes a real path, not `-`. RabbitMQ 3.13 advertises
+          #    `<file_path | "-">` in its usage text, but validate/2 calls
+          #    File.exists?("-") and rejects it; stdin is only read when no
+          #    argument is given at all. A path is unambiguous on every version.
+          docker compose cp /tmp/rabbitmq-defs.json rabbitmq:/tmp/rabbitmq-defs.json
+          docker compose exec -T rabbitmq rabbitmqctl import_definitions /tmp/rabbitmq-defs.json \
             || { echo "rabbitmq definitions were not re-importable"; exit 1; }
           echo "rabbitmq definitions re-imported cleanly"
 
