@@ -123,8 +123,11 @@ by the engine's outbox + lease reaper, not by a definitions file.
 ### Import
 
 ```bash
-# Re-create the topology from the export:
-docker compose exec -T rabbitmq rabbitmqctl import_definitions - < rmq-defs.json
+# Re-create the topology from the export. The import takes a real path: 3.13
+# advertises `<file_path | "-">` in its usage text, but validates `-` as a
+# filename and rejects it (stdin is only read when no argument is given).
+docker compose cp rmq-defs.json rabbitmq:/tmp/rmq-defs.json
+docker compose exec -T rabbitmq rabbitmqctl import_definitions /tmp/rmq-defs.json
 
 # Or, with the management plugin enabled:
 curl -s -u flowforge:flowforge -H 'Content-Type: application/json' \
