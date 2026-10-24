@@ -49,6 +49,10 @@ nav:
       - Benchmarks: development/BENCHMARKS.md
   - Deployment:
       - Docker: deployment/docker.md
+      - Kubernetes: deployment/kubernetes.md
+      - Migrations: deployment/migrations.md
+      - Backup and Restore: deployment/backup-restore.md
+      - High Availability: deployment/ha.md
       - Observability: deployment/observability.md
   - ADRs:
       - Index: adr/index.md

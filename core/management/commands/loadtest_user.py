@@ -19,7 +19,10 @@ from core.models import Membership
 from core.services.tenancy import ensure_default_organization
 
 USERNAME = "loadtest"
-PASSWORD = "loadtest-password"  # noqa: S105  # nosec B105 - fixture, not a credential
+# A fixed, obviously-fake string for a fixture account that only exists in the
+# throwaway load-test stack. The annotation says only the test id: bandit reads a
+# trailing comment as more test names and warns about each word.
+PASSWORD = "loadtest-password"  # noqa: S105  # nosec B105
 
 
 class Command(BaseCommand):

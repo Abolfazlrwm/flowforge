@@ -398,6 +398,37 @@ jobs:
       - name: End-to-end saga compensation
         run: docker compose exec -T web python manage.py saga_e2e --timeout 120
 
+      # --- End-to-end suite (tests/e2e) ---------------------------------------
+      # The full user journey as a pytest suite: the REST API, the Python SDK and
+      # the CLI, each driving a publish -> trigger -> complete cycle against the
+      # live compose stack the steps above brought up. It runs here, in the same
+      # healthy state and before any failure is injected, so a green run means a
+      # real user's script works against a real deployment.
+      - name: Mint an API token for the end-to-end suite
+        id: e2e_token
+        run: |
+          set -euo pipefail
+          docker compose exec -T web python manage.py e2e_token
+          TOKEN="$(docker compose exec -T web cat /tmp/e2e_token | tr -d '\r\n')"
+          test -n "$TOKEN"
+          echo "token=$TOKEN" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Python for the end-to-end suite
+        uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884  # v10.3.0
+        with:
+          version: ${{ env.UV_VERSION }}
+          enable-cache: true
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
+        with:
+          python-version: "3.13"
+      - name: Install dependencies from the lock file
+        run: uv sync --locked --extra dev
+      - name: Run the end-to-end suite against the live stack
+        env:
+          FLOWFORGE_E2E_BASE_URL: http://localhost:8000
+          FLOWFORGE_E2E_TOKEN: ${{ steps.e2e_token.outputs.token }}
+        run: uv run pytest tests/e2e -v
+
       # --- Failure injection -------------------------------------------------
       # The pytest suite kills worker and scheduler *processes* (see
       # tests/integration/test_failure_injection.py). Container- and
@@ -716,6 +747,99 @@ jobs:
             -H 'Content-Type: application/json' -d '{"resourceSpans":[]}' \
             || { echo "the collector did not accept an OTLP/HTTP export"; exit 1; }
 
+      # --- Backup / restore drill --------------------------------------------
+      # Phase 11, task #4: a real restore drill with evidence — not a documented
+      # hope. Dump the live database, wipe it, restore it, prove every row came
+      # back, and prove a workflow still executes end to end against the restored
+      # data. The application stack keeps running; only its database is destroyed
+      # and rebuilt underneath it.
+      - name: Backup and restore drill (PostgreSQL + RabbitMQ definitions)
+        run: |
+          set -euo pipefail
+
+          # Freeze writes so the before/after counts are taken against a stable
+          # database. The processes are restarted afterwards and reconnect to the
+          # restored data on their next query.
+          docker compose stop scheduler publisher worker web
+          sleep 3
+
+          # 1. Baseline row counts, read straight from PostgreSQL (no Django
+          #    import path needed) so the restore is verified against a real,
+          #    known-good value rather than an assumption.
+          COUNT_SQL="SELECT 'core_organization='    || COUNT(*) FROM core_organization
+          UNION ALL SELECT 'core_membership='      || COUNT(*) FROM core_membership
+          UNION ALL SELECT 'core_apikey='          || COUNT(*) FROM core_apikey
+          UNION ALL SELECT 'core_auditlog='        || COUNT(*) FROM core_auditlog
+          UNION ALL SELECT 'core_workflow='        || COUNT(*) FROM core_workflow
+          UNION ALL SELECT 'core_task='            || COUNT(*) FROM core_task
+          UNION ALL SELECT 'core_workflowrun='     || COUNT(*) FROM core_workflowrun
+          UNION ALL SELECT 'core_taskrun='         || COUNT(*) FROM core_taskrun
+          UNION ALL SELECT 'core_outboxmessage='   || COUNT(*) FROM core_outboxmessage
+          UNION ALL SELECT 'core_scheduledtrigger='|| COUNT(*) FROM core_scheduledtrigger
+          UNION ALL SELECT 'core_taskrunevent='    || COUNT(*) FROM core_taskrunevent
+          ORDER BY 1;"
+          docker compose exec -T db psql -U flowforge -d flowforge -t -A -c "$COUNT_SQL" > /tmp/before.counts
+          echo "BEFORE restore:"; cat /tmp/before.counts
+
+          # 2. Dump PostgreSQL in custom format (restorable, parallel-friendly).
+          docker compose exec -T db sh -c 'pg_dump -U flowforge -Fc flowforge > /tmp/flowforge.dump'
+          docker compose exec -T db sh -c 'head -c 8 /tmp/flowforge.dump | grep -q PgDMP && echo dump-magic-ok'
+          docker compose exec -T db ls -l /tmp/flowforge.dump
+
+          # 3. Export RabbitMQ definitions (durable topology: quorum queues,
+          #    exchanges, bindings, users, vhost, permissions) and prove the
+          #    export is genuinely re-importable by POSTing it straight back into
+          #    the same broker (a no-op for existing resources).
+          docker compose exec -T rabbitmq curl -s -u flowforge:flowforge \
+            http://localhost:15672/api/definitions > /tmp/rabbitmq-defs.json
+          python3 - <<'PY'
+          import json
+          d = json.load(open('/tmp/rabbitmq-defs.json'))
+          q = d.get('queues', [])
+          assert any(qd.get('type') == 'quorum' for qd in q), "no quorum queue in export"
+          print("rabbitmq definitions: queues=%d exchanges=%d vhosts=%d users=%d"
+                % (len(q), len(d.get('exchanges', [])), len(d.get('vhosts', [])), len(d.get('users', []))))
+          PY
+          cat /tmp/rabbitmq-defs.json | docker compose exec -T rabbitmq curl -s -o /tmp/rmq-import.txt \
+            -w 'rabbitmq-definitions re-import status=%{http_code}\n' \
+            -u flowforge:flowforge -H 'Content-Type: application/json' --data-binary @- \
+            http://localhost:15672/api/definitions/%2F
+          grep -Eq 'status=2[0-9][0-9]' /tmp/rmq-import.txt \
+            || { echo "rabbitmq definitions were not re-importable"; cat /tmp/rmq-import.txt; exit 1; }
+
+          # 4. Wipe: terminate any lingering backend, drop and recreate the
+          #    database. This is the "wipe" the drill must survive.
+          docker compose exec -T db psql -U flowforge -d postgres -c \
+            "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname='flowforge' AND pid <> pg_backend_pid();"
+          docker compose exec -T db psql -U flowforge -d postgres -c "DROP DATABASE flowforge;"
+          docker compose exec -T db psql -U flowforge -d postgres -c "CREATE DATABASE flowforge OWNER flowforge;"
+
+          # 5. Restore from the dump onto the freshly created (empty) database.
+          docker compose exec -T db sh -c 'pg_restore -U flowforge --dbname=flowforge --no-owner --clean --if-exists /tmp/flowforge.dump' \
+            && echo "pg_restore: completed" \
+            || echo "pg_restore: exited non-zero; verifying restored data below"
+
+          # 6. Verify: the row counts must match the baseline exactly.
+          docker compose exec -T db psql -U flowforge -d flowforge -t -A -c "$COUNT_SQL" > /tmp/after.counts
+          echo "AFTER restore:"; cat /tmp/after.counts
+          if ! diff -u /tmp/before.counts /tmp/after.counts; then
+            echo "ROW COUNTS DIVERGED AFTER RESTORE"; exit 1
+          fi
+          echo "row counts identical before/after restore"
+
+          # 7. Prove the restored database actually runs a workflow: bring the
+          #    stack back, wait for readiness, and execute the full pipeline.
+          docker compose start web scheduler publisher worker
+          code=""
+          for attempt in $(seq 1 90); do
+            code=$(curl -s -o /tmp/ready.json -w '%{http_code}' http://localhost:8000/health/ready/ || true)
+            if [ "$code" = "200" ]; then echo "stack ready after restore (attempt $attempt)"; break; fi
+            sleep 2
+          done
+          test "$code" = "200" || { echo "stack did not become ready after restore"; docker compose logs --no-color --tail=120; exit 1; }
+          docker compose exec -T web python manage.py sample_run --timeout 120
+          echo "workflow executed end to end against the restored database"
+
       - name: Container logs
         if: always()
         run: docker compose logs --no-color --tail=200
@@ -852,3 +976,273 @@ jobs:
       - name: Tear down
         if: always()
         run: docker compose down -v
+
+  secrets:
+    # Phase 11 requires a secret scan over the full history, not just the
+    # working tree — a credential deleted in a later commit is still in the
+    # object database and still has to be rotated. gitleaks walks every commit
+    # reachable from HEAD.
+    #
+    # The scan is fast and needs no build, so it runs in its own job and in
+    # parallel with everything else: a leaked credential is worth failing before
+    # the test suite has even started.
+    #
+    # The scanner is the gitleaks BINARY, installed from its release tarball —
+    # not `gitleaks/gitleaks-action`. The action is distributed under a
+    # proprietary EULA that requires a paid license key for repositories owned
+    # by a GitHub Organization and forbids redistribution as part of a product;
+    # the binary is MIT. Same scanner, same config, same rules, same version, no
+    # license dependency. This was found while adding the scan and is the reason
+    # the action is not used here.
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      GITLEAKS_VERSION: v8.24.3
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # gitleaks needs the object database, not a shallow clone.
+          fetch-depth: 0
+
+      - name: Install gitleaks (MIT-licensed binary)
+        run: |
+          set -euo pipefail
+          curl -sSfL "https://github.com/gitleaks/gitleaks/releases/download/${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION#v}_linux_x64.tar.gz" \
+            | tar -xz -C /usr/local/bin gitleaks
+          gitleaks version
+
+      - name: Scan the full history
+        # `--redact` so a real finding is reported without its value being
+        # written to the job log, which is world-readable on a public repo.
+        # `--config` allowlists two reviewed false positives by commit, file,
+        # rule and line; it disables no rule and excludes no path.
+        run: |
+          set -euo pipefail
+          gitleaks git . --config .gitleaks.toml --no-banner --redact \
+            --report-format sarif --report-path gitleaks-history.sarif
+
+      - name: Scan the working tree
+        # The history scan above stops at HEAD. An untracked file is not in any
+        # commit, so it needs its own pass — that is where a developer is most
+        # likely to have just written one.
+        run: |
+          set -euo pipefail
+          gitleaks dir . --config .gitleaks.toml --no-banner --redact \
+            --report-format sarif --report-path gitleaks-tree.sarif
+
+      - name: Upload the reports
+        if: always()
+        uses: actions/upload-artifact@b4b15b8c7c6ac21ea08fcf65892d2ee8f75cf882 # v4.4.3
+        with:
+          name: gitleaks-reports
+          path: |
+            gitleaks-history.sarif
+            gitleaks-tree.sarif
+          if-no-files-found: error
+          retention-days: 7
+
+  supply-chain:
+    # Builds the production image once and runs everything that needs an image:
+    # a Trivy vulnerability scan, a CycloneDX SBOM, and — on main only — a
+    # keyless cosign signature and a build-provenance attestation.
+    #
+    # Why the signing half is conditional: keyless signing needs an OIDC token
+    # from GitHub, and GitHub does not issue one to a pull request from a fork.
+    # Gating on `github.event_name == 'push'` is not a shortcut, it is the only
+    # configuration in which the credential can exist.
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      # Uploading the SARIF report to the Security tab.
+      security-events: write
+      # Pushing to GHCR and attesting. Read-only is enough for the PR half.
+      packages: write
+      id-token: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: docker/setup-buildx-action@b5ca514318bd6ebac0fb2aedd5d36ec1b5c232a2 # v3.10.0
+
+      - name: Build the production image
+        uses: docker/build-push-action@471d1dc4e07e5cdedd4c2171150001c434f0b7a4 # v6.15.0
+        with:
+          context: .
+          target: production
+          push: false
+          load: true
+          tags: flowforge:supply-chain
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Scan the image with Trivy (full report)
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: flowforge:supply-chain
+          scan-type: image
+          scanners: vuln,secret,misconfig
+          severity: HIGH,CRITICAL
+          # This step always succeeds so the SARIF is generated and uploaded
+          # even when the gate below fails. The residual HIGH list is published
+          # to the Security tab so it is visible rather than buried.
+          exit-code: "0"
+          ignore-unfixed: false
+          format: sarif
+          output: trivy-image.sarif
+          skip-setup-trivy: false
+          # The version the residual-risk numbers in this repository were
+          # measured with. Left unpinned, the action's default moves and the
+          # documented finding counts stop matching what CI reports.
+          version: "v0.76.1"
+
+      - name: Upload the Trivy report
+        if: always()
+        uses: actions/upload-artifact@b4b15b8c7c6ac21ea08fcf65892d2ee8f75cf882 # v4.4.3
+        with:
+          name: trivy-image-report
+          path: trivy-image.sarif
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Publish the Trivy findings to the Security tab
+        if: always()
+        uses: github/codeql-action/upload-sarif@b6a472f63d85b9c78a3ac5e89422239fc15e9b3c # v3.28.1
+        with:
+          sarif_file: trivy-image.sarif
+          category: trivy-image
+        continue-on-error: true
+
+      - name: Gate on fixable CRITICAL vulnerabilities
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: flowforge:supply-chain
+          scan-type: image
+          scanners: vuln
+          severity: CRITICAL
+          # The gate is fixable CRITICAL only. At the time this job was written
+          # the image carried one unfixed CRITICAL (CVE-2026-111497 in libbrotli1
+          # on Debian 13.7) and 48 HIGH findings with no fixed version, all in
+          # base OS packages that the runtime does not execute. `apt-get upgrade`
+          # does not clear them and no amount of application code will. Failing
+          # the build on unfixed base-image CVEs would make the gate permanently
+          # red and therefore ignored.
+          exit-code: "1"
+          ignore-unfixed: true
+          format: table
+          skip-setup-trivy: false
+          version: "v0.76.1"
+
+      - name: Generate a CycloneDX SBOM
+        uses: anchore/sbom-action@e11c554f704a0b820cbf8c51673f6945e0731532 # v0.20.0
+        with:
+          image: flowforge:supply-chain
+          format: cyclonedx-json
+          output-file: flowforge-sbom.cdx.json
+          upload-artifact: true
+          artifact-name: flowforge-sbom
+          # The input is `upload-artifact-retention`; there is no
+          # `retention-days` input, and passing one is silently ignored.
+          upload-artifact-retention: 90
+          # Deliberately off here. This job also runs on pull requests, where
+          # there is no release to attach to, and the action fails when it
+          # cannot find one. The release workflow attaches the SBOM from this
+          # artifact instead — see .github/workflows/release.yml.
+          upload-release-assets: false
+
+      # ---------------------------------------------------------------------
+      # Signing and provenance: main only.
+      # ---------------------------------------------------------------------
+      - name: Sign in to GHCR
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: docker/login-action@74a5d142397b4f367a81961eba4e8cd7edddf772 # v3.4.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Push and sign the image
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        id: push-sign
+        uses: docker/build-push-action@471d1dc4e07e5cdedd4c2171150001c434f0b7a4 # v6.15.0
+        with:
+          context: .
+          target: production
+          push: true
+          tags: |
+            ghcr.io/${{ github.repository }}:main-${{ github.sha }}
+            ghcr.io/${{ github.repository }}:main
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Install cosign
+        if: steps.push-sign.outcome == 'success'
+        uses: sigstore/cosign-installer@d7d6bc7722e3daa8354c50bcb52f4837da5e9b6a # v3.8.1
+
+      - name: Sign the image (keyless)
+        # Keyless: the signature's identity is the GitHub Actions OIDC token for
+        # this workflow run, recorded in the Rekor transparency log. There is no
+        # private key to store, rotate or leak, and anyone can verify the
+        # signature without being given a public key.
+        if: steps.push-sign.outcome == 'success'
+        env:
+          IMAGE: ghcr.io/${{ github.repository }}:main-${{ github.sha }}
+        run: |
+          set -euo pipefail
+          cosign sign --yes "${IMAGE}"
+          cosign verify \
+            --certificate-identity-regexp "https://github.com/${{ github.repository }}/.github/workflows/ci.yml" \
+            --certificate-oidc-issuer-regexp "https://token.actions.githubusercontent.com" \
+            "${IMAGE}" > /dev/null
+          echo "signed and verified: ${IMAGE}"
+
+      - name: Attest the build provenance
+        if: steps.push-sign.outcome == 'success'
+        uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2.4.0
+        with:
+          subject-name: ghcr.io/${{ github.repository }}
+          subject-digest: ${{ steps.push-sign.outputs.digest }}
+          push-to-registry: true
+
+  k8s:
+    # Validates the Kubernetes deliverables on every push/PR. It lints the Helm
+    # chart and renders it to manifests that it then checks with kubeconform in
+    # strict mode. helm and kubeconform are downloaded directly (the same pattern
+    # as the gitleaks binary in the `secrets` job) so no further pinned actions
+    # are introduced here.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install helm
+        run: |
+          set -euo pipefail
+          HELM_VERSION=3.16.3
+          curl -sSL "https://get.helm.sh/helm-v${HELM_VERSION}-linux-amd64.tar.gz" -o helm.tgz
+          tar -xzf helm.tgz
+          sudo mv linux-amd64/helm /usr/local/bin/helm
+          helm version --short
+
+      - name: Install kubeconform
+        run: |
+          set -euo pipefail
+          KC_VERSION=0.6.7
+          curl -sSL "https://github.com/yannh/kubeconform/releases/download/v${KC_VERSION}/kubeconform-linux-amd64.tar.gz" -o kc.tgz
+          tar -xzf kc.tgz
+          sudo mv kubeconform /usr/local/bin/kubeconform
+          kubeconform -v
+
+      - name: helm lint
+        run: helm lint deployment/kubernetes/helm/flowforge
+
+      - name: Render and validate with kubeconform
+        run: |
+          set -euo pipefail
+          helm template ff deployment/kubernetes/helm/flowforge --namespace flowforge > /tmp/ff.yaml
+          kubeconform -strict -summary /tmp/ff.yaml
+          # Keep the committed static manifests in sync with the chart.
+          helm template ff deployment/kubernetes/helm/flowforge --namespace flowforge > deployment/kubernetes/manifests/flowforge.yaml
+          if ! git diff --quiet deployment/kubernetes/manifests/flowforge.yaml; then
+            echo "::error::deployment/kubernetes/manifests/flowforge.yaml is out of sync with the chart; run 'helm template ff deployment/kubernetes/helm/flowforge --namespace flowforge > deployment/kubernetes/manifests/flowforge.yaml' and commit."
+            git diff --stat deployment/kubernetes/manifests/flowforge.yaml
+            exit 1
+          fi
