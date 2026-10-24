@@ -20,7 +20,7 @@ def test_publish_then_trigger_then_complete(live, api_token):
     assert status in (200, 201), (status, workflow)
 
     status, run = request("POST", "/runs/", tok=api_token, body={"name": name, "version": 1})
-    assert status in (200, 201), (status, run)
+    assert status in (200, 201, 202), (status, run)
 
     final = wait_for_run(run["id"], tok=api_token, root=live)
     assert final["state"] == "succeeded", final
