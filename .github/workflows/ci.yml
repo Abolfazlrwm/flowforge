@@ -781,31 +781,42 @@ jobs:
           docker compose exec -T db psql -U flowforge -d flowforge -t -A -c "$COUNT_SQL" > /tmp/before.counts
           echo "BEFORE restore:"; cat /tmp/before.counts
 
-          # 2. Dump PostgreSQL in custom format (restorable, parallel-friendly).
+          # 2. Dump PostgreSQL in custom format (restorable, parallel-friendly)
+          #    and prove the file really is a custom-format archive. The magic is
+          #    PGDMP, five bytes, and it is the only cheap check that catches a
+          #    dump that silently wrote an error page or truncated.
           docker compose exec -T db sh -c 'pg_dump -U flowforge -Fc flowforge > /tmp/flowforge.dump'
-          docker compose exec -T db sh -c 'head -c 8 /tmp/flowforge.dump | grep -q PgDMP && echo dump-magic-ok'
+          docker compose exec -T db sh -c 'head -c 5 /tmp/flowforge.dump' > /tmp/dump.magic
+          if ! grep -q 'PGDMP' /tmp/dump.magic; then
+            echo "the dump does not begin with the pg_dump custom-format magic PGDMP"
+            docker compose exec -T db sh -c 'head -c 16 /tmp/flowforge.dump | od -An -c'
+            exit 1
+          fi
+          echo "dump magic: PGDMP"
           docker compose exec -T db ls -l /tmp/flowforge.dump
 
           # 3. Export RabbitMQ definitions (durable topology: quorum queues,
           #    exchanges, bindings, users, vhost, permissions) and prove the
-          #    export is genuinely re-importable by POSTing it straight back into
+          #    export is genuinely re-importable by feeding it straight back into
           #    the same broker (a no-op for existing resources).
-          docker compose exec -T rabbitmq curl -s -u flowforge:flowforge \
-            http://localhost:15672/api/definitions > /tmp/rabbitmq-defs.json
+          #
+          #    `rabbitmqctl`, not the HTTP API: this stack runs
+          #    rabbitmq:3.13-alpine, which neither enables the management plugin
+          #    nor ships curl. `export_definitions -` writes JSON to stdout, so no
+          #    file has to be shuttled out of the container either.
+          docker compose exec -T rabbitmq rabbitmqctl export_definitions - > /tmp/rabbitmq-defs.json
           python3 - <<'PY'
           import json
-          d = json.load(open('/tmp/rabbitmq-defs.json'))
+          with open('/tmp/rabbitmq-defs.json') as fh:
+              d = json.load(fh)
           q = d.get('queues', [])
           assert any(qd.get('type') == 'quorum' for qd in q), "no quorum queue in export"
           print("rabbitmq definitions: queues=%d exchanges=%d vhosts=%d users=%d"
                 % (len(q), len(d.get('exchanges', [])), len(d.get('vhosts', [])), len(d.get('users', []))))
           PY
-          cat /tmp/rabbitmq-defs.json | docker compose exec -T rabbitmq curl -s -o /tmp/rmq-import.txt \
-            -w 'rabbitmq-definitions re-import status=%{http_code}\n' \
-            -u flowforge:flowforge -H 'Content-Type: application/json' --data-binary @- \
-            http://localhost:15672/api/definitions/%2F
-          grep -Eq 'status=2[0-9][0-9]' /tmp/rmq-import.txt \
-            || { echo "rabbitmq definitions were not re-importable"; cat /tmp/rmq-import.txt; exit 1; }
+          docker compose exec -T rabbitmq rabbitmqctl import_definitions - < /tmp/rabbitmq-defs.json \
+            || { echo "rabbitmq definitions were not re-importable"; exit 1; }
+          echo "rabbitmq definitions re-imported cleanly"
 
           # 4. Wipe: terminate any lingering backend, drop and recreate the
           #    database. This is the "wipe" the drill must survive.

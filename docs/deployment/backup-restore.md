@@ -36,8 +36,9 @@ fresh cluster and is what the CI drill uses.
 # Custom format: compressed, restorable, parallel-friendly.
 pg_dump -U flowforge -Fc flowforge > flowforge-$(date +%F-%H%M).dump
 
-# Verify the file is a real dump before you trust it.
-head -c 8 flowforge-$(date +%F-%H%M).dump | xxd    # expect "PgDMP" magic
+# Verify the file is a real dump before you trust it. The custom format starts
+# with the five-byte magic PGDMP (50 47 44 4d 50) — note the capitals.
+head -c 5 flowforge-$(date +%F-%H%M).dump | xxd    # expect "PGDMP"
 ```
 
 Restore onto an emptied (or new) database:
@@ -105,11 +106,13 @@ user, the vhost, and its permissions. Back those up as definitions.
 ### Export
 
 ```bash
-# Via the HTTP API (the same call the CI drill makes):
-curl -s -u flowforge:flowforge http://rabbitmq:15672/api/definitions > rmq-defs.json
+# The broker's own CLI. This needs neither the management plugin nor curl, so it
+# works against the image the chart and compose file ship (`rabbitmq:3.13-alpine`,
+# which enables neither). `-` writes the JSON to stdout.
+docker compose exec -T rabbitmq rabbitmqctl export_definitions - > rmq-defs.json
 
-# Or, if you have rabbitmqadmin on the box:
-rabbitmqadmin export rmq-defs.json
+# On a broker where the management plugin IS enabled, the HTTP API is equivalent:
+curl -s -u flowforge:flowforge http://rabbitmq:15672/api/definitions > rmq-defs.json
 ```
 
 This captures users, vhosts, permissions, queues (including their `quorum`
@@ -121,18 +124,18 @@ by the engine's outbox + lease reaper, not by a definitions file.
 
 ```bash
 # Re-create the topology from the export:
+docker compose exec -T rabbitmq rabbitmqctl import_definitions - < rmq-defs.json
+
+# Or, with the management plugin enabled:
 curl -s -u flowforge:flowforge -H 'Content-Type: application/json' \
   --data-binary @rmq-defs.json \
   http://rabbitmq:15672/api/definitions/%2F      # %2F is the default vhost "/"
-
-# Or:
-rabbitmqadmin import rmq-defs.json
 ```
 
 Re-importing is idempotent for resources that already exist with identical
-arguments. The CI drill POSTs the export straight back into the same broker to
+arguments. The CI drill feeds the export straight back into the same broker to
 prove the file is valid and re-importable; it does not wipe the broker first
-(see "What CI does and does not prove" below.
+(see "What CI does and does not prove" below).
 
 ## What CI does and does not prove
 
