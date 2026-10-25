@@ -1,0 +1,54 @@
+{{- if .Values.migrate.enabled -}}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ .Release.Name }}-migrate
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "flowforge.labels" . | nindent 4 }}
+    app.kubernetes.io/component: migrate
+  annotations:
+    # Run on every install/upgrade, before the workloads come up.
+    "helm.sh/hook": pre-install,pre-upgrade
+    "helm.sh/hook-weight": "-5"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  ttlSecondsAfterFinished: {{ .Values.migrate.ttlSecondsAfterFinished }}
+  backoffLimit: {{ .Values.migrate.backoffLimit }}
+  template:
+    metadata:
+      labels:
+        {{- include "flowforge.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: migrate
+    spec:
+      restartPolicy: OnFailure
+      serviceAccountName: {{ include "flowforge.serviceAccountName" . }}
+      securityContext:
+        {{- include "flowforge.podSecurityContext" . | nindent 8 }}
+      initContainers:
+        - name: wait
+          image: {{ include "flowforge.image" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          # Block until PostgreSQL and RabbitMQ are reachable.
+          command: ["python", "manage.py", "healthcheck"]
+          {{- include "flowforge.commonEnv" . | nindent 10 }}
+          securityContext:
+            {{- include "flowforge.containerSecurityContext" . | nindent 12 }}
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      containers:
+        - name: migrate
+          image: {{ include "flowforge.image" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: ["python", "manage.py", "migrate", "--noinput"]
+          {{- include "flowforge.commonEnv" . | nindent 10 }}
+          securityContext:
+            {{- include "flowforge.containerSecurityContext" . | nindent 12 }}
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir: {}
+{{- end }}

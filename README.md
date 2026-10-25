@@ -11,7 +11,9 @@ parts of distributed execution explicit — leases, fencing tokens, a
 transactional outbox and at-least-once delivery — instead of hiding them
 behind a task decorator.
 
-> **Status: Phase 6 of 11 — execution is reliable, not just working.**
+> **Status: Phases 0–11 merged; `v0.11.0` is the newest release.** Phase 11 —
+> production hardening — is on `main`, and **`v1.0.0` is untagged pending the
+> owner's approval**; the release notes are already drafted.
 > A workflow can be described, validated, published, and triggered over HTTP; the
 > scheduler promotes dependency-satisfied tasks into a transactional outbox, the
 > publisher delivers them to RabbitMQ with publisher confirms, and a worker claims
@@ -19,7 +21,10 @@ behind a task decorator.
 > durable outcome before acking. A failed task is retried with exponential backoff
 > and jitter, a task that exhausts its policy becomes `DEAD` and waits for an
 > operator, and `docs/architecture/failure-model.md` maps every failure mode to a
-> test that proves the recovery.
+> test that proves the recovery. On top of that sit multi-tenancy and RBAC, an
+> append-only audit log, observability, a Python SDK and CLI, and the operational
+> surface: Kubernetes, backups with a restore drill in CI, high availability, and
+> a signed, SBOM'd supply chain.
 > The feature table below lists exactly what is implemented and nothing more.
 
 ## Why this exists
@@ -141,11 +146,42 @@ uv run python manage.py runserver
 | Handler results persisted in `TaskRun.result` | Implemented (Phase 6) |
 | Opt-in idempotency keys for handler replay | Implemented (Phase 6) |
 | Failure-injection tests (kill worker/scheduler, lost ack, broker and DB restart) | Implemented (Phase 6) |
-| Multi-tenancy, RBAC, audit log | **Not implemented** (Phase 8) |
-| Metrics, tracing, dashboards | **Not implemented** (Phase 9) |
-| SDK, CLI | **Not implemented** (Phase 10) |
+| Branching / fan-in, sandboxed expressions, cron triggers, run cancellation | Implemented (Phase 7) |
+| Transactional event log and manual re-run of a failed task | Implemented (Phase 7) |
+| Saga-style compensation tasks | Implemented (Phase 7) |
+| Per-organization scoping, roles (RBAC), memberships | Implemented (Phase 8) |
+| Hashed, scoped, expiring, rotatable API keys | Implemented (Phase 8) |
+| Append-only audit log protected by a database trigger | Implemented (Phase 8) |
+| Secret redaction and a STRIDE threat model | Implemented (Phase 8) |
+| Structured logging, correlation IDs, Prometheus metrics, OpenTelemetry traces | Implemented (Phase 9) |
+| Grafana dashboards and a Compose observability profile | Implemented (Phase 9) |
+| Measured benchmark (Locust) with a committed report | Implemented (Phase 9) |
+| Python SDK (`flowforge-client`) and a `flowforge` CLI | Implemented (Phase 10) |
+| End-to-end suite (REST, SDK, CLI) against the Compose stack | Implemented (Phase 11) |
+| Kubernetes Helm chart and static manifests, validated in CI | Implemented (Phase 11) |
+| Backup/restore runbook with a CI restore drill | Implemented (Phase 11) |
+| High-availability guidance for PostgreSQL and RabbitMQ | Implemented (Phase 11) |
+| CycloneDX SBOM, keyless cosign signing, digest-pinned base image | Implemented (Phase 11) |
 
 Full plan: [`docs/development/ROADMAP.md`](docs/development/ROADMAP.md).
+
+## Deploying
+
+- **[Docker Compose](docs/deployment/docker.md)** — the local/dev stack, and the
+  same process layout the image ships.
+- **[Kubernetes](docs/deployment/kubernetes.md)** — a Helm chart and rendered
+  manifests for web/scheduler/publisher/worker, with liveness/readiness probes,
+  resource requests and limits, a worker HPA and PodDisruptionBudget, a
+  NetworkPolicy, and a non-root securityContext. Validated with `helm lint` and
+  `kubeconform -strict` in CI.
+- **[High availability](docs/deployment/ha.md)** — which processes scale out by
+  construction, and where the real failure domains (PostgreSQL, RabbitMQ,
+  Redis) are.
+- **[Backup and restore](docs/deployment/backup-restore.md)** — `pg_dump`/PITR
+  for PostgreSQL and definitions export for RabbitMQ, with a restore drill that
+  runs in CI and proves a workflow still runs afterwards.
+- **[Migrations](docs/deployment/migrations.md)** — a per-migration safety
+  classification and the zero-downtime upgrade procedure.
 
 ## Development
 
@@ -168,16 +204,25 @@ uv run pytest tests/unit -v --cov
 ## Documentation
 
 - [Architecture overview](docs/architecture/overview.md)
-- [Data model](docs/architecture/data-model.md) · [Execution model](docs/architecture/execution-model.md) · [Workflow definitions](docs/architecture/definitions.md)
+- [Data model](docs/architecture/data-model.md) · [Execution model](docs/architecture/execution-model.md) · [Workflow definitions](docs/architecture/definitions.md) · [Failure model](docs/architecture/failure-model.md)
+- [Threat model (STRIDE)](docs/security/threat-model.md)
+- Deployment: [Docker](docs/deployment/docker.md) · [Kubernetes](docs/deployment/kubernetes.md) · [High availability](docs/deployment/ha.md) · [Backup and restore](docs/deployment/backup-restore.md) · [Migrations](docs/deployment/migrations.md) · [Observability](docs/deployment/observability.md)
+- [Benchmarks](docs/development/BENCHMARKS.md)
 - [Development setup](docs/development/setup.md)
 - [Roadmap](docs/development/ROADMAP.md) · [Progress](docs/development/PROGRESS.md)
 - [Architecture decisions](docs/adr/) · [Decisions index](docs/development/DECISIONS.md)
 - [Audit report](docs/development/AUDIT_REPORT.md) · [Naming analysis](docs/development/NAMING_ANALYSIS.md)
 
+The rendered documentation site is published from `main` at
+<https://Abolfazlrwm.github.io/flowforge>.
+
 ## Benchmarks
 
-None yet. No performance claim will appear here until it is measured on
-stated hardware with a committed benchmark script.
+Measured, not asserted. [`docs/development/BENCHMARKS.md`](docs/development/BENCHMARKS.md)
+reports a real Locust run against a real Compose stack — PostgreSQL, RabbitMQ,
+and all four processes — with the machine and configuration stated next to the
+numbers. The same benchmark runs in CI (`loadtest` job). These figures are a
+floor on a shared runner, not a production target, and the report says so.
 
 ## Contributing
 
