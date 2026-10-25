@@ -70,7 +70,7 @@ dev = [
     # runtime — a silent bug. So both are held at or behind the runtime:
     # django-stubs 5.2.x matches Django 5.2 exactly; DRF stubs 3.16.x is the
     # newest series that still accepts django-stubs 5.2 (3.17+ requires 6.x).
-    "django-stubs>=5.2,<5.3",
+    "django-stubs>=5.2,<6.2",
     "djangorestframework-stubs>=3.16,<3.17",
     "pre-commit>=4.0",
     "coverage>=7.6",
