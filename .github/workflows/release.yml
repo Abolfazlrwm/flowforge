@@ -68,6 +68,13 @@ jobs:
           fi
           echo "using CI run ${RUN_ID}"
           gh run download "$RUN_ID" -n flowforge-sbom -D sbom
+          # anchore/sbom-action uploads a single-file artifact under the artifact
+          # name, so the file lands as `flowforge-sbom` regardless of the
+          # `output-file` it was generated with. Normalize it to the documented
+          # release-asset name so the check and the upload see the same path.
+          if [ -f sbom/flowforge-sbom ] && [ ! -f sbom/flowforge-sbom.cdx.json ]; then
+            mv sbom/flowforge-sbom sbom/flowforge-sbom.cdx.json
+          fi
           test -f sbom/flowforge-sbom.cdx.json || { echo "SBOM file missing from artifact"; exit 1; }
           ls -l sbom
 
