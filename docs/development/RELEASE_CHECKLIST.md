@@ -49,8 +49,11 @@ The release notes to publish are in [`RELEASE_NOTES_v1.0.0.md`](RELEASE_NOTES_v1
       Confirm the asset is present on the release; if the workflow did not run or
       the asset is missing, run it by hand (Actions → Release → Run workflow →
       tag `v1.0.0`).
-- [ ] Confirm the image `ghcr.io/abolfazlrwm/flowforge:v1.0.0` exists and is
-      signed: `cosign verify …` (command in the release notes).
+- [ ] Confirm the image built from the tagged commit exists and is signed:
+      `IMAGE="ghcr.io/abolfazlrwm/flowforge:main-$(git rev-list -n1 v1.0.0)"`,
+      then `cosign verify …` (command in the release notes). CI publishes `main`
+      and `main-<sha>` only — **there is no `:v1.0.0` registry tag**, so do not
+      promise one.
 
 ## 5. Documentation
 

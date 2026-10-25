@@ -1,6 +1,6 @@
 # Threat model (STRIDE)
 
-This is the security threat model for FlowForge as of **v0.11.0**. It is a living
+This is the security threat model for FlowForge as of **v1.0.0**. It is a living
 document: every threat below names the mechanism that mitigates it and the test
 or code that is the evidence. A mitigation with no evidence is marked
 **UNVERIFIED** rather than assumed.
