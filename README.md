@@ -214,7 +214,7 @@ uv run pytest tests/unit -v --cov
 - [Audit report](docs/development/AUDIT_REPORT.md) · [Naming analysis](docs/development/NAMING_ANALYSIS.md)
 
 The rendered documentation site is published from `main` at
-<https://Abolfazlrwm.github.io/flowforge>.
+<https://abolfazlrwm.github.io/flowforge/>.
 
 ## Benchmarks
 
