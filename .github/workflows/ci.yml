@@ -1168,6 +1168,38 @@ jobs:
       # ---------------------------------------------------------------------
       # Signing and provenance: main only.
       # ---------------------------------------------------------------------
+      # Docker requires a lowercase repository path, and `github.repository`
+      # keeps the owner's capitalisation (`Abolfazlrwm/flowforge`), so
+      # `ghcr.io/${{ github.repository }}` is rejected with "repository name must
+      # be lowercase". Lowercase it once, here, instead of hardcoding the name in
+      # four places.
+      #
+      # This does NOT apply to the cosign certificate identity below: that is the
+      # OIDC claim, which carries the canonical case, so it keeps
+      # `github.repository` as-is.
+      - name: Resolve the image name
+        id: image
+        run: |
+          set -euo pipefail
+          name="ghcr.io/${GITHUB_REPOSITORY,,}"
+          echo "name=${name}" >> "$GITHUB_OUTPUT"
+
+          # The chart and the static manifests deploy a fixed repository. Assert
+          # they agree with what this job will push, so a rename cannot silently
+          # split "the image CI builds" from "the image the chart pulls".
+          #
+          # This assertion runs on every pull request, which is the point: the
+          # push below only runs on main, so without it the tag format would be
+          # exercised for the first time on main — which is exactly how the
+          # uppercase-owner bug reached the default branch.
+          chart_repo=$(awk '/^[[:space:]]*repository:/ {print $2; exit}' \
+            deployment/kubernetes/helm/flowforge/values.yaml)
+          if [ "${chart_repo}" != "${name}" ]; then
+            echo "the chart deploys '${chart_repo}', but CI pushes '${name}'"
+            exit 1
+          fi
+          echo "image name agrees with the chart: ${name}"
+
       - name: Sign in to GHCR
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         uses: docker/login-action@74a5d142397b4f367a81961eba4e8cd7edddf772 # v3.4.0
@@ -1185,8 +1217,8 @@ jobs:
           target: production
           push: true
           tags: |
-            ghcr.io/${{ github.repository }}:main-${{ github.sha }}
-            ghcr.io/${{ github.repository }}:main
+            ${{ steps.image.outputs.name }}:main-${{ github.sha }}
+            ${{ steps.image.outputs.name }}:main
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
@@ -1201,7 +1233,7 @@ jobs:
         # signature without being given a public key.
         if: steps.push-sign.outcome == 'success'
         env:
-          IMAGE: ghcr.io/${{ github.repository }}:main-${{ github.sha }}
+          IMAGE: ${{ steps.image.outputs.name }}:main-${{ github.sha }}
         run: |
           set -euo pipefail
           cosign sign --yes "${IMAGE}"
@@ -1215,7 +1247,7 @@ jobs:
         if: steps.push-sign.outcome == 'success'
         uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2.4.0
         with:
-          subject-name: ghcr.io/${{ github.repository }}
+          subject-name: ${{ steps.image.outputs.name }}
           subject-digest: ${{ steps.push-sign.outputs.digest }}
           push-to-registry: true
 
