@@ -1,0 +1,26 @@
+FlowForge has been deployed to namespace {{ .Values.namespace }}.
+
+Components:
+  - web        (Deployment, {{ .Values.web.replicas }} replicas)        -> Service {{ .Release.Name }}-web:{{ .Values.web.service.port }}
+  - scheduler  (Deployment, {{ .Values.scheduler.replicas }} replicas)
+  - publisher  (Deployment, {{ .Values.publisher.replicas }} replicas)
+  - worker     (Deployment, {{ .Values.worker.replicas }} replicas{{- if .Values.worker.autoscaling.enabled }}, autoscaled{{ end }})
+
+Schema migrations run as a Job ({{ .Release.Name }}-migrate) before the
+workloads start, and every Deployment also gates on `manage.py migrate --check`
+via an init container, so no pod serves traffic until the schema is at HEAD.
+
+Next steps:
+  1. Point a Secret at your real credentials. Either set `existingSecret` to a
+     Secret you manage out of band (recommended), or override `secret.*`. The
+     expected keys are: django-secret-key, database-url, rabbitmq-url, redis-url.
+  2. Expose the web Service through your ingress controller. This chart ships a
+     NetworkPolicy that only allows ingress to the web pods; set
+     `networkPolicy.ingressNamespace` to your ingress controller's namespace.
+  3. The PostgreSQL, RabbitMQ and Redis instances are NOT deployed by this chart.
+     Create them (or point `database-url` / `rabbitmq-url` / `redis-url` at
+     managed services) before installing.
+
+Verify:
+  kubectl -n {{ .Values.namespace }} rollout status deploy/{{ .Release.Name }}-web
+  kubectl -n {{ .Values.namespace }} get pods

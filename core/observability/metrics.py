@@ -144,9 +144,10 @@ def set_queue_depth(queue: str, depth: int) -> None:
 
 def start_metrics_server(
     port: int,
-    # nosec B104 - inside a container the scrape happens over the compose
-    # network, not from outside it; see the docstring.
-    addr: str = "0.0.0.0",  # noqa: S104
+    # Inside a container the scrape happens over the compose network, not from
+    # outside it; see the docstring. The annotation says only the test id: bandit
+    # reads a trailing comment as more test names and warns about each word.
+    addr: str = "0.0.0.0",  # noqa: S104  # nosec B104
 ) -> None:
     """Expose this process's registry over HTTP for Prometheus.
 

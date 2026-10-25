@@ -114,8 +114,22 @@ Concretely:
 
 ## Follow-ups
 
+**Done since this ADR was accepted:**
+
+- **Membership-management endpoints and audit entries for role changes.** Shipped
+  in `v0.9.1`: `GET/POST /api/v1/members/` and
+  `PATCH/DELETE /api/v1/members/<uuid>/`, with owner/admin rules, tenant
+  isolation, and `member.added` / `member.role_changed` / `member.removed` audit
+  entries. The repudiation row in the threat model was updated accordingly.
+- **A configurable throttle.** `THROTTLE_AUTH_RATE` / `THROTTLE_TRIGGER_RATE` /
+  `THROTTLE_READ_RATE` landed in Phase 9 with the shipped defaults unchanged and
+  asserted by a test, so the per-process limitation above can be tuned without
+  editing settings.
+
+**Still open, in priority order:**
+
 - PostgreSQL RLS as a second boundary, with the tenant id set per connection.
-- Membership-management endpoints, and audit entries for role changes.
 - A database-level check (trigger) that a child row's organization matches its
   parent's.
 - Encryption at rest is assumed from the database; it is not implemented here.
+- A shared cache for throttling, so the limit is global rather than per-process.
