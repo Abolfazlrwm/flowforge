@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.0] - 2026-10-25
+
+**First stable release.** The REST API and the public contract now carry the
+SemVer 1.0 stability commitment.
+
 Phase 11 — Production hardening. The operational surface that turns a correct
 engine into something that can be run: a security review, safe migrations,
 Kubernetes, backups, high availability, an end-to-end suite, and a signed,
