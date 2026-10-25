@@ -340,9 +340,10 @@ If this session is resumed cold, read this section first.
 - **End-to-end suite.** `tests/e2e/` (REST, SDK, CLI) runs in the `docker` job.
 - **Supply chain.** CycloneDX SBOM, keyless cosign signing, build provenance,
   digest-pinned base image, and `release.yml` to attach the SBOM to a release.
-- **Docs site.** `pages.yml` publishes the MkDocs site to GitHub Pages; the README
-  and PROGRESS record were corrected (Phase 6 status, "not implemented" rows, and
-  the "no benchmarks" claim were all stale).
+- **Docs site.** `pages.yml` publishes the MkDocs site to GitHub Pages
+  (<https://abolfazlrwm.github.io/flowforge/>); the README and PROGRESS record
+  were corrected (Phase 6 status, "not implemented" rows, and the "no benchmarks"
+  claim were all stale).
 
 ## Verification
 
@@ -507,9 +508,11 @@ benchmark numbers in [`BENCHMARKS.md`](BENCHMARKS.md) come from that run.
     end because no release has been cut since it was added. Its steps (tag→commit
     resolution, run lookup, artifact download) were each validated against the
     repository directly.
-35. **GitHub Pages needs a one-time enable.** `pages.yml` builds and deploys the
-    docs site, but the repository's Pages source must be set to "GitHub Actions"
-    once (Settings → Pages) before the first deploy succeeds.
+35. **GitHub Pages — resolved in Phase 11.** `pages.yml` builds the MkDocs site
+    with `--strict` and publishes it from `main`. The site was enabled
+    (`build_type: workflow`) and its first deploy verified live at
+    <https://abolfazlrwm.github.io/flowforge/>, including the deployment pages.
+    No manual repository setting remains outstanding.
 36. **Kubernetes is validated by lint, not by a cluster in the required gate.**
     `helm lint` and `kubeconform -strict` run on every push; the kind end-to-end
     smoke test (`scripts/kind-e2e.sh`, `k8s-e2e.yml`) is manual-dispatch and is
