@@ -11,9 +11,10 @@ parts of distributed execution explicit — leases, fencing tokens, a
 transactional outbox and at-least-once delivery — instead of hiding them
 behind a task decorator.
 
-> **Status: Phases 0–11 merged; `v0.11.0` is the newest release.** Phase 11 —
-> production hardening — is on `main`, and **`v1.0.0` is untagged pending the
-> owner's approval**; the release notes are already drafted.
+> **Status: `v1.0.0` release candidate.** All eleven phases are merged and the
+> full CI matrix is green; the `v1.0.0` tag is cut from this commit, and
+> [`RELEASE_NOTES_v1.0.0.md`](docs/development/RELEASE_NOTES_v1.0.0.md) describes
+> exactly what ships and what it does not.
 > A workflow can be described, validated, published, and triggered over HTTP; the
 > scheduler promotes dependency-satisfied tasks into a transactional outbox, the
 > publisher delivers them to RabbitMQ with publisher confirms, and a worker claims
@@ -99,7 +100,10 @@ curl -s http://localhost:8000/health/live/    # {"status": "alive", ...}
 curl -s http://localhost:8000/health/ready/   # {"status": "ready", "checks": {...}}
 ```
 
-Or run everything locally without Docker:
+Or run it locally without Docker. This path assumes PostgreSQL, Redis and
+RabbitMQ are already reachable at the URLs in `.env.example` — it does not start
+them for you, and `make db-up` starts only PostgreSQL. The Docker path above is
+the one CI exercises end to end.
 
 ```bash
 uv sync --locked --extra dev
@@ -167,6 +171,10 @@ Full plan: [`docs/development/ROADMAP.md`](docs/development/ROADMAP.md).
 
 ## Deploying
 
+- **Container image** — CI publishes `ghcr.io/abolfazlrwm/flowforge` as `main` and
+  `main-<commit-sha>` on every push to `main`, signed keylessly with cosign and
+  attested with build provenance. There is no per-version registry tag; pin the
+  digest for a reproducible deploy.
 - **[Docker Compose](docs/deployment/docker.md)** — the local/dev stack, and the
   same process layout the image ships.
 - **[Kubernetes](docs/deployment/kubernetes.md)** — a Helm chart and rendered
@@ -218,11 +226,41 @@ The rendered documentation site is published from `main` at
 
 ## Benchmarks
 
-Measured, not asserted. [`docs/development/BENCHMARKS.md`](docs/development/BENCHMARKS.md)
-reports a real Locust run against a real Compose stack — PostgreSQL, RabbitMQ,
-and all four processes — with the machine and configuration stated next to the
-numbers. The same benchmark runs in CI (`loadtest` job). These figures are a
-floor on a shared runner, not a production target, and the report says so.
+Measured, not asserted. A four-task diamond (`seed` → `left`/`right` → `combine`),
+10 Locust users for 60 s, against the full Compose stack — PostgreSQL, RabbitMQ
+and all four processes — on **one 4-vCPU GitHub Actions runner** (`AMD EPYC 9V74`,
+15 GiB) with the Django **development** server, not gunicorn:
+
+| `SCHEDULER_INTERVAL` | Runs/s | Run end-to-end (median) | Failures |
+|---|---|---|---|
+| 5 s (shipped default) | 0.36 | 20 000 ms | 0 |
+| 0.25 s | 2.54 | 3 500 ms | 0 |
+
+**Read the caveat, not just the numbers.** The load generator, database, broker
+and workers share one virtual machine, and `runserver` is single-threaded, so
+these are a *floor* for separated hardware and a *pessimistic* latency, not a
+production target. The 20 s figure is arithmetic, not engine overhead: a run
+cannot finish faster than `dependency_depth × scheduler_interval`, and four
+passes at 5 s is 20 s — which is why the 0.25 s row exists.
+
+[`docs/development/BENCHMARKS.md`](docs/development/BENCHMARKS.md) carries the
+full tables, the environment capture, the raw Locust CSVs, and the profiled
+bottleneck that was fixed (5.00 → 4.00 queries per transition). The same
+benchmark runs in CI as the `loadtest` job.
+
+## Packaging and the name
+
+**`flowforge-client` is not published to PyPI**, and neither is the engine.
+Nothing is published under this project's name on PyPI or npm; install the client
+from this repository instead (`pip install ./sdk`, or `uv pip install ./sdk`).
+Publishing is a separate decision and has not been made.
+
+**The name is not clear.** `flow-forge` on PyPI belongs to an unrelated project,
+`flowforge` on npm is held by another account (a 2021 publish was withdrawn
+within a minute), a commercial product uses the name, and a prior funded company
+has since rebranded to FlowFuse. The owner kept the name with the conflicts
+documented rather than hidden — see
+[`NAMING_ANALYSIS.md`](docs/development/NAMING_ANALYSIS.md).
 
 ## Contributing
 

@@ -7,18 +7,34 @@ FlowForge aims to make the *hard* parts of distributed execution explicit —
 leases, fencing tokens, a transactional outbox and at-least-once delivery —
 instead of hiding them behind a task decorator.
 
-!!! warning "Status: Phase 2 of 11"
+!!! success "Status: v1.0.0 release candidate — all 11 phases implemented"
 
-    A workflow can be described, validated and published, and the rules that will
-    drive execution exist as pure Python with database constraints behind them.
-    **Nothing runs a workflow yet**: there is no API, no scheduler and no worker
-    loop. Every document here states what is implemented and what is not.
+    Every layer is built and exercised end to end in CI: the REST API and the
+    Python SDK/CLI, the scheduler and its transactional outbox, the publisher,
+    the worker with leases and fencing tokens, retries and dead-lettering,
+    multi-tenancy with RBAC and an append-only audit log, observability, and the
+    operational surface (Kubernetes, backups with a restore drill, HA guidance).
+
+    **What it guarantees.** *At-least-once delivery*: a broker message is only a
+    hint, and the row is the decision, so a lost message is recoverable. *Fencing
+    tokens*: a worker that lost its lease cannot write over the current owner.
+    *A transactional outbox*: a dispatch exists if and only if the state change
+    that required it committed.
+
+    **What it does not guarantee.** *Exactly-once execution.* A handler can run
+    more than once across a crash, which is why handlers should be idempotent and
+    the API offers opt-in idempotency keys. Nothing here claims otherwise.
+
+    Every failure mode is mapped to a named test in the
+    [failure model](architecture/failure-model.md), with the untested ones marked
+    UNVERIFIED; the [known limitations](development/PROGRESS.md#known-limitations)
+    list what is deliberately not proven.
 
 ## Where to start
 
 <div class="grid cards" markdown>
 
-- **Understand the design**
+-   **Understand the design**
 
     ---
 
@@ -27,7 +43,7 @@ instead of hiding them behind a task decorator.
 
     [:octicons-arrow-right-24: Architecture](architecture/overview.md)
 
-- **Run it locally**
+-   **Run it locally**
 
     ---
 
@@ -35,7 +51,7 @@ instead of hiding them behind a task decorator.
 
     [:octicons-arrow-right-24: Setup](development/setup.md)
 
-- **See what is actually done**
+-   **See what is actually done**
 
     ---
 
@@ -44,7 +60,7 @@ instead of hiding them behind a task decorator.
 
     [:octicons-arrow-right-24: Progress](development/PROGRESS.md)
 
-- **Read the decisions**
+-   **Read the decisions**
 
     ---
 
