@@ -6,9 +6,15 @@ section of `docs/development/PROGRESS.md`.
 
 ## Current Phase
 
-**Phase 6 — Reliability: COMPLETE (v0.7.0)**, merged as `3210001` (PR #31).
-Phases 0–6 are merged, tagged and released (`v0.1.0` … `v0.7.0`).
+**Phase 11 — Production Hardening: MERGED** (PR #43). Phases 0–11 are merged;
+`v0.11.0` is the newest **release**.
 
+**`v1.0.0` is not tagged.** It waits for the owner's explicit approval (decision
+2026-10-22, `docs/development/DECISIONS.md`). Every other release tag is automatic
+once CI is green. Draft release notes and the cut procedure are already written:
+`docs/development/RELEASE_NOTES_v1.0.0.md` and `RELEASE_CHECKLIST.md`.
+
+Read `docs/development/PROGRESS.md` for the resume point and the limitations.
 Read `docs/architecture/failure-model.md` before touching execution code: it maps
 every failure mode to a named test and marks the untested ones UNVERIFIED. If you
 add a failure mode, add its test and its row in the same change.

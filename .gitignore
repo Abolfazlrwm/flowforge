@@ -83,3 +83,7 @@ test.sqlite3
 # Local agent tooling / scratch state
 .workbuddy-ai/
 .ds-history/
+
+# Locally downloaded validation binaries (helm, kubeconform). CI installs its own
+# pinned versions; these are per-machine and must never be committed.
+.tools/
