@@ -55,9 +55,9 @@ The release notes to publish are in [`RELEASE_NOTES_v1.0.0.md`](RELEASE_NOTES_v1
 ## 5. Documentation
 
 - [ ] Confirm `pages.yml` deployed the docs site from `main` and the new
-      deployment pages render (Kubernetes, HA, backup/restore, migrations).
-- [ ] If this is the first deploy, the repository's **Pages source must be set to
-      "GitHub Actions"** (Settings → Pages) — see PROGRESS limitation 35.
+      deployment pages render (Kubernetes, HA, backup/restore, migrations). The
+      site is enabled and live at <https://abolfazlrwm.github.io/flowforge/>;
+      this is a verification step, not a prerequisite — nothing to switch on.
 
 ## 6. Post-release
 
