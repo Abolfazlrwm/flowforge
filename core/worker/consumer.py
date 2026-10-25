@@ -32,6 +32,7 @@ from __future__ import annotations
 import contextlib
 import json
 import logging
+import re
 import threading
 import time
 from collections.abc import Callable, Iterator, Mapping
@@ -66,6 +67,27 @@ DEFAULT_ROUTING_KEY = "task.dispatch"
 #: ``ConnectionRefusedError``, neither of which is an ``AMQPError``. A
 #: ``DatabaseError`` arrives here too, via ``_on_message``.
 RECONNECTABLE_ERRORS = (pika.exceptions.AMQPError, OSError, DatabaseError)
+
+#: A connection string's ``user:password@`` part, to keep secrets out of the logs.
+_URL_USERINFO = re.compile(r"(?P<scheme>[A-Za-z][A-Za-z0-9+.\-]*://)[^/\s@]*@")
+#: A ``password=`` / ``passwd=`` / ``pwd=`` parameter, same reason.
+_SECRET_PARAM = re.compile(r"(?i)\b(password|passwd|pwd)=([^&\s;]+)")
+
+
+def describe_broker_error(exc: BaseException) -> str:
+    """Render an exception for a log line as ``Type: message``, credentials redacted.
+
+    pika wraps some socket failures in an ``AMQPConnectionError`` whose ``str()`` is
+    empty, which is why the reconnect log used to read ``lost the broker ()``.
+    Leading with the type keeps that case informative. A ``user:password@`` in a
+    connection URL, or a ``password=`` parameter, is masked so a connection string
+    cannot leak a secret into the logs.
+    """
+    message = str(exc).strip()
+    message = _URL_USERINFO.sub(r"\g<scheme>***@", message)
+    message = _SECRET_PARAM.sub(r"\1=***", message)
+    name = type(exc).__name__
+    return f"{name}: {message}" if message else name
 
 
 class Worker:
@@ -150,6 +172,7 @@ class Worker:
                 try:
                     channel = self._connect()
                     attempt = 0
+                    logger.info("Worker %s connected to the broker", self._worker_id)
                     channel.basic_consume(
                         queue=self._queue,
                         on_message_callback=self._on_message,
@@ -188,7 +211,7 @@ class Worker:
         logger.warning(
             "Worker %s lost the broker (%s); reconnecting in %.2fs (attempt %d)",
             self._worker_id,
-            exc,
+            describe_broker_error(exc),
             delay,
             attempt,
         )
