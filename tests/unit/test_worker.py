@@ -7,6 +7,7 @@ happens to a message and is tested here with fake ack/nack callbacks and a real
 
 from __future__ import annotations
 
+import logging
 import socket
 import threading
 from collections.abc import Mapping
@@ -27,7 +28,7 @@ from core.repositories.transitions import (
     promote_due_retries,
     reclaim_task_run,
 )
-from core.worker.consumer import Worker
+from core.worker.consumer import Worker, describe_broker_error
 from core.worker.registry import handlers, register, resolve
 from django.db import DatabaseError
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
@@ -363,6 +364,34 @@ def test_a_dispatch_without_an_idempotency_key_always_executes(task_run: TaskRun
     assert task_run.result == {"echo": "x", "ok": True}
 
 
+class TestDescribeBrokerError:
+    """``describe_broker_error`` renders a loggable string without leaking secrets."""
+
+    def test_includes_the_type_and_the_message(self) -> None:
+        """A normal exception renders as ``Type: message``."""
+        text = describe_broker_error(ConnectionRefusedError(111, "Connection refused"))
+        assert text.startswith("ConnectionRefusedError")
+        assert "Connection refused" in text
+
+    def test_an_empty_message_falls_back_to_the_type(self) -> None:
+        """The old log printed ``()`` for pika's empty-message connection errors."""
+        assert describe_broker_error(pika.exceptions.AMQPConnectionError()) == "AMQPConnectionError"
+
+    def test_redacts_credentials_in_a_connection_url(self) -> None:
+        """A ``user:password@`` in a URL is masked, so no secret reaches the log."""
+        text = describe_broker_error(
+            ValueError("cannot connect to amqp://flowforge:s3cret@rabbitmq:5672/%2F")
+        )
+        assert "s3cret" not in text
+        assert "amqp://***@rabbitmq:5672/%2F" in text
+
+    def test_redacts_a_password_parameter(self) -> None:
+        """A ``password=`` parameter is masked too."""
+        text = describe_broker_error(ValueError("dsn password=hunter2 host=db"))
+        assert "hunter2" not in text
+        assert "password=***" in text
+
+
 class TestReconnection:
     """``run()`` survives a lost broker without a process restart."""
 
@@ -480,6 +509,54 @@ class TestReconnection:
 
         task_run.refresh_from_db()
         assert task_run.state == TaskRunState.SUCCEEDED.value
+
+    def test_a_lost_connection_logs_the_type_and_keeps_reconnecting_text(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """The warning names the exception type and keeps the "reconnecting in" text.
+
+        ``AMQPConnectionError`` often has an empty ``str()``, so the old log read
+        ``lost the broker ()``. The CI docker job greps "reconnecting in", so that
+        text must survive the change.
+        """
+        worker = _worker()
+        calls: list[int] = []
+
+        def connect() -> MagicMock:
+            calls.append(1)
+            if len(calls) == 1:
+                raise pika.exceptions.AMQPConnectionError()
+            worker.stop()
+            return MagicMock()
+
+        caplog.set_level(logging.WARNING, logger="core.worker.consumer")
+        with (
+            patch.object(worker, "_connect", side_effect=connect),
+            patch("core.worker.consumer.calculate_backoff", return_value=0.0),
+        ):
+            worker.run()
+
+        warnings = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
+        assert any(
+            "lost the broker (AMQPConnectionError)" in m and "reconnecting in" in m
+            for m in warnings
+        ), warnings
+
+    def test_a_successful_connect_logs_connected(self, caplog: pytest.LogCaptureFixture) -> None:
+        """Every successful (re)connect logs one INFO "connected" line with the id."""
+        worker = _worker()
+        channel = MagicMock()
+
+        def connect() -> MagicMock:
+            worker.stop()  # stop so run() exits after the connect is logged
+            return channel
+
+        caplog.set_level(logging.INFO, logger="core.worker.consumer")
+        with patch.object(worker, "_connect", side_effect=connect):
+            worker.run()
+
+        infos = [r.getMessage() for r in caplog.records if r.levelno == logging.INFO]
+        assert "Worker w1 connected to the broker" in infos, infos
 
 
 def test_a_database_error_resets_the_connection_and_propagates(task_run: TaskRun) -> None:
