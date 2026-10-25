@@ -2,6 +2,8 @@
 
 [![CI](https://github.com/Abolfazlrwm/flowforge/actions/workflows/ci.yml/badge.svg)](https://github.com/Abolfazlrwm/flowforge/actions/workflows/ci.yml)
 [![codecov](https://codecov.io/gh/Abolfazlrwm/flowforge/branch/main/graph/badge.svg)](https://codecov.io/gh/Abolfazlrwm/flowforge)
+[![Release](https://img.shields.io/github/v/release/Abolfazlrwm/flowforge?sort=semver)](https://github.com/Abolfazlrwm/flowforge/releases/latest)
+[![Docs](https://img.shields.io/badge/docs-live-brightgreen)](https://abolfazlrwm.github.io/flowforge/)
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue.svg)](pyproject.toml)
 
@@ -11,8 +13,9 @@ parts of distributed execution explicit — leases, fencing tokens, a
 transactional outbox and at-least-once delivery — instead of hiding them
 behind a task decorator.
 
-> **Status: `v1.0.0` release candidate.** All eleven phases are merged and the
-> full CI matrix is green; the `v1.0.0` tag is cut from this commit, and
+> **Status: Released — [`v1.0.0`](https://github.com/Abolfazlrwm/flowforge/releases/tag/v1.0.0).**
+> All eleven phases are merged and the full CI matrix is green on the tagged
+> commit ([run 40197352205](https://github.com/Abolfazlrwm/flowforge/actions/runs/40197352205)).
 > [`RELEASE_NOTES_v1.0.0.md`](docs/development/RELEASE_NOTES_v1.0.0.md) describes
 > exactly what ships and what it does not.
 > A workflow can be described, validated, published, and triggered over HTTP; the
@@ -100,6 +103,49 @@ curl -s http://localhost:8000/health/live/    # {"status": "alive", ...}
 curl -s http://localhost:8000/health/ready/   # {"status": "ready", "checks": {...}}
 ```
 
+The probes only prove the processes are up. Here is a full cycle through the
+REST API — publish a three-task DAG, trigger it, and watch it reach `succeeded`
+— which is what the `docker` CI job runs. The first command is a **dev/test
+fixture** (`e2e_token`) that creates a staff user in the default organization and
+writes its token; in production use your own user and token.
+
+```bash
+docker compose exec -T web python manage.py e2e_token
+TOKEN="$(docker compose exec -T web cat /tmp/e2e_token | tr -d '\r\n')"
+BASE=http://localhost:8000/api/v1
+AUTH="Authorization: Token $TOKEN"
+
+# Publish a small DAG: seed -> sum -> done. Returns 201 and the stored definition.
+curl -fsS -X POST "$BASE/workflows/" -H "$AUTH" -H 'Content-Type: application/json' \
+  -d '{"name":"sample-e2e","version":1,"description":"The compose end-to-end sample.","tasks":[{"key":"seed","task_type":"echo","config":{"value":"hello"}},{"key":"sum","task_type":"add","depends_on":["seed"],"config":{"values":[1,2,3]}},{"key":"done","task_type":"noop","depends_on":["sum"]}]}' \
+  -o /tmp/workflow.json
+
+# Trigger it and poll until it finishes.
+RUN_ID="$(curl -fsS -X POST "$BASE/runs/" -H "$AUTH" -H 'Content-Type: application/json' \
+  -d '{"name":"sample-e2e","version":1}' | python3 -c 'import json,sys; print(json.load(sys.stdin)["id"])')"
+echo "triggered run $RUN_ID"
+for attempt in $(seq 1 120); do
+  STATE="$(curl -fsS "$BASE/runs/$RUN_ID/" -H "$AUTH" | python3 -c 'import json,sys; print(json.load(sys.stdin)["state"])')"
+  echo "run $RUN_ID state=$STATE (attempt $attempt)"
+  [ "$STATE" = "succeeded" ] && break
+  sleep 1
+done
+```
+
+Real output from the `docker` CI job
+([run 40201842875](https://github.com/Abolfazlrwm/flowforge/actions/runs/40201842875),
+attempt 2; the UUID and attempt count vary per run):
+
+```
+e2e token written to /tmp/e2e_token
+triggered run 208173a0-2383-41fe-a416-717bb20efe3d
+run 208173a0-2383-41fe-a416-717bb20efe3d state=pending (attempt 1)
+run 208173a0-2383-41fe-a416-717bb20efe3d state=pending (attempt 2)
+run 208173a0-2383-41fe-a416-717bb20efe3d state=running (attempt 3)
+...
+run 208173a0-2383-41fe-a416-717bb20efe3d state=succeeded (attempt 18)
+```
+
 Or run it locally without Docker. This path assumes PostgreSQL, Redis and
 RabbitMQ are already reachable at the URLs in `.env.example` — it does not start
 them for you, and `make db-up` starts only PostgreSQL. The Docker path above is
@@ -124,7 +170,7 @@ uv run python manage.py runserver
 | Liveness probe `GET /health/live/` | Implemented |
 | Readiness probe `GET /health/ready/` (PostgreSQL, Redis, RabbitMQ) | Implemented |
 | Multi-stage Docker image, non-root user, healthcheck | Implemented |
-| Docker Compose stack (db, redis, rabbitmq, one-shot migrate, web, scheduler, publisher) | Implemented |
+| Docker Compose stack (db, redis, rabbitmq, one-shot migrate, web, scheduler, publisher, worker) | Implemented |
 | CI: lint, format, mypy, migration check, tests, compose smoke test | Implemented |
 | Dependency lock file (`uv.lock`) used by CI and the image | Implemented |
 | State machines with validated transition tables, enforced at import time | Implemented (Phase 1) |
@@ -190,6 +236,34 @@ Full plan: [`docs/development/ROADMAP.md`](docs/development/ROADMAP.md).
   runs in CI and proves a workflow still runs afterwards.
 - **[Migrations](docs/deployment/migrations.md)** — a per-migration safety
   classification and the zero-downtime upgrade procedure.
+
+## Known limitations
+
+Verified gaps, not guesses — each links to where the detail lives.
+
+- **Clock skew is unverified.** Lease expiry and retry backoff assume a roughly
+  synchronised clock; skew between hosts is not tested
+  ([failure model](docs/architecture/failure-model.md)).
+- **Multi-node HA is not tested in CI.** The four processes are safe to replicate
+  (the database is the mutex), but PostgreSQL failover and a multi-node RabbitMQ
+  cluster are operator-validated, not proven here
+  ([HA guide](docs/deployment/ha.md)).
+- **Idempotency keys are best-effort.** They reuse a stored result but do not
+  serialise two concurrent executions of the same key
+  ([failure model](docs/architecture/failure-model.md)).
+- **The restore drill proves the procedure, not production scale.** It asserts
+  identical row counts and runs a workflow against the restored database, but on
+  tens of rows, not terabytes
+  ([backup and restore](docs/deployment/backup-restore.md)).
+- **The scheduler interval floors latency.** A run cannot finish faster than
+  `dependency_depth × scheduler_interval`; the shipped 5 s default is why the
+  benchmark's median is 20 s ([benchmarks](docs/development/BENCHMARKS.md)).
+- **Kubernetes is validated by lint, not a cluster, in the required gate.**
+  `helm lint` and `kubeconform -strict` run on every push; the kind end-to-end
+  smoke test is manual-dispatch ([Kubernetes](docs/deployment/kubernetes.md)).
+
+The numbered, full list is in
+[`PROGRESS.md` → Known limitations](docs/development/PROGRESS.md#known-limitations).
 
 ## Development
 
