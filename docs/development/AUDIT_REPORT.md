@@ -1,5 +1,13 @@
 # Phase 0 — Independent Audit Report (closeout)
 
+!!! warning "Historical snapshot as of 2026-10-19"
+
+    This report records the Phase 0 audit **as it stood on 2026-10-19**. Several
+    lines below were true then and are deliberately left unedited: the report was
+    written while PR #1 was open, so it says "not merged" and "v0.1.0 tag: not
+    created". In fact PR #1 merged as `97c17bf` and `v0.1.0` was tagged and
+    released. For the current state see [PROGRESS.md](PROGRESS.md).
+
 **Audit started:** 2026-10-18
 **Closeout:** 2026-10-19
 **Branch:** `chore/phase0-audit-fixes`
