@@ -295,6 +295,16 @@ LOGGING = {
             "handlers": ["console"],
             "level": "INFO",
         },
+        # The worker reconnects to the broker on its own loop; its
+        # "connected to the broker" INFO line is the only signal that a
+        # (re)connect happened, so it must actually be emitted. We scope INFO
+        # to ``core.worker`` only — not to all of ``core`` — because
+        # ``core.repositories.scheduler`` also has an INFO call that would
+        # otherwise start leaking into the logs.
+        "core.worker": {
+            "handlers": ["console"],
+            "level": "INFO",
+        },
     },
 }
 
