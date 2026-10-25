@@ -1075,6 +1075,11 @@ jobs:
       # Pushing to GHCR and attesting. Read-only is enough for the PR half.
       packages: write
       id-token: write
+      # Creating the provenance attestation. `actions/attest-build-provenance`
+      # with `push-to-registry: true` writes it through the attestations API;
+      # without this the step fails with "Resource not accessible by
+      # integration" after the image has already been pushed and signed.
+      attestations: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -1233,7 +1238,9 @@ jobs:
         # signature without being given a public key.
         if: steps.push-sign.outcome == 'success'
         env:
-          IMAGE: ${{ steps.image.outputs.name }}:main-${{ github.sha }}
+          # Sign the digest the push actually produced, not the tag: a tag can be
+          # moved, and cosign warns when asked to sign one.
+          IMAGE: ${{ steps.image.outputs.name }}@${{ steps.push-sign.outputs.digest }}
         run: |
           set -euo pipefail
           cosign sign --yes "${IMAGE}"
