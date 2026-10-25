@@ -1,5 +1,12 @@
 # Naming Analysis: "FlowForge"
 
+!!! warning "Historical snapshot as of 2026-10-19"
+
+    Registry availability and trademark exposure below were measured on
+    2026-10-19 and are a point-in-time record, not a live status. The conclusion
+    has not changed: the owner kept the name, and nothing is published under it
+    on PyPI or npm. See [PROGRESS.md](PROGRESS.md) for the current state.
+
 **Date:** 2026-10-19
 **Status:** Chosen name retained by owner decision. Conflicts documented below.
 

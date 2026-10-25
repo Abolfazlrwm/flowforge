@@ -8,5 +8,5 @@ description: >-
   and a HorizontalPodAutoscaler for the worker, a non-root security context and a
   NetworkPolicy.
 type: application
-version: 0.1.0
-appVersion: "0.11.0"
+version: 1.0.0
+appVersion: "1.0.0"
