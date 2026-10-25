@@ -43,10 +43,19 @@ kubectl create secret generic flowforge-secret -n flowforge \
 
 ## Install with Helm
 
+**Set the image tag.** `image.tag` is empty by default, which makes the chart fall
+back to `.Chart.AppVersion` — and CI publishes only `main` and `main-<commit-sha>`
+to `ghcr.io/abolfazlrwm/flowforge`, never a per-version tag. Without
+`--set image.tag=…` the pods will fail to pull. Use a `main-<sha>` tag or, better,
+a digest:
+
 ```bash
+IMAGE_TAG="main-$(git rev-list -n1 HEAD)"   # or sha256:... for a pinned deploy
+
 helm install flowforge deployment/kubernetes/helm/flowforge \
   --namespace flowforge --create-namespace \
   --set existingSecret=flowforge-secret \
+  --set image.tag="$IMAGE_TAG" \
   --set config.allowedHosts="api.example.com"
 ```
 
@@ -55,6 +64,7 @@ Or, if you let the chart create its own Secret (not for production):
 ```bash
 helm install flowforge deployment/kubernetes/helm/flowforge \
   --namespace flowforge --create-namespace \
+  --set image.tag="$IMAGE_TAG" \
   --set secret.databaseUrl="postgres://..." --set secret.rabbitmqUrl="..." \
   --set secret.redisUrl="..." --set secret.djangoSecretKey="$(openssl rand -hex 32)"
 ```
@@ -66,6 +76,11 @@ kubectl apply -f deployment/kubernetes/manifests/flowforge.yaml
 # then patch/replace the Secret with real values, or delete the chart-managed
 # Secret and create your own named flowforge-secret before applying.
 ```
+
+The committed manifest is the chart's default output, so it pins
+`image: ghcr.io/abolfazlrwm/flowforge:1.0.0` — a tag CI does not publish. Replace
+the image with a `main-<sha>` tag or a digest before applying (or render the chart
+with `--set image.tag=…`, which is the supported path).
 
 ## Validation
 

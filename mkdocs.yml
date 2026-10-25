@@ -1,6 +1,9 @@
 site_name: FlowForge
 site_description: An open-source distributed workflow orchestration engine.
-site_url: https://Abolfazlrwm.github.io/flowforge
+# Lowercase, because this value is used verbatim for canonical URLs and the
+# sitemap; GitHub Pages serves the host case-insensitively but the emitted
+# absolute URLs should match the canonical form.
+site_url: https://abolfazlrwm.github.io/flowforge
 repo_url: https://github.com/Abolfazlrwm/flowforge
 repo_name: Abolfazlrwm/flowforge
 
@@ -70,8 +73,20 @@ plugins:
 markdown_extensions:
   - admonition
   - codehilite
+  # `attr_list` and `md_in_html` are what make the Material "grid cards" on the
+  # home page work: the cards are a <div markdown> block, and without
+  # `md_in_html` the markdown inside it is emitted as literal text (bold `**`
+  # and `:octicons-...:` shown verbatim). `attr_list` supplies the `{ .lg }`
+  # attribute syntax those cards use.
+  - attr_list
+  - md_in_html
   - toc:
       permalink: true
+  # The icon shortcodes (`:octicons-arrow-right-24:`) need this; Material ships
+  # the index and the SVG renderer, so no extra dependency is introduced.
+  - pymdownx.emoji:
+      emoji_index: !!python/name:material.extensions.emoji.twemoji
+      emoji_generator: !!python/name:material.extensions.emoji.to_svg
   - pymdownx.superfences:
       # Without this block the Mermaid in the architecture documents renders as
       # a plain code block instead of a diagram. `--strict` proves the extension

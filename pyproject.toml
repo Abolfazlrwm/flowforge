@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "flowforge"
-version = "0.1.0"
+version = "1.0.0"
 description = "An open-source distributed workflow orchestration engine powered by Django, PostgreSQL, and RabbitMQ."
 readme = "README.md"
 license = { text = "Apache-2.0" }
