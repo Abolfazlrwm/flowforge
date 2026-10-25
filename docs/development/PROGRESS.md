@@ -345,6 +345,26 @@ If this session is resumed cold, read this section first.
   were corrected (Phase 6 status, "not implemented" rows, and the "no benchmarks"
   claim were all stale).
 
+### Three defects were only reachable after the merge
+
+Every job was green on the pull request, and the first run on `main` still failed
+three times. Each defect lived in a path that cannot execute on a pull request:
+
+1. **The Pages source had never been enabled.** `pages.yml` was correct; the
+   repository setting it depends on was not, so the first deploy failed in 14s.
+2. **`ghcr.io/${{ github.repository }}` is not a legal image name.** The owner's
+   login is `Abolfazlrwm`, and Docker requires a lowercase repository path. The
+   step is guarded by `refs/heads/main`, so it had never run.
+3. **The provenance attestation lacked `attestations: write`.** It failed *after*
+   the image had been pushed and keylessly signed, so the failure looked like a
+   signing problem and was not one.
+
+All three were fixed forward (PRs #45, #46, #47). The generalisation is the one
+worth carrying: **a step that only runs on the default branch is a step with no
+test.** Where such a path must exist, assert its inputs on every pull request —
+which the image-name step now does, by checking the resolved name against the
+repository the Helm chart deploys.
+
 ## Verification
 
 ### In CI (authoritative)
