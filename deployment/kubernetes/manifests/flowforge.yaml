@@ -5,10 +5,10 @@ kind: Namespace
 metadata:
   name: flowforge
   labels:
-    helm.sh/chart: flowforge-0.1.0
+    helm.sh/chart: flowforge-1.0.0
     app.kubernetes.io/name: flowforge
     app.kubernetes.io/instance: ff
-    app.kubernetes.io/version: "0.11.0"
+    app.kubernetes.io/version: "1.0.0"
     app.kubernetes.io/managed-by: Helm
 ---
 # Source: flowforge/templates/networkpolicy.yaml
@@ -22,10 +22,10 @@ metadata:
   name: ff-default-deny-ingress
   namespace: flowforge
   labels:
-    helm.sh/chart: flowforge-0.1.0
+    helm.sh/chart: flowforge-1.0.0
     app.kubernetes.io/name: flowforge
     app.kubernetes.io/instance: ff
-    app.kubernetes.io/version: "0.11.0"
+    app.kubernetes.io/version: "1.0.0"
     app.kubernetes.io/managed-by: Helm
 spec:
   podSelector: {}
@@ -41,10 +41,10 @@ metadata:
   name: ff-web-ingress
   namespace: flowforge
   labels:
-    helm.sh/chart: flowforge-0.1.0
+    helm.sh/chart: flowforge-1.0.0
     app.kubernetes.io/name: flowforge
     app.kubernetes.io/instance: ff
-    app.kubernetes.io/version: "0.11.0"
+    app.kubernetes.io/version: "1.0.0"
     app.kubernetes.io/managed-by: Helm
 spec:
   podSelector:
@@ -67,10 +67,10 @@ metadata:
   name: ff-worker
   namespace: flowforge
   labels:
-    helm.sh/chart: flowforge-0.1.0
+    helm.sh/chart: flowforge-1.0.0
     app.kubernetes.io/name: flowforge
     app.kubernetes.io/instance: ff
-    app.kubernetes.io/version: "0.11.0"
+    app.kubernetes.io/version: "1.0.0"
     app.kubernetes.io/managed-by: Helm
     app.kubernetes.io/component: worker
 spec:
@@ -88,10 +88,10 @@ metadata:
   name: ff-flowforge
   namespace: flowforge
   labels:
-    helm.sh/chart: flowforge-0.1.0
+    helm.sh/chart: flowforge-1.0.0
     app.kubernetes.io/name: flowforge
     app.kubernetes.io/instance: ff
-    app.kubernetes.io/version: "0.11.0"
+    app.kubernetes.io/version: "1.0.0"
     app.kubernetes.io/managed-by: Helm
 ---
 # Source: flowforge/templates/secret.yaml
@@ -101,10 +101,10 @@ metadata:
   name: ff-flowforge-secret
   namespace: flowforge
   labels:
-    helm.sh/chart: flowforge-0.1.0
+    helm.sh/chart: flowforge-1.0.0
     app.kubernetes.io/name: flowforge
     app.kubernetes.io/instance: ff
-    app.kubernetes.io/version: "0.11.0"
+    app.kubernetes.io/version: "1.0.0"
     app.kubernetes.io/managed-by: Helm
 type: Opaque
 stringData:
@@ -120,10 +120,10 @@ metadata:
   name: ff-flowforge-config
   namespace: flowforge
   labels:
-    helm.sh/chart: flowforge-0.1.0
+    helm.sh/chart: flowforge-1.0.0
     app.kubernetes.io/name: flowforge
     app.kubernetes.io/instance: ff
-    app.kubernetes.io/version: "0.11.0"
+    app.kubernetes.io/version: "1.0.0"
     app.kubernetes.io/managed-by: Helm
 data:
   DJANGO_SETTINGS_MODULE: "flowforge.settings.prod"
@@ -140,10 +140,10 @@ metadata:
   name: ff-web
   namespace: flowforge
   labels:
-    helm.sh/chart: flowforge-0.1.0
+    helm.sh/chart: flowforge-1.0.0
     app.kubernetes.io/name: flowforge
     app.kubernetes.io/instance: ff
-    app.kubernetes.io/version: "0.11.0"
+    app.kubernetes.io/version: "1.0.0"
     app.kubernetes.io/managed-by: Helm
     app.kubernetes.io/component: web
 spec:
@@ -164,10 +164,10 @@ metadata:
   name: ff-publisher
   namespace: flowforge
   labels:
-    helm.sh/chart: flowforge-0.1.0
+    helm.sh/chart: flowforge-1.0.0
     app.kubernetes.io/name: flowforge
     app.kubernetes.io/instance: ff
-    app.kubernetes.io/version: "0.11.0"
+    app.kubernetes.io/version: "1.0.0"
     app.kubernetes.io/managed-by: Helm
     app.kubernetes.io/component: publisher
 spec:
@@ -191,7 +191,7 @@ spec:
           type: RuntimeDefault
       initContainers:
         - name: migrate-check
-          image: ghcr.io/abolfazlrwm/flowforge:0.11.0
+          image: ghcr.io/abolfazlrwm/flowforge:1.0.0
           imagePullPolicy: IfNotPresent
           command: ["python", "manage.py", "migrate", "--check", "--noinput"]
           securityContext:
@@ -212,7 +212,7 @@ spec:
               memory: 256Mi
       containers:
         - name: publisher
-          image: ghcr.io/abolfazlrwm/flowforge:0.11.0
+          image: ghcr.io/abolfazlrwm/flowforge:1.0.0
           imagePullPolicy: IfNotPresent
           command:
             - python
@@ -273,10 +273,10 @@ metadata:
   name: ff-scheduler
   namespace: flowforge
   labels:
-    helm.sh/chart: flowforge-0.1.0
+    helm.sh/chart: flowforge-1.0.0
     app.kubernetes.io/name: flowforge
     app.kubernetes.io/instance: ff
-    app.kubernetes.io/version: "0.11.0"
+    app.kubernetes.io/version: "1.0.0"
     app.kubernetes.io/managed-by: Helm
     app.kubernetes.io/component: scheduler
 spec:
@@ -300,7 +300,7 @@ spec:
           type: RuntimeDefault
       initContainers:
         - name: migrate-check
-          image: ghcr.io/abolfazlrwm/flowforge:0.11.0
+          image: ghcr.io/abolfazlrwm/flowforge:1.0.0
           imagePullPolicy: IfNotPresent
           command: ["python", "manage.py", "migrate", "--check", "--noinput"]
           securityContext:
@@ -321,7 +321,7 @@ spec:
               memory: 256Mi
       containers:
         - name: scheduler
-          image: ghcr.io/abolfazlrwm/flowforge:0.11.0
+          image: ghcr.io/abolfazlrwm/flowforge:1.0.0
           imagePullPolicy: IfNotPresent
           command:
             - python
@@ -384,10 +384,10 @@ metadata:
   name: ff-web
   namespace: flowforge
   labels:
-    helm.sh/chart: flowforge-0.1.0
+    helm.sh/chart: flowforge-1.0.0
     app.kubernetes.io/name: flowforge
     app.kubernetes.io/instance: ff
-    app.kubernetes.io/version: "0.11.0"
+    app.kubernetes.io/version: "1.0.0"
     app.kubernetes.io/managed-by: Helm
     app.kubernetes.io/component: web
 spec:
@@ -411,7 +411,7 @@ spec:
           type: RuntimeDefault
       initContainers:
         - name: migrate-check
-          image: ghcr.io/abolfazlrwm/flowforge:0.11.0
+          image: ghcr.io/abolfazlrwm/flowforge:1.0.0
           imagePullPolicy: IfNotPresent
           command: ["python", "manage.py", "migrate", "--check", "--noinput"]
           securityContext:
@@ -432,7 +432,7 @@ spec:
               memory: 256Mi
       containers:
         - name: web
-          image: ghcr.io/abolfazlrwm/flowforge:0.11.0
+          image: ghcr.io/abolfazlrwm/flowforge:1.0.0
           imagePullPolicy: IfNotPresent
           command:
             - gunicorn
@@ -506,10 +506,10 @@ metadata:
   name: ff-worker
   namespace: flowforge
   labels:
-    helm.sh/chart: flowforge-0.1.0
+    helm.sh/chart: flowforge-1.0.0
     app.kubernetes.io/name: flowforge
     app.kubernetes.io/instance: ff
-    app.kubernetes.io/version: "0.11.0"
+    app.kubernetes.io/version: "1.0.0"
     app.kubernetes.io/managed-by: Helm
     app.kubernetes.io/component: worker
 spec:
@@ -532,7 +532,7 @@ spec:
           type: RuntimeDefault
       initContainers:
         - name: migrate-check
-          image: ghcr.io/abolfazlrwm/flowforge:0.11.0
+          image: ghcr.io/abolfazlrwm/flowforge:1.0.0
           imagePullPolicy: IfNotPresent
           command: ["python", "manage.py", "migrate", "--check", "--noinput"]
           securityContext:
@@ -553,7 +553,7 @@ spec:
               memory: 256Mi
       containers:
         - name: worker
-          image: ghcr.io/abolfazlrwm/flowforge:0.11.0
+          image: ghcr.io/abolfazlrwm/flowforge:1.0.0
           imagePullPolicy: IfNotPresent
           command:
             - python
@@ -614,10 +614,10 @@ metadata:
   name: ff-worker
   namespace: flowforge
   labels:
-    helm.sh/chart: flowforge-0.1.0
+    helm.sh/chart: flowforge-1.0.0
     app.kubernetes.io/name: flowforge
     app.kubernetes.io/instance: ff
-    app.kubernetes.io/version: "0.11.0"
+    app.kubernetes.io/version: "1.0.0"
     app.kubernetes.io/managed-by: Helm
     app.kubernetes.io/component: worker
 spec:
@@ -642,10 +642,10 @@ metadata:
   name: ff-migrate
   namespace: flowforge
   labels:
-    helm.sh/chart: flowforge-0.1.0
+    helm.sh/chart: flowforge-1.0.0
     app.kubernetes.io/name: flowforge
     app.kubernetes.io/instance: ff
-    app.kubernetes.io/version: "0.11.0"
+    app.kubernetes.io/version: "1.0.0"
     app.kubernetes.io/managed-by: Helm
     app.kubernetes.io/component: migrate
   annotations:
@@ -671,7 +671,7 @@ spec:
           type: RuntimeDefault
       initContainers:
         - name: wait
-          image: ghcr.io/abolfazlrwm/flowforge:0.11.0
+          image: ghcr.io/abolfazlrwm/flowforge:1.0.0
           imagePullPolicy: IfNotPresent
           # Block until PostgreSQL and RabbitMQ are reachable.
           command: ["python", "manage.py", "healthcheck"]
@@ -694,7 +694,7 @@ spec:
               mountPath: /tmp
       containers:
         - name: migrate
-          image: ghcr.io/abolfazlrwm/flowforge:0.11.0
+          image: ghcr.io/abolfazlrwm/flowforge:1.0.0
           imagePullPolicy: IfNotPresent
           command: ["python", "manage.py", "migrate", "--noinput"]
           envFrom:
