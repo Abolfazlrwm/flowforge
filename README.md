@@ -11,8 +11,9 @@ parts of distributed execution explicit — leases, fencing tokens, a
 transactional outbox and at-least-once delivery — instead of hiding them
 behind a task decorator.
 
-> **Status: Phases 0–10 released (`v0.1.0` … `v0.11.0`). Phase 11 — production
-> hardening — is the current work toward `v1.0.0`.**
+> **Status: Phases 0–11 merged; `v0.11.0` is the newest release.** Phase 11 —
+> production hardening — is on `main`, and **`v1.0.0` is untagged pending the
+> owner's approval**; the release notes are already drafted.
 > A workflow can be described, validated, published, and triggered over HTTP; the
 > scheduler promotes dependency-satisfied tasks into a transactional outbox, the
 > publisher delivers them to RabbitMQ with publisher confirms, and a worker claims
@@ -21,9 +22,9 @@ behind a task decorator.
 > and jitter, a task that exhausts its policy becomes `DEAD` and waits for an
 > operator, and `docs/architecture/failure-model.md` maps every failure mode to a
 > test that proves the recovery. On top of that sit multi-tenancy and RBAC, an
-> append-only audit log, observability, and a Python SDK and CLI — and, as the
-> current phase, the operational surface: Kubernetes, backups, high availability,
-> and a signed, SBOM'd supply chain.
+> append-only audit log, observability, a Python SDK and CLI, and the operational
+> surface: Kubernetes, backups with a restore drill in CI, high availability, and
+> a signed, SBOM'd supply chain.
 > The feature table below lists exactly what is implemented and nothing more.
 
 ## Why this exists
