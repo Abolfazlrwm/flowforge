@@ -18,7 +18,10 @@ from core.models import Membership
 from core.services.tenancy import ensure_default_organization
 
 USERNAME = "e2e"
-PASSWORD = "e2e-password-not-for-production"  # noqa: S105  # nosec B105 - test fixture, not a credential
+# The password is a fixed, obviously-fake string for a fixture account that only
+# exists in the throwaway e2e stack. The annotation says only the test id: bandit
+# reads a trailing comment as more test names and warns about each word.
+PASSWORD = "e2e-password-not-for-production"  # noqa: S105  # nosec B105
 TOKEN_FILE = Path(tempfile.gettempdir()) / "e2e_token"
 
 

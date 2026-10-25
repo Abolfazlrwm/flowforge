@@ -1,0 +1,31 @@
+name: K8s e2e (kind)
+
+# OPT-IN. This runs the FlowForge Helm chart end-to-end on a local kind cluster
+# (see scripts/kind-e2e.sh) and then exercises the API with examples/01_publish_and_run.py.
+#
+# It is intentionally NOT part of the required CI gate (that is `helm lint` +
+# `kubeconform` in ci.yml). Trigger it manually when you want to prove the chart
+# actually boots a working stack. It needs Docker, which the hosted runner
+# provides via helm/kind-action. To also run it automatically on chart changes,
+# add a `pull_request:` block with `paths:` for deployment/kubernetes/**.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  kind-e2e:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Create kind cluster (kind + kubectl + helm in PATH)
+        uses: helm/kind-action@ae94020eaf628e9b9b9f341a10cc0cdcf5c018fb # v1.11.0
+        with:
+          node_image: kindest/node:v1.31.0
+          cluster_name: flowforge-e2e
+          wait: 120s
+
+      - name: Run the kind e2e smoke test
+        run: bash scripts/kind-e2e.sh

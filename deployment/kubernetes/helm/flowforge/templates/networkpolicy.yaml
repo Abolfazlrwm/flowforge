@@ -1,0 +1,44 @@
+{{- if .Values.networkPolicy.enabled -}}
+# Default-deny all ingress to the namespace. Egress is left at the cluster
+# default (allowed) because PostgreSQL, RabbitMQ and Redis are reached over the
+# network and their addresses are deployment-specific; tighten egress to your
+# database/broker subnets in production.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ .Release.Name }}-default-deny-ingress
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "flowforge.labels" . | nindent 4 }}
+spec:
+  podSelector: {}
+  policyTypes: ["Ingress"]
+---
+# Allow ingress to the web pods only (the API). Everything else (scheduler,
+# publisher, worker) is reached only via PostgreSQL/RabbitMQ/Redis, never
+# directly over the network.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ .Release.Name }}-web-ingress
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "flowforge.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/component: web
+  policyTypes: ["Ingress"]
+  ingress:
+    - from:
+        {{- if .Values.networkPolicy.ingressNamespace }}
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Values.networkPolicy.ingressNamespace | quote }}
+        {{- else }}
+        - {}
+        {{- end }}
+      ports:
+        - port: {{ .Values.web.port }}
+          protocol: TCP
+{{- end }}
