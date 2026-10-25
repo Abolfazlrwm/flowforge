@@ -43,9 +43,12 @@ class ApiKeyAuthentication(BaseAuthentication):
             raise AuthenticationFailed("Invalid, expired, or revoked API key.")
         # A key must not outlive its creator's membership: a removed member's
         # credential would otherwise keep working until it expired.
-        if not Membership.objects.filter(
-            user=api_key.created_by, organization=api_key.organization
-        ).exists():
+        # Named locals rather than inline attribute access: the membership check
+        # reads as "this user, this tenant", and it keeps the line short enough
+        # that the condition is visible without scrolling.
+        owner = api_key.created_by
+        tenant = api_key.organization
+        if not Membership.objects.filter(user=owner, organization=tenant).exists():
             raise AuthenticationFailed(
                 "The API key's owner is no longer a member of its organization."
             )

@@ -2,6 +2,27 @@
 
 ## Current Phase
 
+**Phase 11 — Production Hardening: MERGED** (PR #43) from
+`feat/phase11-hardening`, with all eleven CI jobs green. The operational surface:
+a security review (gitleaks over full history, Trivy image scanning, a STRIDE
+threat model), a migration-safety review with a CI upgrade test, a Kubernetes
+Helm chart with `helm lint` + `kubeconform` validation, a backup/restore runbook
+with a CI restore drill, high-availability guidance, an end-to-end suite
+(`tests/e2e/`) against the Compose stack, and a signed, SBOM'd supply chain.
+
+**`v1.0.0` is not tagged.** The code merges on green CI; the tag waits for the
+owner's explicit approval ([DECISIONS.md](DECISIONS.md)). Draft release notes and
+the cut procedure are written and committed:
+[`RELEASE_NOTES_v1.0.0.md`](RELEASE_NOTES_v1.0.0.md) and
+[`RELEASE_CHECKLIST.md`](RELEASE_CHECKLIST.md).
+
+The restore drill is no longer a documented hope — it runs every CI run and, on
+the merge commit, produced: `dump magic: PGDMP` over an 181 KB dump; RabbitMQ
+definitions exported and re-imported cleanly; `DROP DATABASE` / `CREATE
+DATABASE`; `pg_restore: completed`; **row counts identical before and after**
+across all eleven tenant tables; the stack ready on attempt 3; and a workflow
+executed end to end against the restored database.
+
 **Phase 10 — SDK, CLI and Documentation: RELEASED (v0.11.0).** Merged from
 `feat/phase10-sdk-cli` (PR #42). `flowforge-client` — a dependency-free Python
 client and the `flowforge` command — plus four runnable examples and three new
@@ -27,8 +48,9 @@ and `bandit` + `pip-audit` in CI.
 `PATCH/DELETE /members/<id>/`) with the owner/admin rules, tenant-isolation tests
 and audit entries; rewrote this record; and added `make test-pg`.
 
-**Phase 11 — Production Hardening (v1.0.0)** is next, and **`v1.0.0` needs the
-owner's explicit approval before it is tagged** ([DECISIONS.md](DECISIONS.md)).
+**Phase 11 — Production Hardening** is merged (PR #43); see the top of this
+section. It is the last planned phase, and **`v1.0.0` needs the owner's explicit
+approval before it is tagged** ([DECISIONS.md](DECISIONS.md)).
 
 ## Resume point
 
@@ -36,22 +58,22 @@ If this session is resumed cold, read this section first.
 
 | Question | Answer |
 |----------|--------|
-| Where is the work | `main` is at `v0.11.0`. Phase 11 has not started. |
+| Where is the work | `main` is at `v0.11.0`. **Phase 11 is merged** (PR #43); `v1.0.0` is untagged. |
 | What is released | `v0.1.0` … `v0.11.0`, including the `v0.5.1`, `v0.6.1`, `v0.7.1`, `v0.7.2`, `v0.8.1` and `v0.9.1` gap releases. |
 | Framework | **Django 5.2 LTS** ([ADR-010](../adr/ADR-010-django-5-2-lts.md)) and **DRF 3.18.3**. Python 3.13 in CI/Docker; the package requires >= 3.11. |
 | Message broker | **RabbitMQ via pika** ([ADR-011](../adr/ADR-011-custom-scheduler-and-transactional-outbox.md)). The dispatch queue is a **quorum** queue; the worker reconnects through broker outages. |
 | Tenancy | **Shared schema, per-organization scoping** ([ADR-014](../adr/ADR-014-multi-tenancy-shared-schema.md)). Every tenant read goes through `OrganizationScopedManager.for_organization`; another tenant's id is a 404. |
 | Observability | `core/observability/` — correlation ids in `context.py`, one registry per process in `metrics.py`, module-local OTel provider in `tracing.py`. See [`deployment/observability.md`](../deployment/observability.md). |
 | Client | **`sdk/`** — `flowforge-client`, a separate distribution with no runtime dependencies, exposing the `flowforge` CLI. See [`sdk/index.md`](../sdk/index.md) and [`cli.md`](../cli.md). |
-| What is next | Phase 11 — Production Hardening (v1.0.0). |
-| What blocks Phase 11 | **Nothing.** |
-| What else is open | `v1.0.0` needs the owner's explicit approval before it is tagged; every other release tag is automatic on green CI. |
+| What is next | Tag `v1.0.0` **with the owner's approval**, following [`RELEASE_CHECKLIST.md`](RELEASE_CHECKLIST.md). |
+| What blocks the `v1.0.0` tag | **Only the owner's approval** (decision 2026-10-22). Phase 11 itself is merged and CI is green. |
+| What else is open | `v1.0.0` needs the owner's explicit approval before it is tagged; every other release tag is automatic on green CI. `flowforge-client` is not published to PyPI (limitation 27). |
 
 ## Status
 
 | Item | State |
 |------|-------|
-| Branch | `main` at `v0.11.0` |
+| Branch | `main` at `v0.11.0`; **Phase 11 merged** (PR #43), `v1.0.0` untagged |
 | Phase 0 | **MERGED** as `97c17bf` (PR #1), tagged `v0.1.0` |
 | Phase 1 | **MERGED** as `869720f`, tagged `v0.2.0` |
 | Phase 2 | **MERGED** as `d31abf3`, tagged `v0.3.0` |
@@ -65,7 +87,9 @@ If this session is resumed cold, read this section first.
 | `v0.9.1` follow-ups | **MERGED** (PR #40) as `a00e267`, tagged `v0.9.1` |
 | Phase 9 | **MERGED** (PR #41) as `6a58fdc`, tagged `v0.10.0` |
 | Phase 10 | **MERGED** (PR #42), tagged `v0.11.0` |
-| CI jobs | `lint` (ruff, ruff format, mypy, **bandit**, **pip-audit**), `test`, `schema`, `docs`, `docker`, `loadtest`, **`sdk`** |
+| Phase 11 | **MERGED** (PR #43); `v1.0.0` awaits the owner's approval |
+| CI jobs | `lint` (ruff, ruff format, mypy, **bandit**, **pip-audit**), `test`, `schema`, `docs`, `sdk`, `docker`, `loadtest`, `secrets` (gitleaks), `supply-chain` (Trivy + CycloneDX SBOM + cosign), `k8s` (helm lint + kubeconform) |
+| Other workflows | `release.yml` (attaches the SBOM to a published release), `pages.yml` (publishes the MkDocs site), `k8s-e2e.yml` (manual kind smoke test) |
 | Test database in CI | **PostgreSQL 16** for the unit and integration suites; Redis 7 and RabbitMQ 3.13 services for integration |
 | Docker | Verified in CI (build, compose up, health probes, e2e, failure injection, **observability profile**); owner decision 2026-10-19 |
 | Tags | `v0.1.0` … `v0.11.0`, annotated |
@@ -296,6 +320,30 @@ If this session is resumed cold, read this section first.
   an assertion that the runtime dependency list is still empty, and a wheel build
   that checks the `flowforge` console script is declared.
 
+### Phase 11 — Production hardening (merged, PR #43)
+
+- **Security review.** gitleaks over the full git history with push protection;
+  Trivy image scanning with a CRITICAL gate (the HIGH residual is published, not
+  hidden); a STRIDE threat model at `docs/security/threat-model.md`; ADR-014 and
+  the tenant-isolation suite re-reviewed. `SECURITY.md` overhauled with a private
+  disclosure process and release-image verification.
+- **Migration safety.** `tests/unit/test_migrations.py` proves forward-from-empty
+  and the `v0.9.0 → HEAD` upgrade with data on PostgreSQL; every migration is
+  classified in `docs/deployment/migrations.md` (no table rewrite exists).
+- **Kubernetes.** Helm chart + rendered manifests; `k8s` CI job runs `helm lint`
+  and `kubeconform -strict` and fails on manifest drift; a kind smoke test is
+  available on demand.
+- **Backup and restore.** `docs/deployment/backup-restore.md` plus a CI drill
+  that dumps, wipes, restores, checks row counts, and runs a workflow end to end.
+- **High availability.** `docs/deployment/ha.md` — the four processes scale out
+  by construction; PostgreSQL/RabbitMQ/Redis are the failure domains.
+- **End-to-end suite.** `tests/e2e/` (REST, SDK, CLI) runs in the `docker` job.
+- **Supply chain.** CycloneDX SBOM, keyless cosign signing, build provenance,
+  digest-pinned base image, and `release.yml` to attach the SBOM to a release.
+- **Docs site.** `pages.yml` publishes the MkDocs site to GitHub Pages; the README
+  and PROGRESS record were corrected (Phase 6 status, "not implemented" rows, and
+  the "no benchmarks" claim were all stale).
+
 ## Verification
 
 ### In CI (authoritative)
@@ -370,11 +418,16 @@ benchmark numbers in [`BENCHMARKS.md`](BENCHMARKS.md) come from that run.
 
 ### Tooling and deployment
 
-11. **Base image pinned by tag, not digest.** `python:3.13-slim` can drift.
-12. **No dedicated `tests/e2e/` directory.** End-to-end coverage lives in the
-    compose CI job and `tests/integration/test_worker_sigterm.py`; it is CI-only
-    because the maintainer's Docker daemon is offline (owner decision
-    2026-10-19).
+11. **Base image is pinned by digest — resolved in Phase 11.** `python:3.13-slim`
+    is referenced by digest, so it no longer drifts. The trade is deliberate and
+    documented: the image stops receiving updates by itself, and Dependabot opens
+    a PR when the digest moves; until that merges, the image is exactly the one
+    reviewed.
+12. **`tests/e2e/` now exists — resolved in Phase 11.** The end-to-end suite
+    drives the REST API, the SDK and the CLI against the Compose stack and runs in
+    the `docker` CI job. It is still CI-only for the same reason as everything
+    container-level (no local Docker daemon), but the coverage is a proper suite
+    rather than inline job steps.
 13. **Coverage is a line count.** The gate is 80%; the exact number is reported by
     CI and is not repeated here, because a number in prose goes stale.
 14. **Pre-commit hooks use `language: system`**, so they depend on the local
@@ -437,6 +490,31 @@ benchmark numbers in [`BENCHMARKS.md`](BENCHMARKS.md) come from that run.
     document, not a flag; publishing from a shell heredoc is worse than from
     Python or the API.
 
+### Production hardening (Phase 11)
+
+32. **High availability is guidance, not a tested topology.** `docs/deployment/ha.md`
+    proves the four application processes are safe to run as multiple replicas (the
+    database is the mutex), but a genuinely multi-replica deployment, PostgreSQL
+    streaming-replication failover, and a multi-node RabbitMQ cluster are **not**
+    stood up in CI. Validate them on your own infrastructure.
+33. **The restore drill proves the procedure, not production volume.** It runs on
+    every CI run and asserts identical row counts across all eleven tenant tables,
+    then executes a workflow against the restored database — but on a database with
+    tens of rows. Dump/restore *correctness* is proven; runtime against terabytes
+    is not measured.
+34. **The release SBOM-attach automation is not yet exercised.** `release.yml`
+    attaches the CycloneDX SBOM to a published release, but it has not run end to
+    end because no release has been cut since it was added. Its steps (tag→commit
+    resolution, run lookup, artifact download) were each validated against the
+    repository directly.
+35. **GitHub Pages needs a one-time enable.** `pages.yml` builds and deploys the
+    docs site, but the repository's Pages source must be set to "GitHub Actions"
+    once (Settings → Pages) before the first deploy succeeds.
+36. **Kubernetes is validated by lint, not by a cluster in the required gate.**
+    `helm lint` and `kubeconform -strict` run on every push; the kind end-to-end
+    smoke test (`scripts/kind-e2e.sh`, `k8s-e2e.yml`) is manual-dispatch and is
+    intentionally not in the required gate.
+
 ## Dependency decisions
 
 | Package | Version | Decision |
@@ -463,12 +541,14 @@ None.
 
 ## Next step
 
-Phase 11 — Production Hardening (v1.0.0), per [`ROADMAP.md`](ROADMAP.md):
-security review, migration review, deployment documentation, backup and recovery,
-Kubernetes deployment, end-to-end testing, release preparation.
+Phase 11 is merged and every CI job is green. The only remaining action is to cut
+`v1.0.0` — **which needs the owner's explicit approval before it is tagged**
+(decision 2026-10-22). [`RELEASE_CHECKLIST.md`](RELEASE_CHECKLIST.md) is the cut
+procedure, and its step 0 is that approval; [`RELEASE_NOTES_v1.0.0.md`](RELEASE_NOTES_v1.0.0.md)
+is the release-facing summary. `release.yml` attaches the SBOM once the release is
+published, and `pages.yml` publishes the docs site from `main`.
 
-**`v1.0.0` needs the owner's explicit approval before it is tagged.** Every other
-release tag is automatic on green CI.
+Every release tag other than `v1.0.0` is automatic on green CI.
 
 ## Ordering note
 
