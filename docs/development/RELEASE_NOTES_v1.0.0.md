@@ -1,9 +1,9 @@
-# FlowForge v1.0.0 — release notes (DRAFT)
+# FlowForge v1.0.0 — release notes
 
-> **DRAFT — not published.** `v1.0.0` requires the owner's explicit approval
-> before it is tagged (owner decision 2026-10-22, recorded in
-> [`DECISIONS.md`](DECISIONS.md)). This file is that draft for review. Do not tag
-> or publish until it is approved; see [`RELEASE_CHECKLIST.md`](RELEASE_CHECKLIST.md).
+> **Approved for release.** The owner approved tagging and publishing `v1.0.0` on
+> 2026-10-25; that approval is the gate in owner decision 2026-10-22, recorded in
+> [`DECISIONS.md`](DECISIONS.md). The cut procedure is
+> [`RELEASE_CHECKLIST.md`](RELEASE_CHECKLIST.md).
 
 ## Summary
 
@@ -19,10 +19,9 @@ operational surface that makes the engine deployable and operable — a security
 review, safe migrations, Kubernetes, backups, high availability, an end-to-end
 suite, and a signed, SBOM'd supply chain.
 
-> **The 1.0 stability commitment is an owner decision.** Tagging `v1.0.0` signals
-> a SemVer stability promise for the REST API and the public contract. Confirm
-> that promise is intended before tagging; if not, cut `v0.12.0` instead and keep
-> the 1.0 line for later.
+> **The 1.0 stability commitment was an owner decision, and it has been made.**
+> Tagging `v1.0.0` signals a SemVer stability promise for the REST API and the
+> public contract; the owner approved that promise on 2026-10-25.
 
 ## What FlowForge gives you
 
@@ -86,14 +85,22 @@ flowforge trigger my-workflow --version 1
 
 ## Verify this release
 
-The image is signed; verify without a key:
+The image is signed; verify without a key. CI publishes the image as `main` and
+`main-<commit-sha>` (there is no per-version registry tag), so resolve the commit
+the tag points at:
 
 ```bash
+IMAGE="ghcr.io/abolfazlrwm/flowforge:main-$(git rev-list -n1 v1.0.0)"
+
 cosign verify \
   --certificate-identity-regexp 'https://github.com/Abolfazlrwm/flowforge/.github/workflows/ci.yml' \
   --certificate-oidc-issuer-regexp 'https://token.actions.githubusercontent.com' \
-  ghcr.io/abolfazlrwm/flowforge:v1.0.0
+  "$IMAGE"
 ```
+
+For a reproducible deploy, pin the digest rather than the tag
+(`docker inspect --format='{{index .RepoDigests 0}}' "$IMAGE"`). The signature
+covers the digest, so a digest reference verifies the same way.
 
 The release carries `flowforge-sbom.cdx.json`, a CycloneDX inventory of every
 component in the image.
