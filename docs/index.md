@@ -7,7 +7,7 @@ FlowForge aims to make the *hard* parts of distributed execution explicit —
 leases, fencing tokens, a transactional outbox and at-least-once delivery —
 instead of hiding them behind a task decorator.
 
-!!! success "Status: v1.0.0 release candidate — all 11 phases implemented"
+!!! success "Status: v1.0.0 released — all 11 phases implemented"
 
     Every layer is built and exercised end to end in CI: the REST API and the
     Python SDK/CLI, the scheduler and its transactional outbox, the publisher,
