@@ -2,17 +2,22 @@
 
 ## Current Phase
 
-**Phase 11 — Production Hardening: MERGED** (PR #43) from
-`feat/phase11-hardening`, with all eleven CI jobs green. The operational surface:
-a security review (gitleaks over full history, Trivy image scanning, a STRIDE
-threat model), a migration-safety review with a CI upgrade test, a Kubernetes
-Helm chart with `helm lint` + `kubeconform` validation, a backup/restore runbook
-with a CI restore drill, high-availability guidance, an end-to-end suite
-(`tests/e2e/`) against the Compose stack, and a signed, SBOM'd supply chain.
+**Phase 11 — Production Hardening: RELEASED (`v1.0.0`).** Merged as `1549895`
+(PR #43) from `feat/phase11-hardening`, with all eleven CI jobs green. The
+operational surface: a security review (gitleaks over full history, Trivy image
+scanning, a STRIDE threat model), a migration-safety review with a CI upgrade
+test, a Kubernetes Helm chart with `helm lint` + `kubeconform` validation, a
+backup/restore runbook with a CI restore drill, high-availability guidance, an
+end-to-end suite (`tests/e2e/`) against the Compose stack, and a signed, SBOM'd
+supply chain.
 
-**`v1.0.0` is not tagged.** The code merges on green CI; the tag waits for the
-owner's explicit approval ([DECISIONS.md](DECISIONS.md)). Draft release notes and
-the cut procedure are written and committed:
+**`v1.0.0` is released.** The annotated tag is on `1fc077c`, cut after the
+owner's explicit approval ([DECISIONS.md](DECISIONS.md)). The
+[GitHub Release](https://github.com/Abolfazlrwm/flowforge/releases/tag/v1.0.0)
+carries the release notes and the CycloneDX SBOM (`flowforge-sbom.cdx.json`), and
+the tagged commit's CI run is green:
+[run 40197352205](https://github.com/Abolfazlrwm/flowforge/actions/runs/40197352205).
+Release notes and the cut procedure:
 [`RELEASE_NOTES_v1.0.0.md`](RELEASE_NOTES_v1.0.0.md) and
 [`RELEASE_CHECKLIST.md`](RELEASE_CHECKLIST.md).
 
@@ -48,9 +53,9 @@ and `bandit` + `pip-audit` in CI.
 `PATCH/DELETE /members/<id>/`) with the owner/admin rules, tenant-isolation tests
 and audit entries; rewrote this record; and added `make test-pg`.
 
-**Phase 11 — Production Hardening** is merged (PR #43); see the top of this
-section. It is the last planned phase, and **`v1.0.0` needs the owner's explicit
-approval before it is tagged** ([DECISIONS.md](DECISIONS.md)).
+**Phase 11 — Production Hardening** is released as `v1.0.0`; see the top of this
+section. It was the last planned phase, and `v1.0.0` was cut after the owner's
+explicit approval ([DECISIONS.md](DECISIONS.md)).
 
 ## Resume point
 
@@ -58,22 +63,22 @@ If this session is resumed cold, read this section first.
 
 | Question | Answer |
 |----------|--------|
-| Where is the work | `main` is at `v0.11.0`. **Phase 11 is merged** (PR #43); `v1.0.0` is untagged. |
-| What is released | `v0.1.0` … `v0.11.0`, including the `v0.5.1`, `v0.6.1`, `v0.7.1`, `v0.7.2`, `v0.8.1` and `v0.9.1` gap releases. |
+| Where is the work | **`v1.0.0` is released** (annotated tag on `1fc077c`); `main` is at `v1.0.0`. |
+| What is released | **`v1.0.0`** (the first stable release), plus `v0.1.0` … `v0.11.0` and the `v0.5.1`, `v0.6.1`, `v0.7.1`, `v0.7.2`, `v0.8.1` and `v0.9.1` gap releases. |
 | Framework | **Django 5.2 LTS** ([ADR-010](../adr/ADR-010-django-5-2-lts.md)) and **DRF 3.18.3**. Python 3.13 in CI/Docker; the package requires >= 3.11. |
 | Message broker | **RabbitMQ via pika** ([ADR-011](../adr/ADR-011-custom-scheduler-and-transactional-outbox.md)). The dispatch queue is a **quorum** queue; the worker reconnects through broker outages. |
 | Tenancy | **Shared schema, per-organization scoping** ([ADR-014](../adr/ADR-014-multi-tenancy-shared-schema.md)). Every tenant read goes through `OrganizationScopedManager.for_organization`; another tenant's id is a 404. |
 | Observability | `core/observability/` — correlation ids in `context.py`, one registry per process in `metrics.py`, module-local OTel provider in `tracing.py`. See [`deployment/observability.md`](../deployment/observability.md). |
 | Client | **`sdk/`** — `flowforge-client`, a separate distribution with no runtime dependencies, exposing the `flowforge` CLI. See [`sdk/index.md`](../sdk/index.md) and [`cli.md`](../cli.md). |
-| What is next | Tag `v1.0.0` **with the owner's approval**, following [`RELEASE_CHECKLIST.md`](RELEASE_CHECKLIST.md). |
-| What blocks the `v1.0.0` tag | **Only the owner's approval** (decision 2026-10-22). Phase 11 itself is merged and CI is green. |
-| What else is open | `v1.0.0` needs the owner's explicit approval before it is tagged; every other release tag is automatic on green CI. `flowforge-client` is not published to PyPI (limitation 27). |
+| What is next | Nothing on the release path — `v1.0.0` is out. Future patch releases (`v1.0.1`, …) are automatic on green CI. |
+| What blocks the `v1.0.0` tag | **Nothing** — it is released. |
+| What else is open | `flowforge-client` is not published to PyPI (limitation 27). Deferred follow-ups: PostgreSQL RLS (limitation 6) and multi-node HA validation (limitation 32). |
 
 ## Status
 
 | Item | State |
 |------|-------|
-| Branch | `main` at `v0.11.0`; **Phase 11 merged** (PR #43), `v1.0.0` untagged |
+| Branch | `main` at `v1.0.0` (annotated tag on `1fc077c`); Phase 11 released |
 | Phase 0 | **MERGED** as `97c17bf` (PR #1), tagged `v0.1.0` |
 | Phase 1 | **MERGED** as `869720f`, tagged `v0.2.0` |
 | Phase 2 | **MERGED** as `d31abf3`, tagged `v0.3.0` |
@@ -87,12 +92,12 @@ If this session is resumed cold, read this section first.
 | `v0.9.1` follow-ups | **MERGED** (PR #40) as `a00e267`, tagged `v0.9.1` |
 | Phase 9 | **MERGED** (PR #41) as `6a58fdc`, tagged `v0.10.0` |
 | Phase 10 | **MERGED** (PR #42), tagged `v0.11.0` |
-| Phase 11 | **MERGED** (PR #43); `v1.0.0` awaits the owner's approval |
+| Phase 11 | **RELEASED** (PR #43), tagged `v1.0.0` (`1fc077c`) |
 | CI jobs | `lint` (ruff, ruff format, mypy, **bandit**, **pip-audit**), `test`, `schema`, `docs`, `sdk`, `docker`, `loadtest`, `secrets` (gitleaks), `supply-chain` (Trivy + CycloneDX SBOM + cosign), `k8s` (helm lint + kubeconform) |
 | Other workflows | `release.yml` (attaches the SBOM to a published release), `pages.yml` (publishes the MkDocs site), `k8s-e2e.yml` (manual kind smoke test) |
 | Test database in CI | **PostgreSQL 16** for the unit and integration suites; Redis 7 and RabbitMQ 3.13 services for integration |
 | Docker | Verified in CI (build, compose up, health probes, e2e, failure injection, **observability profile**); owner decision 2026-10-19 |
-| Tags | `v0.1.0` … `v0.11.0`, annotated |
+| Tags | `v0.1.0` … `v1.0.0`, annotated |
 | GitHub Releases | Published for `v0.1.0` … `v0.11.0` |
 | Branch protection | `main`: `lint`, `test`, `docker` required, strict, no force push, `enforce_admins` |
 | Django | **5.2 LTS** ([ADR-010](../adr/ADR-010-django-5-2-lts.md)) |
@@ -320,7 +325,7 @@ If this session is resumed cold, read this section first.
   an assertion that the runtime dependency list is still empty, and a wheel build
   that checks the `flowforge` console script is declared.
 
-### Phase 11 — Production hardening (merged, PR #43)
+### Phase 11 — Production hardening (released, v1.0.0, PR #43)
 
 - **Security review.** gitleaks over the full git history with push protection;
   Trivy image scanning with a CRITICAL gate (the HIGH residual is published, not
@@ -523,11 +528,12 @@ benchmark numbers in [`BENCHMARKS.md`](BENCHMARKS.md) come from that run.
     then executes a workflow against the restored database — but on a database with
     tens of rows. Dump/restore *correctness* is proven; runtime against terabytes
     is not measured.
-34. **The release SBOM-attach automation is not yet exercised.** `release.yml`
-    attaches the CycloneDX SBOM to a published release, but it has not run end to
-    end because no release has been cut since it was added. Its steps (tag→commit
-    resolution, run lookup, artifact download) were each validated against the
-    repository directly.
+34. **The release SBOM-attach automation is exercised on `v1.0.0`.** `release.yml`
+    attaches the CycloneDX SBOM to a published release. Its first real run found
+    and fixed a filename mismatch (the `flowforge-sbom` artifact contains a file
+    named `flowforge-sbom`, not `flowforge-sbom.cdx.json`); the workflow now
+    normalises the name, and a `workflow_dispatch` run attached
+    `flowforge-sbom.cdx.json` (1.3 MB) to the `v1.0.0` release.
 35. **GitHub Pages — resolved in Phase 11.** `pages.yml` builds the MkDocs site
     with `--strict` and publishes it from `main`. The site was enabled
     (`build_type: workflow`) and its first deploy verified live at
@@ -564,14 +570,14 @@ None.
 
 ## Next step
 
-Phase 11 is merged and every CI job is green. The only remaining action is to cut
-`v1.0.0` — **which needs the owner's explicit approval before it is tagged**
-(decision 2026-10-22). [`RELEASE_CHECKLIST.md`](RELEASE_CHECKLIST.md) is the cut
-procedure, and its step 0 is that approval; [`RELEASE_NOTES_v1.0.0.md`](RELEASE_NOTES_v1.0.0.md)
-is the release-facing summary. `release.yml` attaches the SBOM once the release is
-published, and `pages.yml` publishes the docs site from `main`.
+`v1.0.0` is released and every CI job is green. The project is complete as
+scoped: Phases 0–11 are shipped, the docs site is live at
+<https://abolfazlrwm.github.io/flowforge/>, and the release carries a signed
+image and a CycloneDX SBOM. There is no pending release action.
 
-Every release tag other than `v1.0.0` is automatic on green CI.
+Future patch releases (`v1.0.1`, …) are automatic on green CI. The deferred
+follow-ups are PostgreSQL RLS (limitation 6) and a multi-node HA validation
+(limitation 32); neither blocks `v1.0.0`.
 
 ## Ordering note
 
