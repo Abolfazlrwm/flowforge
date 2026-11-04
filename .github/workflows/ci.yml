@@ -490,8 +490,17 @@ jobs:
           test "$code" = "200" || { echo "readiness did not recover"; cat /tmp/ready-up.json; exit 1; }
 
           # WORKER: it logged a reconnect and is the same container as before.
-          docker compose logs --no-color worker | grep -Eq "reconnecting in" \
-            || { echo "WORKER: never logged a reconnect"; docker compose logs --no-color worker; exit 1; }
+          # Poll, don't grep once: the reconnect line can lag the readiness probe
+          # by a moment, and a single-shot grep made this flaky (the publisher
+          # check below already polls for exactly this reason).
+          worker_reconnected=""
+          for attempt in $(seq 1 60); do
+            if docker compose logs --no-color worker | grep -Eq "reconnecting in"; then
+              worker_reconnected="yes"; echo "worker reconnected (attempt $attempt)"; break
+            fi
+            sleep 1
+          done
+          test "$worker_reconnected" = "yes" || { echo "WORKER: never logged a reconnect"; docker compose logs --no-color worker; exit 1; }
 
           # PUBLISHER: it failed a sweep and then recovered (the queued run above
           # guaranteed a sweep had something to fail on). Poll, don't sleep.
