@@ -191,7 +191,7 @@ jobs:
         #
         # The 80% gate is enforced by pytest-cov regardless; Codecov only adds
         # PR annotations and a badge.
-        if: github.event_name == 'pull_request' && env.CODECOV_TOKEN != ''
+        if: env.CODECOV_TOKEN != ''
         uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5  # v7.1.1
         with:
           files: ./coverage.xml
