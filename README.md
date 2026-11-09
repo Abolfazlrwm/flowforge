@@ -1,10 +1,14 @@
 # FlowForge
 
+<p align="center"><img src="assets/banner.png" alt="flowforge banner" width="100%"></p>
+
 [![CI](https://github.com/Abolfazlrwm/flowforge/actions/workflows/ci.yml/badge.svg)](https://github.com/Abolfazlrwm/flowforge/actions/workflows/ci.yml)
 [![codecov](https://codecov.io/gh/Abolfazlrwm/flowforge/branch/main/graph/badge.svg)](https://codecov.io/gh/Abolfazlrwm/flowforge)
 [![Release](https://img.shields.io/github/v/release/Abolfazlrwm/flowforge?sort=semver)](https://github.com/Abolfazlrwm/flowforge/releases/latest)
 [![Docs](https://img.shields.io/badge/docs-live-brightgreen)](https://abolfazlrwm.github.io/flowforge/)
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
+
+<p align="center"><img src="assets/architecture.png" alt="flowforge execution architecture" width="88%"></p>
 [![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue.svg)](pyproject.toml)
 
 A distributed workflow orchestration engine for DAG-shaped jobs, built on
