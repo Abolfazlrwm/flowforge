@@ -11,6 +11,9 @@
 <p align="center"><img src="assets/architecture.png" alt="flowforge execution architecture" width="88%"></p>
 [![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue.svg)](pyproject.toml)
 
+<p align="center"><img src="assets/demo.gif" alt="demo" width="100%"></p>
+
+
 A distributed workflow orchestration engine for DAG-shaped jobs, built on
 Django, PostgreSQL, RabbitMQ and Redis. FlowForge aims to make the *hard*
 parts of distributed execution explicit — leases, fencing tokens, a
