@@ -20,7 +20,7 @@ parts of distributed execution explicit — leases, fencing tokens, a
 transactional outbox and at-least-once delivery — instead of hiding them
 behind a task decorator.
 
-> **Status: Released — [`v1.0.0`](https://github.com/Abolfazlrwm/flowforge/releases/tag/v1.0.0).**
+> **Status: Released — [`v1.0.1`](https://github.com/Abolfazlrwm/flowforge/releases/tag/v1.0.1).**
 > All eleven phases are merged and the full CI matrix is green on the tagged
 > commit ([run 40197352205](https://github.com/Abolfazlrwm/flowforge/actions/runs/40197352205)).
 > [`RELEASE_NOTES_v1.0.0.md`](docs/development/RELEASE_NOTES_v1.0.0.md) describes
