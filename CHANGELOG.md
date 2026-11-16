@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.1] - 2026-10-25
+
+**Packaging re-sync.** Version metadata (`pyproject.toml` + `uv.lock`) raised to 1.0.1 to match the [v1.0.1](https://github.com/Abolfazlrwm/flowforge/releases/tag/v1.0.1) tag. No runtime code changes.
+
+
 ## [1.0.0] - 2026-10-25
 
 **First stable release.** The REST API and the public contract now carry the
