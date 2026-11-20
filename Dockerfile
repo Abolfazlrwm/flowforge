@@ -14,7 +14,7 @@
 # image is exactly the one that was reviewed. Bump with:
 #   docker buildx imagetools inspect python:3.13-slim
 # ---------------------------------------------------------------------------
-FROM python:3.13-slim@sha256:57b29a7c050c4e679e4bea572e14b3965cf4b5839de2da49d55e49ffc4024f39 AS builder
+FROM python:3.13-slim@sha256:e48f59cdba69a3cbd9ed2cf0f348d90d45a8d350d98134cf1070bc106ee9ed90 AS builder
 
 COPY --from=ghcr.io/astral-sh/uv:0.12.5@sha256:e85be844203885286c60ffad8a858d48afb6c5a5c237ca0e67f12e74b8f174b1 /uv /uvx /bin/
 
@@ -48,7 +48,7 @@ RUN uv sync --locked --no-editable
 # Same digest as the builder stage: one reviewed base image for the whole file,
 # so there is no question of the two stages differing in what they ship.
 # ---------------------------------------------------------------------------
-FROM python:3.13-slim@sha256:57b29a7c050c4e679e4bea572e14b3965cf4b5839de2da49d55e49ffc4024f39 AS production
+FROM python:3.13-slim@sha256:e48f59cdba69a3cbd9ed2cf0f348d90d45a8d350d98134cf1070bc106ee9ed90 AS production
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
