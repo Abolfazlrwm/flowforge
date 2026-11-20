@@ -55,8 +55,14 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     DJANGO_SETTINGS_MODULE=flowforge.settings.prod \
     PATH="/opt/venv/bin:$PATH"
 
+# The dist-upgrade pulls the current security patches for the base image's
+# OS packages (curl, glibc, krb5, openssl, sqlite3, ...) from the Debian
+# repos at build time instead of inheriting the digest snapshot's state.
+# The digest pin freezes the base to one manifest; this keeps the packages
+# on top of it current at every build.
 RUN apt-get update \
     && apt-get install -y --no-install-recommends libpq5 curl \
+    && apt-get -y upgrade \
     && rm -rf /var/lib/apt/lists/*
 
 RUN groupadd --system flowforge \
