@@ -15,7 +15,7 @@ environment requirements at the top.
 ```bash
 pip install flowforge-client
 docker compose up -d --build
-docker compose exec -T web python manage.py e2e_token
+docker compose exec -T web python -m tests.e2e.provision e2e
 
 export FLOWFORGE_URL=http://localhost:8000
 export FLOWFORGE_TOKEN="$(docker compose exec -T web cat /tmp/e2e_token | tr -d '\r\n')"

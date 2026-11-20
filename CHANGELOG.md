@@ -148,7 +148,7 @@ Phase 9 — Observability and Performance.
   read-only from `deploy/observability/grafana/dashboards/flowforge.json`.
 - **Load test and measured benchmark.** `loadtests/locustfile.py` drives the whole
   pipeline and records `trigger` and `run end-to-end` separately;
-  `manage.py loadtest_user` creates the fixture account. A `loadtest` CI job runs
+  `python -m tests.e2e.provision loadtest` creates the fixture account. A `loadtest` CI job runs
   a fixed 10-user/60-second shape and uploads the raw CSVs.
   `docs/development/BENCHMARKS.md` records the results with the hardware, the
   configuration and the limitations.

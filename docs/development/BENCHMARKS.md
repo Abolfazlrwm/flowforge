@@ -173,7 +173,7 @@ taken. The cache is recorded as a limitation below rather than silently applied.
 ```bash
 # the load test
 docker compose up -d --build
-docker compose exec -T web python manage.py loadtest_user
+docker compose exec -T web python -m tests.e2e.provision loadtest
 THROTTLE_TRIGGER_RATE=100000/min THROTTLE_READ_RATE=100000/min \
   THROTTLE_AUTH_RATE=100000/min SCHEDULER_INTERVAL=0.25 \
   docker compose up -d --build

@@ -154,6 +154,10 @@ CSRF_COOKIE_SECURE = not DEBUG
 # ---------------------------------------------------------------------------
 # DRF
 # ---------------------------------------------------------------------------
+# DRF tokens rotate after this many days (api.authentication.ExpiringTokenAuthentication);
+# API keys carry their own explicit expiry and are unaffected.
+FLOWFORGE_TOKEN_MAX_AGE_DAYS: int = env.int("FLOWFORGE_TOKEN_MAX_AGE_DAYS", 30)
+
 REST_FRAMEWORK = {
     # JWT first, then DRF's own token. Both are supported because they fail
     # differently: a JWT is short-lived and stateless, a token is revocable by
@@ -164,7 +168,7 @@ REST_FRAMEWORK = {
         # callers are unaffected.
         "api.authentication.ApiKeyAuthentication",
         "rest_framework_simplejwt.authentication.JWTAuthentication",
-        "rest_framework.authentication.TokenAuthentication",
+        "api.authentication.ExpiringTokenAuthentication",
         "rest_framework.authentication.SessionAuthentication",
     ],
     # A view that forgets to declare a permission is authenticated-only, never

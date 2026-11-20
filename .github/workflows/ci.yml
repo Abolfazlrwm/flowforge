@@ -363,7 +363,7 @@ jobs:
       - name: End-to-end via the REST API
         run: |
           set -euo pipefail
-          docker compose exec -T web python manage.py e2e_token
+          docker compose exec -T web python -m tests.e2e.provision e2e
           TOKEN="$(docker compose exec -T web cat /tmp/e2e_token | tr -d '\r\n')"
           BASE=http://localhost:8000/api/v1
           AUTH="Authorization: Token $TOKEN"
@@ -408,7 +408,7 @@ jobs:
         id: e2e_token
         run: |
           set -euo pipefail
-          docker compose exec -T web python manage.py e2e_token
+          docker compose exec -T web python -m tests.e2e.provision e2e
           TOKEN="$(docker compose exec -T web cat /tmp/e2e_token | tr -d '\r\n')"
           test -n "$TOKEN"
           echo "token=$TOKEN" >> "$GITHUB_OUTPUT"
@@ -940,7 +940,7 @@ jobs:
         run: docker compose up -d --build
 
       - name: Create the load-test user
-        run: docker compose exec -T web python manage.py loadtest_user
+        run: docker compose exec -T web python -m tests.e2e.provision loadtest
 
       - name: Wait for readiness
         run: |

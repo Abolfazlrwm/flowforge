@@ -117,7 +117,7 @@ fixture** (`e2e_token`) that creates a staff user in the default organization an
 writes its token; in production use your own user and token.
 
 ```bash
-docker compose exec -T web python manage.py e2e_token
+docker compose exec -T web python -m tests.e2e.provision e2e
 TOKEN="$(docker compose exec -T web cat /tmp/e2e_token | tr -d '\r\n')"
 BASE=http://localhost:8000/api/v1
 AUTH="Authorization: Token $TOKEN"
