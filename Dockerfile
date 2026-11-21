@@ -65,8 +65,11 @@ RUN apt-get update \
     && apt-get -y upgrade \
     && rm -rf /var/lib/apt/lists/*
 
-RUN groupadd --system flowforge \
-    && useradd --system --gid flowforge --create-home --home-dir /app flowforge
+# UID/GID 10001: above the system-user range (KSV-0020/0021) and identical to
+# the pod-level runAsUser/runAsGroup the Helm chart sets, so the image user and
+# the pod user are the same identity everywhere.
+RUN groupadd -g 10001 flowforge \
+    && useradd --uid 10001 --gid 10001 --create-home --home-dir /app flowforge
 
 WORKDIR /app
 

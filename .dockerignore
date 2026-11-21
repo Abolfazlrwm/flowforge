@@ -22,3 +22,16 @@ Dockerfile
 compose.yaml
 docker-compose.override.yml
 .pre-commit-config.yaml
+
+# Non-runtime trees. The production image ships the Django packages only;
+# carrying charts, manifests, docs, tests or tooling inflates the image and
+# turns Trivy's misconfig scan into a scan of deployment files that never
+# execute inside the container (KSV findings on image contents).
+deployment/
+docs/
+examples/
+tests/
+scripts/
+loadtests/
+sdk/
+.github/

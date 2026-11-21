@@ -186,7 +186,9 @@ spec:
     spec:
       serviceAccountName: ff-flowforge
       securityContext:
+        runAsGroup: 10001
         runAsNonRoot: true
+        runAsUser: 10001
         seccompProfile:
           type: RuntimeDefault
       initContainers:
@@ -295,7 +297,9 @@ spec:
     spec:
       serviceAccountName: ff-flowforge
       securityContext:
+        runAsGroup: 10001
         runAsNonRoot: true
+        runAsUser: 10001
         seccompProfile:
           type: RuntimeDefault
       initContainers:
@@ -406,7 +410,9 @@ spec:
     spec:
       serviceAccountName: ff-flowforge
       securityContext:
+        runAsGroup: 10001
         runAsNonRoot: true
+        runAsUser: 10001
         seccompProfile:
           type: RuntimeDefault
       initContainers:
@@ -527,7 +533,9 @@ spec:
     spec:
       serviceAccountName: ff-flowforge
       securityContext:
+        runAsGroup: 10001
         runAsNonRoot: true
+        runAsUser: 10001
         seccompProfile:
           type: RuntimeDefault
       initContainers:
@@ -666,7 +674,9 @@ spec:
       restartPolicy: OnFailure
       serviceAccountName: ff-flowforge
       securityContext:
+        runAsGroup: 10001
         runAsNonRoot: true
+        runAsUser: 10001
         seccompProfile:
           type: RuntimeDefault
       initContainers:
@@ -689,6 +699,13 @@ spec:
             runAsNonRoot: true
             seccompProfile:
               type: RuntimeDefault
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 256Mi
           volumeMounts:
             - name: tmp
               mountPath: /tmp
