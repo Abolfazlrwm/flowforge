@@ -42,7 +42,7 @@ def main(argv: list[str] | None = None) -> int:
     url = os.environ.get("FLOWFORGE_URL", "http://localhost:8000")
     token = os.environ.get("FLOWFORGE_TOKEN")
     if not token:
-        print("set FLOWFORGE_TOKEN (see `manage.py e2e_token`)", file=sys.stderr)
+        print("set FLOWFORGE_TOKEN (see `python -m tests.e2e.provision e2e`)", file=sys.stderr)
         return 2
 
     with FlowForge(url, token=token) as client:

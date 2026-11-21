@@ -133,6 +133,10 @@ convention = "google"
 ]
 "*/migrations/*" = ["ALL"]
 "manage.py" = ["PLC0415"]
+# The e2e provisioning scripts are Django standalone scripts: models and app
+# code can only be imported after `django.setup()` has run, so those imports
+# are deliberately function-local (same contract as manage.py itself).
+"tests/e2e/*" = ["PLC0415"]
 # Django reads Meta attributes as plain class attributes and rejects ClassVar
 # annotations on them, so RUF012 cannot be satisfied here without breaking the
 # model. The lists are never mutated at runtime.

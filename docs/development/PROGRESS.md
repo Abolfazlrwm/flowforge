@@ -271,7 +271,7 @@ If this session is resumed cold, read this section first.
 - **Load test + benchmark.** `loadtests/locustfile.py` drives the whole pipeline
   (trigger → poll to terminal), records `trigger` and `run end-to-end` as custom
   events, and sends a unique `Idempotency-Key` per attempt. `manage.py
-  loadtest_user` creates the fixture account. The `loadtest` CI job runs a fixed
+  tests.e2e.provision` creates the fixture account. The `loadtest` CI job runs a fixed
   10-user/60-second shape and uploads the raw CSVs.
   - Measured: 160 runs / 640 task runs, zero failures, 2.54 runs/s, end-to-end
     median 3 500 ms (p95 4 100 ms) at `SCHEDULER_INTERVAL=0.25`.

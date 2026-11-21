@@ -3,7 +3,7 @@
 This is the smallest complete program: one definition, one run, one answer.
 
     export FLOWFORGE_URL=http://localhost:8000
-    export FLOWFORGE_TOKEN=...          # from `manage.py e2e_token` or an API key
+    export FLOWFORGE_TOKEN=...          # from `python -m tests.e2e.provision e2e` or an API key
     python examples/01_publish_and_run.py
 
 The definition is a three-task pipeline: ``extract`` fans out to ``transform``,
@@ -39,7 +39,7 @@ def main() -> int:
     url = os.environ.get("FLOWFORGE_URL", "http://localhost:8000")
     token = os.environ.get("FLOWFORGE_TOKEN")
     if not token:
-        print("set FLOWFORGE_TOKEN (see `manage.py e2e_token`)", file=sys.stderr)
+        print("set FLOWFORGE_TOKEN (see `python -m tests.e2e.provision e2e`)", file=sys.stderr)
         return 2
 
     with FlowForge(url, token=token) as client:

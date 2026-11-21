@@ -7,10 +7,10 @@
 docker compose up -d --build
 
 # 2. Create the load-test user (idempotent)
-docker compose exec -T web python manage.py loadtest_user
+docker compose exec -T web python -m tests.e2e.provision loadtest
 
 # 3. Run the test
-docker compose exec -T web python manage.py loadtest_user >/dev/null   # once per stack
+docker compose exec -T web python -m tests.e2e.provision loadtest >/dev/null   # once per stack
 uv run locust \
   -f loadtests/locustfile.py \
   --headless \
