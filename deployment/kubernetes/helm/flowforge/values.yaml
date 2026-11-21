@@ -54,6 +54,10 @@ migrate:
 
 podSecurityContext:
   runAsNonRoot: true
+  # > 10000 so the pod satisfies the KSV-0020/0021 checks (UID/GID above the
+  # system-user range). The image user is created with the same UID/GID.
+  runAsUser: 10001
+  runAsGroup: 10001
   seccompProfile:
     type: RuntimeDefault
 
