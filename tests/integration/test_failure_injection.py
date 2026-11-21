@@ -117,6 +117,38 @@ def _assert_reaped_and_promoted(task_run: TaskRun, claimed_token: int) -> None:
     assert task_run.state == TaskRunState.READY.value
 
 
+def _drain_redelivery_and_confirm_no_double_run(
+    url: str, queue: str, env: dict[str, str], tmp_path: Path, task_run: TaskRun
+) -> None:
+    """Empty the queue with a live consumer, then prove nothing ran twice.
+
+    Asserting queue emptiness straight after a SIGKILL races the broker: the
+    dead worker's unacked delivery is requeued the moment its connection
+    drops, so the queue can be non-empty through no fault of the application
+    — and with no consumer left it stays that way until the timeout fires.
+    Draining with a live consumer settles it: `claim_task_run` only matches
+    READY and the run is SUCCEEDED, so the worker must ack-and-drop the
+    requeued dispatch without executing anything.
+    """
+    drain_log = tmp_path / "worker-drain.log"
+    proc, log = _start(
+        ["worker", "--queue", queue, "--lease-seconds", "30"],
+        env,
+        drain_log,
+    )
+    try:
+        assert wait_until(lambda: queue_is_empty(url, queue), timeout=30), drain_log.read_text(
+            errors="replace"
+        )
+    finally:
+        if proc.poll() is None:
+            _kill(proc, log)
+
+    task_run.refresh_from_db()
+    assert task_run.state == TaskRunState.SUCCEEDED.value
+    assert task_run.attempt == 2  # the redelivery did not double-execute
+
+
 def test_a_killed_worker_is_reaped_retried_and_finally_succeeds(
     task_run: TaskRun, tmp_path: Path
 ) -> None:
@@ -209,7 +241,7 @@ def test_a_killed_worker_is_reaped_retried_and_finally_succeeds(
         assert task_run.state == TaskRunState.SUCCEEDED.value
         assert task_run.attempt == 2
         assert task_run.lease_expires_at is None
-        assert wait_until(lambda: queue_is_empty(url, queue), timeout=30)
+        _drain_redelivery_and_confirm_no_double_run(url, queue, env, tmp_path, task_run)
     finally:
         with contextlib.suppress(Exception):
             conn.channel().queue_delete(queue=queue)
