@@ -162,9 +162,12 @@ repository:
   image's OS packages are inherited from upstream and no application change
   affects them.
 
-The CI gate therefore fails on **CRITICAL** and publishes the full HIGH list as a
-SARIF artifact rather than failing on it — a gate that is permanently red is a
-gate nobody reads. A distroless or Wolfi base would remove the 44; that is a
+The CI gate therefore fails on **CRITICAL**. The Security tab publishes only the
+findings that have an available fix — unfixable base-image CVEs have no
+actionable patch, and a queue that cannot be worked is a queue nobody reads —
+while the full HIGH/CRITICAL list, fixed or not, stays visible in the
+`trivy-image-report` CI artifact (30-day retention) and as this documented
+residual risk. A distroless or Wolfi base would remove the 44; that is a
 deliberate re-platforming decision, not a patch.
 
 ## What this model does not cover
