@@ -1113,10 +1113,15 @@ jobs:
           scanners: vuln,secret,misconfig
           severity: HIGH,CRITICAL
           # This step always succeeds so the SARIF is generated and uploaded
-          # even when the gate below fails. The residual HIGH list is published
-          # to the Security tab so it is visible rather than buried.
+          # even when the gate below fails. The Security tab publishes only
+          # findings with an available fix — unfixable base-image CVEs have no
+          # actionable patch, and a queue that cannot be worked is a queue
+          # nobody reads. The full HIGH/CRITICAL list stays visible in the
+          # `trivy-image-report` artifact and in the documented residual risk
+          # (docs/security/threat-model.md, "Residual risks in the container
+          # image").
           exit-code: "0"
-          ignore-unfixed: false
+          ignore-unfixed: true
           format: sarif
           output: trivy-image.sarif
           skip-setup-trivy: false
@@ -1149,10 +1154,9 @@ jobs:
           scan-type: image
           scanners: vuln
           severity: CRITICAL
-          # The gate is fixable CRITICAL only. At the time this job was written
-          # the image carried one unfixed CRITICAL (CVE-2026-111497 in libbrotli1
-          # on Debian 13.7) and 48 HIGH findings with no fixed version, all in
-          # base OS packages that the runtime does not execute. `apt-get upgrade`
+          # The gate is fixable CRITICAL only. When this job was written the
+          # image carried unfixed CRITICAL and HIGH findings, all in base OS
+          # packages that the runtime does not execute. `apt-get upgrade`
           # does not clear them and no amount of application code will. Failing
           # the build on unfixed base-image CVEs would make the gate permanently
           # red and therefore ignored.
