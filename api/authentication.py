@@ -15,11 +15,10 @@ from __future__ import annotations
 from datetime import timedelta
 from typing import Any, cast
 
-from django.db import models
-
 from core.models import ApiKey, Membership
 from core.services.api_keys import authenticate_api_key
 from django.conf import settings
+from django.db import models
 from django.utils import timezone
 from rest_framework.authentication import BaseAuthentication, TokenAuthentication
 from rest_framework.exceptions import AuthenticationFailed
@@ -107,6 +106,7 @@ class ExpiringTokenAuthentication(TokenAuthentication):
     """
 
     def authenticate_credentials(self, key: str) -> tuple[object, object]:
+        """Validate *key* and reject tokens older than the configured max age."""
         user, token = super().authenticate_credentials(key)
         max_age_days = int(getattr(settings, "FLOWFORGE_TOKEN_MAX_AGE_DAYS", 30))
         created = getattr(token, "created_at", None)

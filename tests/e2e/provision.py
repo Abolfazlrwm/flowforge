@@ -17,7 +17,7 @@ USERNAME = "e2e"
 # The password is a fixed, obviously-fake string for a fixture account that only
 # exists in the throwaway e2e stack. The annotation says only the test id: bandit
 # reads a trailing comment as more test names and warns about each word.
-PASSWORD = "e2e-password-not-for-production"  # noqa: S105  # nosec B105
+PASSWORD = "e2e-password-not-for-production"  # nosec B105
 TOKEN_FILE = Path(tempfile.gettempdir()) / "e2e_token"
 
 
@@ -37,11 +37,10 @@ def provision_e2e() -> None:
     """Create (idempotently) the e2e user and write its DRF token to a file."""
     _refuse_with_production_settings()
 
-    from django.contrib.auth import get_user_model
-    from rest_framework.authtoken.models import Token
-
     from core.models import Membership
     from core.services.tenancy import ensure_default_organization
+    from django.contrib.auth import get_user_model
+    from rest_framework.authtoken.models import Token
 
     user_model = get_user_model()
     user, _ = user_model.objects.get_or_create(username=USERNAME)

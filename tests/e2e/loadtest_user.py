@@ -15,16 +15,15 @@ USERNAME = "loadtest"
 # A fixed, obviously-fake string for a fixture account that only exists in the
 # throwaway load-test stack. The annotation says only the test id: bandit reads a
 # trailing comment as more test names and warns about each word.
-PASSWORD = "loadtest-password"  # noqa: S105  # nosec B105
+PASSWORD = "loadtest-password"  # nosec B105
 
 
 def provision_loadtest_user() -> None:
     """Create the load-test user and show the credentials Locust needs."""
-    from django.contrib.auth import get_user_model
-    from rest_framework.authtoken.models import Token
-
     from core.models import Membership
     from core.services.tenancy import ensure_default_organization
+    from django.contrib.auth import get_user_model
+    from rest_framework.authtoken.models import Token
 
     user_model = get_user_model()
     user, created = user_model.objects.get_or_create(username=USERNAME)
@@ -46,6 +45,4 @@ def provision_loadtest_user() -> None:
     print(f"{verb} load-test user {USERNAME!r}.")
     print(f"  username: {USERNAME}")
     print(f"  password: {PASSWORD}")
-    print(
-        "Use with LOCUST_USERNAME / LOCUST_PASSWORD; see docs/development/load-testing.md."
-    )
+    print("Use with LOCUST_USERNAME / LOCUST_PASSWORD; see docs/development/load-testing.md.")
